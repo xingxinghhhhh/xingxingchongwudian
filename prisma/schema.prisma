@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProductStatus {
+  draft
+  active
+  archived
+}
+
+enum PetType {
+  cat
+  dog
+  both
+}
+
+enum OrderStatus {
+  pending_payment
+  paid
+  shipped
+  completed
+  cancelled
+  refunded
+}
+
+enum PaymentProvider {
+  wechat
+  alipay
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+model Product {
+  id          String           @id @default(cuid())
+  slug        String           @unique
+  title       String
+  description String           @db.Text
+  petType     PetType
+  toyType     String
+  status      ProductStatus    @default(draft)
+  variants    ProductVariant[]
+  images      ProductImage[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model ProductVariant {
+  id             String      @id @default(cuid())
+  productId      String
+  product        Product     @relation(fields: [productId], references: [id])
+  skuCode        String      @unique
+  name           String
+  color          String?
+  size           String?
+  material       String?
+  priceCents     Int
+  compareAtCents Int?
+  stock          Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  orderItems     OrderItem[]
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  url       String
+  sortOrder Int      @default(0)
+}
+
+model Customer {
+  id             String    @id @default(cuid())
+  phone          String?   @unique
+  email          String?   @unique
+  name           String?
+  sourcePlatform String?
+  addresses      Address[]
+  orders         Order[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model Address {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  receiverName String
+  phone        String
+  province     String
+  city         String
+  district     String
+  detail       String
+  isDefault    Boolean  @default(false)
+}
+
+model Order {
+  id          String        @id @default(cuid())
+  orderNo     String        @unique
+  customerId  String?
+  customer    Customer?     @relation(fields: [customerId], references: [id])
+  status      OrderStatus   @default(pending_payment)
+  totalCents  Int
+  items       OrderItem[]
+  payments    Payment[]
+  shipments   Shipment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model OrderItem {
+  id             String         @id @default(cuid())
+  orderId        String
+  order          Order          @relation(fields: [orderId], references: [id])
+  variantId      String
+  variant        ProductVariant @relation(fields: [variantId], references: [id])
+  titleSnapshot  String
+  skuSnapshot    String
+  unitPriceCents Int
+  quantity       Int
+}
+
+model Payment {
+  id            String          @id @default(cuid())
+  orderId       String
+  order         Order           @relation(fields: [orderId], references: [id])
+  provider      PaymentProvider
+  status        PaymentStatus   @default(pending)
+  amountCents   Int
+  providerTxnId String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model Shipment {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id])
+  carrier        String
+  trackingNumber String
+  shippedAt      DateTime?
+  createdAt      DateTime @default(now())
+}
+
+model TrafficEvent {
+  id          String   @id @default(cuid())
+  platform    String
+  campaign    String?
+  videoId     String?
+  landingPage String
+  eventType   String
+  createdAt   DateTime @default(now())
+}
