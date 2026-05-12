@@ -3,3 +3,8 @@ dist/
 .env
 .env.local
 coverage/
+.api-dev.*.log
+.web-dev.*.log
+.next/
+web/.next/
+web/out/

@@ -1,0 +1,388 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #20211f;
+  --muted: #6d7169;
+  --line: #dce2d8;
+  --paper: #fffdf7;
+  --leaf: #4f7f52;
+  --leaf-dark: #285334;
+  --coral: #df654d;
+  --yellow: #f5c96b;
+  --blue: #6aa6b8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.shell {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 247, 0.92), rgba(255, 253, 247, 1)),
+    url("https://images.unsplash.com/photo-1583337130417-3346a1be7dee?auto=format&fit=crop&w=1800&q=80")
+      center top / cover no-repeat;
+}
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 26px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 22px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  color: white;
+  background: var(--leaf-dark);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nav button,
+.pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  padding: 9px 14px;
+}
+
+.hero {
+  min-height: 430px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+  gap: 26px;
+  align-items: end;
+  padding: 42px 0 34px;
+}
+
+.hero-copy {
+  padding: 34px 0;
+}
+
+.eyebrow {
+  color: var(--leaf-dark);
+  font-weight: 800;
+  letter-spacing: 0;
+  margin: 0 0 12px;
+}
+
+h1 {
+  font-size: clamp(42px, 7vw, 78px);
+  line-height: 0.98;
+  letter-spacing: 0;
+  margin: 0;
+  max-width: 780px;
+}
+
+.lead {
+  max-width: 620px;
+  margin: 22px 0 26px;
+  color: #454b42;
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.primary,
+.secondary,
+.danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0 16px;
+  font-weight: 800;
+}
+
+.primary {
+  background: var(--leaf-dark);
+  color: white;
+}
+
+.secondary {
+  background: white;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.danger {
+  background: var(--coral);
+  color: white;
+}
+
+.hero-panel {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 18px 44px rgba(47, 63, 38, 0.16);
+}
+
+.hero-panel img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.hero-panel-caption {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+}
+
+.section {
+  padding: 34px 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: 0;
+}
+
+.section-head p,
+.muted {
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+}
+
+.product-image {
+  width: 100%;
+  aspect-ratio: 1.12 / 1;
+  object-fit: cover;
+  display: block;
+}
+
+.card-body {
+  padding: 16px;
+}
+
+.card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+
+.price {
+  font-weight: 900;
+  color: var(--coral);
+  white-space: nowrap;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.tag {
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #eef5ec;
+  color: var(--leaf-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  align-items: start;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 16px;
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.cart-item,
+.order-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.cart-item:last-child,
+.order-row:last-child {
+  border-bottom: 0;
+}
+
+.input-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 0 12px;
+}
+
+.full {
+  grid-column: 1 / -1;
+}
+
+.status {
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #eef4fb;
+  color: #235a70;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.notice {
+  border-left: 4px solid var(--yellow);
+  background: #fff8e5;
+  padding: 12px;
+  border-radius: 6px;
+  color: #6b541c;
+}
+
+.admin-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .hero,
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .page {
+    padding: 14px;
+  }
+
+  .topbar,
+  .section-head,
+  .admin-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nav {
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .grid,
+  .input-grid {
+    grid-template-columns: 1fr;
+  }
+}

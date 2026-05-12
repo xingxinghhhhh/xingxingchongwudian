@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { AdminModule } from "./admin/admin.module";
 import { AppController } from "./app.controller";
 import { CartModule } from "./cart/cart.module";
+import { DatabaseModule } from "./database/database.module";
 import { OrdersModule } from "./orders/orders.module";
 import { PaymentsModule } from "./payments/payments.module";
 import { ProductsModule } from "./products/products.module";
@@ -14,6 +15,7 @@ import { ProductsModule } from "./products/products.module";
     }),
     AdminModule,
     CartModule,
+    DatabaseModule,
     OrdersModule,
     PaymentsModule,
     ProductsModule

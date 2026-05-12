@@ -20,7 +20,8 @@
 - `GET /api/admin/products`：后台商品列表，需要 `X-Admin-Token`
 - `GET /api/admin/orders`：后台订单列表，需要 `X-Admin-Token`
 - `PATCH /api/admin/orders/:orderNo/status`：后台修改订单状态，需要 `X-Admin-Token`
-- `prisma/schema.prisma`：独立站核心数据模型草案，按 MySQL 设计
+- `prisma/schema.prisma`：独立站核心数据模型，按 MySQL/Prisma 设计
+- `GET /api/health` 会返回数据库配置状态
 - Jest E2E 测试和 TypeScript 构建脚本
 
 ## 本地命令
@@ -29,10 +30,41 @@
 npm install
 npm run test:e2e
 npm run build
-npm run start:dev
+npm run web:build
+npm run prisma:validate
+npm run prisma:generate
+npm run api:dev
+npm run web:dev
 ```
 
 当前 Windows 环境里脚本会优先使用 `C:\Program Files\nodejs` 下的 Node.js，避免 Codex 内置 `node.exe` 抢占 PATH。
+
+## 前端预览
+
+本地开发时启动两个服务：
+
+```bash
+npm run api:dev
+npm run web:dev
+```
+
+- API: `http://localhost:3000/api`
+- Web: `http://localhost:3001`
+
+前端默认读取 `NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api`，后台演示 token 默认是 `dev-admin-key`。
+
+## 数据库配置
+
+复制 `.env.example` 中的变量并配置真实 MySQL：
+
+```text
+DATABASE_URL="mysql://shop_user:shop_password@localhost:3306/pet_toy_shop"
+ADMIN_API_KEY="replace-with-a-long-random-admin-token"
+```
+
+Prisma 当前固定在 6.x 版本，原因是 Prisma 7 改用了新的 `prisma.config.ts` 和 adapter 配置方式；这个项目先使用传统 `DATABASE_URL` 模式，方便和 NestJS CommonJS 骨架稳定集成。
+
+本轮已经接入 Prisma 模块和 MySQL schema，但业务接口仍使用内存仓储。下一步可以逐个把商品、购物车、订单、支付服务替换到 Prisma 查询。
 
 ## 后台鉴权
 
@@ -144,6 +176,6 @@ dev-admin-key
 
 下一步可以接入真实数据库访问层，并继续补：
 
-- 购物车转订单接口
+- Prisma 仓储实现，替换当前内存数据
 - 真实微信/支付宝 SDK 与签名验签
 - 后台登录账号体系和操作日志
