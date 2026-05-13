@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "星星宠物店",
-  description: "内容种草驱动的宠物玩具独立站 MVP"
+  title: "奶盖和年糕的 AI 成长日记",
+  description: "一只傲娇小猫和一只社牛小狗，从陌生到熟悉，一起长大，也一起陪伴“我”的生活。"
 };
 
 export default function RootLayout({

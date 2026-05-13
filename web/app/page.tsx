@@ -1,619 +1,259 @@
-"use client";
-
+import Link from "next/link";
+import { ArrowRight, BookOpen, Heart, Sparkles, Stars, SunMedium } from "lucide-react";
+import { SiteHeader } from "./components/site-header";
 import {
-  CreditCard,
-  Heart,
-  PackageCheck,
-  RefreshCw,
-  ShieldCheck,
-  ShoppingCart,
-  Sparkles,
-  Truck
-} from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+  accountName,
+  favoriteMoments,
+  getLatestJournalEntries,
+  journalEntries,
+  pets,
+  storyChapters,
+  worldSummary
+} from "./content-site-data";
 
-type Product = {
-  id: string;
-  slug: string;
-  title: string;
-  description?: string;
-  petType: "cat" | "dog" | "both";
-  toyType: string;
-  priceCents: number;
-  coverImageUrl: string;
-  status: string;
-  variants?: Variant[];
-};
+const latestEntries = getLatestJournalEntries(journalEntries, 4);
 
-type Variant = {
-  skuCode: string;
-  name: string;
-  priceCents: number;
-  stock: number;
-  isAvailable: boolean;
-};
-
-type CartItem = {
-  skuCode: string;
-  title: string;
-  quantity: number;
-  unitPriceCents: number;
-  lineTotalCents: number;
-};
-
-type Cart = {
-  cartId: string;
-  items: CartItem[];
-  subtotalCents: number;
-};
-
-type Order = {
-  orderNo: string;
-  status: string;
-  totalCents: number;
-  items: Array<{
-    skuCode: string;
-    title: string;
-    quantity: number;
-    unitPriceCents: number;
-  }>;
-};
-
-type Payment = {
-  paymentNo: string;
-  orderNo: string;
-  provider: "wechat" | "alipay";
-  channel: string;
-  amountCents: number;
-  status: string;
-  payUrl: string;
-};
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
-const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN ?? "dev-admin-key";
-
-const productImages: Record<string, string> = {
-  "durable-bite-rope":
-    "https://images.unsplash.com/photo-1601758124510-52d02ddb7cbd?auto=format&fit=crop&w=900&q=80",
-  "cat-teaser-wand":
-    "https://images.unsplash.com/photo-1545249390-6bdfa286032f?auto=format&fit=crop&w=900&q=80"
-};
-
-const yuan = (cents: number) => `¥${(cents / 100).toFixed(2)}`;
-
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
-    }
-  });
-  const payload = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(payload.message ?? "请求失败");
-  }
-
-  return payload as T;
-}
-
-const defaultCheckout = {
-  customer: {
-    name: "星星",
-    phone: "13800138000"
+const futurePlans = [
+  {
+    title: "定制云养宠",
+    detail:
+      "以后每位用户都可以拥有一只自己的宠物角色，拥有专属档案、成长记录、情绪日记和固定更新节奏。"
   },
-  address: {
-    receiverName: "星星",
-    phone: "13800138000",
-    province: "Guangdong",
-    city: "Shenzhen",
-    district: "Nanshan",
-    detail: "Science Park 1"
+  {
+    title: "宠物专属主页",
+    detail:
+      "把名字、性格、习惯、最爱和重要时刻整理成一页真正属于这只宠物的数字家书。"
+  },
+  {
+    title: "宠物互动社区",
+    detail:
+      "让不同用户的宠物互相认识、串门、留言、晒日常，也为后面的玩具和衣服内容留出自然入口。"
   }
-};
+];
+
+const siteNotes = [
+  "一只是傲娇小猫，一只是社牛小狗，从陌生到熟悉，一起长大。",
+  "这里先记录奶盖和年糕，也为以后更多人的云养宠生活留出位置。"
+];
 
 export default function Home() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [cart, setCart] = useState<Cart | null>(null);
-  const [order, setOrder] = useState<Order | null>(null);
-  const [payment, setPayment] = useState<Payment | null>(null);
-  const [adminOrders, setAdminOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("正在连接后端 API...");
-
-  useEffect(() => {
-    void loadProducts();
-  }, []);
-
-  const cartCount = useMemo(
-    () => cart?.items.reduce((total, item) => total + item.quantity, 0) ?? 0,
-    [cart]
-  );
-
-  async function loadProducts() {
-    setLoading(true);
-    try {
-      const data = await apiFetch<{ items: Product[] }>("/products");
-      const details = await Promise.all(
-        data.items.map((product) =>
-          apiFetch<Product>(`/products/${product.slug}`)
-        )
-      );
-      setProducts(details);
-      setSelectedProduct(details[0] ?? null);
-      setMessage("后端已连接，商城数据来自 NestJS API。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "商品加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function addToCart(product: Product) {
-    const skuCode = product.variants?.[0]?.skuCode;
-    if (!skuCode) {
-      setMessage("这个商品还没有可售 SKU。");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const nextCart = await apiFetch<Cart>("/cart/items", {
-        method: "POST",
-        body: JSON.stringify({
-          cartId: cart?.cartId,
-          skuCode,
-          quantity: 1
-        })
-      });
-      setCart(nextCart);
-      setMessage(`${product.title} 已加入购物车。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "加入购物车失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function updateCartItem(item: CartItem, quantity: number) {
-    if (!cart) return;
-    setLoading(true);
-    try {
-      const nextCart = await apiFetch<Cart>(`/cart/items/${item.skuCode}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          cartId: cart.cartId,
-          quantity
-        })
-      });
-      setCart(nextCart);
-      setMessage("购物车已更新。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "更新购物车失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function checkoutCart() {
-    if (!cart) {
-      setMessage("请先加入购物车。");
-      return;
-    }
-    setLoading(true);
-    try {
-      const created = await apiFetch<Order>(`/cart/${cart.cartId}/checkout`, {
-        method: "POST",
-        body: JSON.stringify(defaultCheckout)
-      });
-      const cleared = await apiFetch<Cart>(`/cart/${cart.cartId}`);
-      setOrder(created);
-      setCart(cleared);
-      setPayment(null);
-      setMessage(`订单 ${created.orderNo} 已创建，等待支付。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "结算失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function createPayment(provider: "wechat" | "alipay") {
-    if (!order) {
-      setMessage("请先创建订单。");
-      return;
-    }
-    setLoading(true);
-    try {
-      const created = await apiFetch<Payment>(`/payments/${provider}`, {
-        method: "POST",
-        body: JSON.stringify({
-          orderNo: order.orderNo,
-          channel: "h5"
-        })
-      });
-      setPayment(created);
-      setMessage(
-        `${provider === "wechat" ? "微信" : "支付宝"}支付单已创建。`
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "创建支付单失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function mockPay() {
-    if (!payment) return;
-    setLoading(true);
-    try {
-      await apiFetch(`/payments/${payment.provider}/notify`, {
-        method: "POST",
-        body: JSON.stringify({
-          paymentNo: payment.paymentNo,
-          providerTradeNo: `${payment.provider}_trade_demo`,
-          paidAmountCents: payment.amountCents
-        })
-      });
-      const paidOrder = await apiFetch<Order>(`/orders/${payment.orderNo}`);
-      setOrder(paidOrder);
-      setPayment({ ...payment, status: "paid" });
-      setMessage("支付回调已模拟完成，订单状态已变为 paid。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "模拟支付失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadAdminOrders() {
-    setLoading(true);
-    try {
-      const data = await apiFetch<{ items: Order[] }>("/admin/orders", {
-        headers: {
-          "X-Admin-Token": ADMIN_TOKEN
-        }
-      });
-      setAdminOrders(data.items.slice().reverse());
-      setMessage("后台订单已刷新。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "后台订单加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function shipOrder(orderNo: string) {
-    setLoading(true);
-    try {
-      await apiFetch(`/admin/orders/${orderNo}/status`, {
-        method: "PATCH",
-        headers: {
-          "X-Admin-Token": ADMIN_TOKEN
-        },
-        body: JSON.stringify({
-          status: "shipped"
-        })
-      });
-      await loadAdminOrders();
-      if (order?.orderNo === orderNo) {
-        setOrder(await apiFetch<Order>(`/orders/${orderNo}`));
-      }
-      setMessage(`订单 ${orderNo} 已标记发货。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "订单发货失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <main className="shell">
-      <div className="page">
-        <header className="topbar">
-          <div className="brand">
-            <div className="brand-mark">
-              <Sparkles size={22} />
-            </div>
-            <span>星星宠物店</span>
-          </div>
-          <nav className="nav" aria-label="页面导航">
-            <button onClick={() => document.getElementById("shop")?.scrollIntoView()}>
-              商品
-            </button>
-            <button onClick={() => document.getElementById("checkout")?.scrollIntoView()}>
-              结算
-            </button>
-            <button onClick={() => document.getElementById("admin")?.scrollIntoView()}>
-              后台
-            </button>
-            <span className="pill">
-              <ShoppingCart size={16} /> {cartCount}
-            </span>
-          </nav>
-        </header>
+    <main className="content-site">
+      <SiteHeader />
 
-        <section className="hero">
-          <div className="hero-copy">
-            <p className="eyebrow">从内容种草到独立站成交</p>
-            <h1>让猫狗每天都多一点好玩的期待。</h1>
-            <p className="lead">
-              一个面向国内用户的宠物玩具独立站 MVP：商品、购物车、结算、支付模拟和后台订单已经接上后端 API。
-            </p>
-            <div className="hero-actions">
-              <button
-                className="primary"
-                onClick={() => document.getElementById("shop")?.scrollIntoView()}
-              >
-                <ShoppingCart size={18} />
-                选购玩具
-              </button>
-              <button className="secondary" onClick={loadProducts}>
-                <RefreshCw size={18} />
-                刷新商品
-              </button>
-            </div>
+      <section className="hero" id="top">
+        <div className="hero__backdrop" />
+        <div className="hero__inner">
+          <p className="eyebrow">{accountName}</p>
+          <h1>一只嘴硬的小猫，和一只永远开心的小狗，把陪伴过成每天都想追更的连续剧。</h1>
+          <p className="hero__copy">{worldSummary}</p>
+
+          <div className="hero__actions">
+            <Link className="button button--primary" href="/diary">
+              看最新日记
+              <ArrowRight size={16} />
+            </Link>
+            <Link className="button button--ghost" href="/profiles">
+              认识奶盖和年糕
+            </Link>
           </div>
-          <aside className="hero-panel">
-            <img
-              alt="宠物玩具使用场景"
-              src="https://images.unsplash.com/photo-1596492784531-6e6eb5ea9993?auto=format&fit=crop&w=1000&q=80"
-            />
-            <div className="hero-panel-caption">
-              <div>
-                <strong>内容平台落地页就绪</strong>
-                <p className="muted">适合抖音、小红书、微博视频挂链测试。</p>
+
+          <div className="hero__notes" aria-label="Site notes">
+            {siteNotes.map((note) => (
+              <div className="hero__note" key={note}>
+                <Sparkles size={16} />
+                <span>{note}</span>
               </div>
-              <span className="status">{loading ? "同步中" : "MVP"}</span>
-            </div>
-          </aside>
-        </section>
-
-        <div className="notice">{message}</div>
-
-        <section id="shop" className="section">
-          <div className="section-head">
-            <div>
-              <h2>主推玩具</h2>
-              <p>商品和 SKU 来自后端 `/api/products`。</p>
-            </div>
-            <span className="pill">
-              <ShieldCheck size={16} /> 材质安全 · 可清洗 · 适合日常互动
-            </span>
-          </div>
-
-          <div className="grid">
-            {products.map((product) => (
-              <article className="card" key={product.id}>
-                <img
-                  className="product-image"
-                  alt={product.title}
-                  src={productImages[product.slug] ?? product.coverImageUrl}
-                />
-                <div className="card-body">
-                  <div className="card-title">
-                    <div>
-                      <strong>{product.title}</strong>
-                      <p className="muted">{product.description}</p>
-                    </div>
-                    <span className="price">{yuan(product.priceCents)}</span>
-                  </div>
-                  <div className="tag-row">
-                    <span className="tag">{product.petType}</span>
-                    <span className="tag">{product.toyType}</span>
-                    <span className="tag">
-                      库存 {product.variants?.[0]?.stock ?? 0}
-                    </span>
-                  </div>
-                  <div className="hero-actions">
-                    <button
-                      className="secondary"
-                      onClick={() => setSelectedProduct(product)}
-                    >
-                      查看详情
-                    </button>
-                    <button className="primary" onClick={() => addToCart(product)}>
-                      加入购物车
-                    </button>
-                  </div>
-                </div>
-              </article>
             ))}
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section id="checkout" className="section workspace">
-          <div className="stack">
-            <div className="panel">
-              <div className="section-head">
-                <div>
-                  <h2>商品详情</h2>
-                  <p>{selectedProduct?.description ?? "请选择一个商品。"}</p>
+      <section className="section section--profiles" id="profiles">
+        <div className="section__header">
+          <p className="section__kicker">Main cast</p>
+          <h2>先认识它们，再开始追更它们的小情绪。</h2>
+          <p className="section__copy">
+            奶盖负责把“表面嫌弃、实际依赖”演得很满，年糕负责把“主动靠近、永远开心”做得很真。
+            两种完全不同的性格，刚好让这个家每天都有新的互动。
+          </p>
+        </div>
+
+        <div className="profile-grid">
+          {pets.map((pet) => (
+            <article className="profile-card" key={pet.id}>
+              <div
+                className="profile-card__media"
+                style={{
+                  backgroundImage: `url(${pet.heroImage})`,
+                  backgroundPosition: pet.heroImagePosition
+                }}
+              />
+              <div className="profile-card__content">
+                <div className="profile-card__intro">
+                  <span className="chip">{pet.type === "cat" ? "主角小猫" : "主角小狗"}</span>
+                  <h3>{pet.name}</h3>
+                  <p>{pet.role}</p>
                 </div>
-                <Heart color="#df654d" />
+
+                <dl className="profile-card__meta">
+                  <div>
+                    <dt>年龄</dt>
+                    <dd>{pet.ageLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>外形</dt>
+                    <dd>{pet.breedLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>性格</dt>
+                    <dd>{pet.temperament}</dd>
+                  </div>
+                  <div>
+                    <dt>最爱</dt>
+                    <dd>{pet.favoriteThing}</dd>
+                  </div>
+                </dl>
+
+                <div className="tag-row tag-row--profile">
+                  {pet.keywords.map((keyword) => (
+                    <span className="tag" key={keyword}>
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+
+                <p className="profile-card__summary">{pet.summary}</p>
+                <Link className="text-link text-link--spaced" href={`/profiles/${pet.id}`}>
+                  看 {pet.name} 的完整档案
+                  <ArrowRight size={16} />
+                </Link>
               </div>
-              {selectedProduct ? (
-                <div className="stack">
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="stories">
+        <div className="section__header section__header--tight">
+          <div>
+            <p className="section__kicker">Story structure</p>
+            <h2>这一阶段，我们先把它们从“同住”写到“同频”。</h2>
+          </div>
+          <p className="section__copy">
+            网站会先围绕“陌生期、磨合期、依赖感”来展开。这样后面无论是定制云养宠，还是别的用户带着自己的宠物进来，
+            这个结构都能自然长下去。
+          </p>
+        </div>
+
+        <div className="chapter-grid">
+          {storyChapters.map((chapter, index) => (
+            <article className="chapter-card" key={chapter.id}>
+              <span className="chapter-card__index">0{index + 1}</span>
+              <h3>{chapter.title}</h3>
+              <p>{chapter.summary}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section section--diary" id="diary">
+        <div className="section__header section__header--tight">
+          <div>
+            <p className="section__kicker">Recent diary</p>
+            <h2>每天一点点变化，就足够让人想继续看下去。</h2>
+          </div>
+          <Link className="text-link" href="/diary">
+            看全部日记
+            <ArrowRight size={16} />
+          </Link>
+        </div>
+
+        <div className="diary-grid">
+          {latestEntries.map((entry) => {
+            const pet = pets.find((item) => item.id === entry.petId);
+
+            return (
+              <article className="diary-card" key={entry.id}>
+                <div className="diary-card__topline">
+                  <span className="chip chip--soft">{entry.dateLabel}</span>
+                  <span className="diary-card__pet">
+                    {pet?.name}
+                    <Heart size={14} />
+                  </span>
+                </div>
+
+                <h3>{entry.title}</h3>
+                <p>{entry.summary}</p>
+
+                <div className="diary-card__footer">
+                  <span className="mood-pill">{entry.mood}</span>
                   <div className="tag-row">
-                    {selectedProduct.variants?.map((variant) => (
-                      <span className="tag" key={variant.skuCode}>
-                        {variant.name} · {yuan(variant.priceCents)} · 库存
-                        {variant.stock}
+                    {entry.tags.map((tag) => (
+                      <span className="tag" key={tag}>
+                        {tag}
                       </span>
                     ))}
                   </div>
-                  <button
-                    className="primary"
-                    onClick={() => addToCart(selectedProduct)}
-                  >
-                    <ShoppingCart size={18} />
-                    加入购物车
-                  </button>
                 </div>
-              ) : null}
-            </div>
 
-            <div className="panel">
-              <div className="section-head">
-                <div>
-                  <h2>结算信息</h2>
-                  <p>使用演示收货信息直接生成待支付订单。</p>
-                </div>
-                <Truck />
-              </div>
-              <div className="input-grid">
-                <div className="field">
-                  <label>收货人</label>
-                  <input readOnly value={defaultCheckout.customer.name} />
-                </div>
-                <div className="field">
-                  <label>手机号</label>
-                  <input readOnly value={defaultCheckout.customer.phone} />
-                </div>
-                <div className="field full">
-                  <label>地址</label>
-                  <input
-                    readOnly
-                    value={`${defaultCheckout.address.province} ${defaultCheckout.address.city} ${defaultCheckout.address.district} ${defaultCheckout.address.detail}`}
-                  />
-                </div>
-              </div>
-            </div>
+                <Link className="text-link text-link--spaced" href={`/diary/${entry.id}`}>
+                  继续读这篇日记
+                  <ArrowRight size={16} />
+                </Link>
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
-            <div className="panel">
-              <div className="section-head">
-                <div>
-                  <h2>支付模拟</h2>
-                  <p>支付单和回调来自后端 `/api/payments`。</p>
-                </div>
-                <CreditCard />
-              </div>
-              {order ? (
-                <div className="stack">
-                  <div className="order-row">
-                    <div>
-                      <strong>{order.orderNo}</strong>
-                      <p className="muted">
-                        {yuan(order.totalCents)} · {order.items.length} 件商品
-                      </p>
-                    </div>
-                    <span className="status">{order.status}</span>
-                  </div>
-                  <div className="hero-actions">
-                    <button className="secondary" onClick={() => createPayment("wechat")}>
-                      微信 H5
-                    </button>
-                    <button className="secondary" onClick={() => createPayment("alipay")}>
-                      支付宝 H5
-                    </button>
-                    <button className="primary" disabled={!payment} onClick={mockPay}>
-                      模拟支付成功
-                    </button>
-                  </div>
-                  {payment ? (
-                    <p className="muted">
-                      支付单：{payment.paymentNo} · {payment.status} ·{" "}
-                      {payment.payUrl}
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="muted">请先从购物车结算生成订单。</p>
-              )}
-            </div>
-          </div>
+      <section className="section section--favorites">
+        <div className="section__header">
+          <p className="section__kicker">Favorite moments</p>
+          <h2>它们最动人的，不一定是大事件，而是那些会重复发生的小习惯。</h2>
+          <p className="section__copy">
+            后面这里可以自然接到“最爱的玩具”和“同款东西”，但现在先让喜欢本身成为内容，让人先爱上这两个角色。
+          </p>
+        </div>
 
-          <aside className="panel">
-            <div className="section-head">
-              <div>
-                <h2>购物车</h2>
-                <p>{cart?.cartId ?? "还没有购物车"}</p>
+        <div className="moment-grid">
+          {favoriteMoments.map((moment, index) => (
+            <article className="moment-card" key={moment.id}>
+              <div className="moment-card__icon">
+                {index === 0 ? (
+                  <SunMedium size={20} />
+                ) : index === 1 ? (
+                  <Stars size={20} />
+                ) : (
+                  <BookOpen size={20} />
+                )}
               </div>
-              <ShoppingCart />
-            </div>
-            <div className="stack">
-              {cart?.items.length ? (
-                cart.items.map((item) => (
-                  <div className="cart-item" key={item.skuCode}>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p className="muted">
-                        {item.skuCode} · {yuan(item.unitPriceCents)}
-                      </p>
-                    </div>
-                    <div className="stack">
-                      <select
-                        value={item.quantity}
-                        onChange={(event) =>
-                          updateCartItem(item, Number(event.target.value))
-                        }
-                      >
-                        {[1, 2, 3, 4, 5].map((value) => (
-                          <option key={value} value={value}>
-                            {value}
-                          </option>
-                        ))}
-                      </select>
-                      <strong>{yuan(item.lineTotalCents)}</strong>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="muted">加入商品后会出现在这里。</p>
-              )}
-              <div className="cart-item">
-                <strong>小计</strong>
-                <span className="price">{yuan(cart?.subtotalCents ?? 0)}</span>
-              </div>
-              <button className="danger" disabled={!cart?.items.length} onClick={checkoutCart}>
-                <PackageCheck size={18} />
-                结算成订单
-              </button>
-            </div>
-          </aside>
-        </section>
+              <h3>{moment.label}</h3>
+              <p>{moment.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
 
-        <section id="admin" className="section panel">
-          <div className="admin-bar">
-            <div>
-              <h2>后台订单</h2>
-              <p className="muted">
-                使用 `X-Admin-Token` 调用后台接口，当前演示 token 为
-                dev-admin-key。
-              </p>
-            </div>
-            <button className="secondary" onClick={loadAdminOrders}>
-              <RefreshCw size={18} />
-              刷新订单
-            </button>
-          </div>
-          <div className="stack">
-            {adminOrders.length ? (
-              adminOrders.map((item) => (
-                <div className="order-row" key={item.orderNo}>
-                  <div>
-                    <strong>{item.orderNo}</strong>
-                    <p className="muted">
-                      {yuan(item.totalCents)} · {item.items.length} 件商品
-                    </p>
-                  </div>
-                  <div className="hero-actions">
-                    <span className="status">{item.status}</span>
-                    <button className="secondary" onClick={() => shipOrder(item.orderNo)}>
-                      标记发货
-                    </button>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="muted">点击刷新订单，查看后台管理接口效果。</p>
-            )}
-          </div>
-        </section>
-      </div>
+      <section className="section section--future" id="future">
+        <div className="section__header">
+          <p className="section__kicker">Future roadmap</p>
+          <h2>等奶盖和年糕的世界站稳了，我们再把“云养宠”真正做成产品。</h2>
+          <p className="section__copy">
+            这一步不会急着上很重的功能。我们会先保留清晰的升级路径，让内容、会员、社区和以后的小商店都是顺着这个世界观长出来的。
+          </p>
+        </div>
+
+        <div className="roadmap-grid">
+          {futurePlans.map((plan) => (
+            <article className="roadmap-card" key={plan.title}>
+              <span className="roadmap-card__badge">Next</span>
+              <h3>{plan.title}</h3>
+              <p>{plan.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
     </main>
   );
 }
