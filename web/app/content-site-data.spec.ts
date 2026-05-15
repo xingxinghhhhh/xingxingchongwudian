@@ -2,6 +2,8 @@ import {
   accountName,
   accountTagline,
   aboutChapters,
+  getAdjacentJournalEntries,
+  getDiaryArchiveEntries,
   getJournalEntriesByPetId,
   getJournalEntryById,
   getLatestJournalEntries,
@@ -70,5 +72,53 @@ describe("content site data", () => {
     expect(aboutChapters[0]?.title).toContain("为什么开始记录");
     expect(socialBios.douyin).toContain("傲娇小猫");
     expect(socialBios.xiaohongshu).toContain("原木风小家");
+  });
+
+  it("stores editorial content fields on each diary entry", () => {
+    const entry = getJournalEntryById("entry-03");
+
+    expect(entry?.subtitle).toContain("偷偷");
+    expect(entry?.intro.length).toBeGreaterThan(20);
+    expect(entry?.sections).toHaveLength(3);
+    expect(entry?.sections[0]?.heading.length).toBeGreaterThan(1);
+    expect(entry?.closingNote.length).toBeGreaterThan(10);
+  });
+
+  it("finds the previous and next diary entries by date order", () => {
+    expect(getAdjacentJournalEntries("entry-03")).toEqual({
+      previous: expect.objectContaining({ id: "entry-04" }),
+      next: expect.objectContaining({ id: "entry-02" })
+    });
+
+    expect(getAdjacentJournalEntries("entry-05")).toEqual({
+      previous: undefined,
+      next: expect.objectContaining({ id: "entry-04" })
+    });
+
+    expect(getAdjacentJournalEntries("entry-01")).toEqual({
+      previous: expect.objectContaining({ id: "entry-02" }),
+      next: undefined
+    });
+  });
+
+  it("builds archive views for all, naigai, and niangao", () => {
+    expect(getDiaryArchiveEntries("all").map((entry) => entry.id)).toEqual([
+      "entry-05",
+      "entry-04",
+      "entry-03",
+      "entry-02",
+      "entry-01"
+    ]);
+
+    expect(getDiaryArchiveEntries("naigai").map((entry) => entry.id)).toEqual([
+      "entry-05",
+      "entry-03",
+      "entry-01"
+    ]);
+
+    expect(getDiaryArchiveEntries("niangao").map((entry) => entry.id)).toEqual([
+      "entry-04",
+      "entry-02"
+    ]);
   });
 });

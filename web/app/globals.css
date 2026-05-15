@@ -476,6 +476,24 @@ h2 {
   padding-bottom: 8px;
 }
 
+.article-hero {
+  padding: 56px 24px 0;
+}
+
+.article-hero__inner {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 44px 0 0;
+}
+
+.article-hero__subtitle {
+  max-width: 720px;
+  margin: 20px 0 0;
+  color: var(--muted-strong);
+  font-size: 22px;
+  line-height: 1.65;
+}
+
 .page-hero__inner {
   max-width: 1240px;
   margin: 0 auto;
@@ -583,6 +601,191 @@ h2 {
   font-size: 13px;
 }
 
+.article-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr);
+  gap: 24px;
+}
+
+.article-body {
+  min-width: 0;
+  padding: 12px 0 0;
+}
+
+.article-body__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.article-body__intro,
+.article-section p,
+.article-body__closing {
+  max-width: 720px;
+  color: var(--muted-strong);
+  font-size: 19px;
+  line-height: 1.9;
+}
+
+.article-body__intro {
+  margin: 0;
+}
+
+.article-section + .article-section {
+  margin-top: 32px;
+}
+
+.article-section h2 {
+  margin: 0 0 14px;
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.article-section p {
+  margin: 0;
+}
+
+.article-body__closing {
+  margin: 36px 0 0;
+  font-style: italic;
+}
+
+.article-aside {
+  display: grid;
+  gap: 18px;
+  align-self: start;
+}
+
+.article-pagination {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.article-pagination__item {
+  display: block;
+  transition: transform 160ms ease;
+}
+
+.article-pagination__item:hover,
+.article-pagination__item:focus-visible {
+  transform: translateY(-1px);
+}
+
+.article-pagination__item strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+.article-pagination__item--next {
+  text-align: right;
+}
+
+.archive-shell {
+  display: grid;
+  gap: 24px;
+}
+
+.archive-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.archive-filter__item {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted-strong);
+  font-weight: 600;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.archive-filter__item:hover,
+.archive-filter__item:focus-visible {
+  transform: translateY(-1px);
+}
+
+.archive-filter__item--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.timeline {
+  display: grid;
+  gap: 22px;
+}
+
+.timeline-entry {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.timeline-entry__rail {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding-top: 26px;
+}
+
+.timeline-entry__dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgba(199, 102, 71, 0.12);
+}
+
+.timeline-entry__date {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.timeline-entry__card {
+  padding: 26px 28px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.timeline-entry__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.timeline-entry__card h2 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.12;
+}
+
+.timeline-entry__card p {
+  margin: 14px 0 0;
+  color: var(--muted-strong);
+  font-size: 18px;
+  line-height: 1.75;
+}
+
 @media (max-width: 1024px) {
   .profile-grid,
   .diary-grid,
@@ -591,7 +794,10 @@ h2 {
   .roadmap-grid,
   .hero__notes,
   .detail-grid,
-  .split-grid {
+  .split-grid,
+  .article-layout,
+  .article-pagination,
+  .timeline-entry {
     grid-template-columns: 1fr;
   }
 
@@ -631,7 +837,11 @@ h2 {
   .hero__copy,
   .section__copy,
   .page-hero__copy,
-  .detail-panel__copy {
+  .detail-panel__copy,
+  .article-hero__subtitle,
+  .article-body__intro,
+  .article-section p,
+  .article-body__closing {
     font-size: 16px;
   }
 
@@ -659,5 +869,22 @@ h2 {
 
   .stack-item {
     flex-direction: column;
+  }
+
+  .timeline-entry__rail {
+    grid-template-columns: 16px 1fr;
+    padding-top: 0;
+  }
+
+  .timeline-entry__card h2 {
+    font-size: 24px;
+  }
+
+  .timeline-entry__card p {
+    font-size: 16px;
+  }
+
+  .article-pagination__item--next {
+    text-align: left;
   }
 }
