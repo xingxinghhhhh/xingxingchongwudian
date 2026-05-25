@@ -9,10 +9,10 @@ export const starterProducts: ProductDetail[] = [
     petType: "dog",
     toyType: "chew",
     priceCents: 3990,
-    coverImageUrl: "/images/products/durable-bite-rope.jpg",
+    coverImageUrl: "/brand/naigai-niangao/duo-toy-play.png",
     images: [
-      "/images/products/durable-bite-rope.jpg",
-      "/images/products/durable-bite-rope-play.jpg"
+      "/brand/naigai-niangao/duo-toy-play.png",
+      "/brand/naigai-niangao/niangao-toy.png"
     ],
     status: "active",
     variants: [
@@ -38,10 +38,10 @@ export const starterProducts: ProductDetail[] = [
     petType: "cat",
     toyType: "interactive",
     priceCents: 2990,
-    coverImageUrl: "/images/products/cat-teaser-wand.jpg",
+    coverImageUrl: "/brand/naigai-niangao/naigai-observing.png",
     images: [
-      "/images/products/cat-teaser-wand.jpg",
-      "/images/products/cat-teaser-wand-action.jpg"
+      "/brand/naigai-niangao/naigai-observing.png",
+      "/brand/naigai-niangao/naigai-standard.png"
     ],
     status: "active",
     variants: [

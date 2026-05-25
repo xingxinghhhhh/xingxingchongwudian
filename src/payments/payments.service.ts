@@ -33,8 +33,15 @@ export class PaymentsService {
   createPayment(
     provider: PaymentProvider,
     dto: CreatePaymentDto
-  ): PaymentRecord {
-    const order = this.ordersService.getOrder(dto.orderNo);
+  ): Promise<PaymentRecord> {
+    return this.createPaymentRecord(provider, dto);
+  }
+
+  private async createPaymentRecord(
+    provider: PaymentProvider,
+    dto: CreatePaymentDto
+  ): Promise<PaymentRecord> {
+    const order = await this.ordersService.getOrder(dto.orderNo);
 
     if (order.status !== "pending_payment") {
       throw new BadRequestException("Order is not pending payment");
@@ -57,7 +64,14 @@ export class PaymentsService {
   notifyPaid(
     provider: PaymentProvider,
     dto: PaymentNotifyDto
-  ): PaymentNotifyResponse {
+  ): Promise<PaymentNotifyResponse> {
+    return this.markPaymentPaid(provider, dto);
+  }
+
+  private async markPaymentPaid(
+    provider: PaymentProvider,
+    dto: PaymentNotifyDto
+  ): Promise<PaymentNotifyResponse> {
     const payment = this.payments.get(dto.paymentNo);
 
     if (!payment || payment.provider !== provider) {
@@ -71,7 +85,7 @@ export class PaymentsService {
     payment.status = "paid";
     payment.providerTradeNo = dto.providerTradeNo;
     this.payments.set(payment.paymentNo, payment);
-    this.ordersService.markOrderPaid(payment.orderNo);
+    await this.ordersService.markOrderPaid(payment.orderNo);
 
     return {
       success: true,

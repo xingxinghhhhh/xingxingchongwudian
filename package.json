@@ -14,7 +14,8 @@
     "test:e2e": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\jest.cmd --config jest-e2e.json --runInBand",
     "prisma:generate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd generate",
     "prisma:validate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd validate",
-    "prisma:migrate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd migrate dev"
+    "prisma:migrate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd migrate dev",
+    "prisma:seed": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",

@@ -1,0 +1,51 @@
+2026/05/23-02:40:45.928 5e8c Reusing MANIFEST D:\AI\kzt\brand\naigai-niangao\source\.browser_data\Default\IndexedDB\https_creator.xiaohongshu.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/05/23-02:40:45.928 5e8c Recovering log #3
+2026/05/23-02:40:45.935 5e8c Reusing old log D:\AI\kzt\brand\naigai-niangao\source\.browser_data\Default\IndexedDB\https_creator.xiaohongshu.com_0.indexeddb.leveldb/000003.log 
+2026/05/23-02:52:00.925 5e8c Level-0 table #5: started
+2026/05/23-02:52:00.942 5e8c Level-0 table #5: 2348214 bytes OK
+2026/05/23-02:52:00.944 5e8c Delete type=0 #3
+2026/05/23-03:13:05.923 5e8c Level-0 table #7: started
+2026/05/23-03:13:05.940 5e8c Level-0 table #7: 2330809 bytes OK
+2026/05/23-03:13:05.942 5e8c Delete type=0 #4
+2026/05/23-03:14:55.922 5e8c Compacting 1@1 + 1@2 files
+2026/05/23-03:14:55.937 5e8c Generated table #8@1: 92 keys, 11295 bytes
+2026/05/23-03:14:55.937 5e8c Compacted 1@1 + 1@2 files => 11295 bytes
+2026/05/23-03:14:55.937 5e8c compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/05/23-03:14:55.938 5e8c Delete type=2 #5
+2026/05/23-03:14:55.938 5e8c Delete type=2 #7
+2026/05/23-03:34:05.924 5a4 Level-0 table #10: started
+2026/05/23-03:34:05.940 5a4 Level-0 table #10: 2337862 bytes OK
+2026/05/23-03:34:05.942 5a4 Delete type=0 #6
+2026/05/23-03:36:00.921 5e8c Compacting 1@1 + 1@2 files
+2026/05/23-03:36:00.929 5e8c Generated table #11@1: 97 keys, 15849 bytes
+2026/05/23-03:36:00.929 5e8c Compacted 1@1 + 1@2 files => 15849 bytes
+2026/05/23-03:36:00.930 5e8c compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/05/23-03:36:00.930 5e8c Delete type=2 #8
+2026/05/23-03:36:00.930 5e8c Delete type=2 #10
+2026/05/23-03:55:07.653 5e8c Level-0 table #13: started
+2026/05/23-03:55:07.672 5e8c Level-0 table #13: 2332030 bytes OK
+2026/05/23-03:55:07.674 5e8c Delete type=0 #9
+2026/05/23-03:56:55.921 5e8c Compacting 1@1 + 1@2 files
+2026/05/23-03:56:55.931 5e8c Generated table #14@1: 92 keys, 11414 bytes
+2026/05/23-03:56:55.931 5e8c Compacted 1@1 + 1@2 files => 11414 bytes
+2026/05/23-03:56:55.931 5e8c compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/05/23-03:56:55.932 5e8c Delete type=2 #11
+2026/05/23-03:56:55.932 5e8c Delete type=2 #13
+2026/05/23-04:16:10.923 5a4 Level-0 table #16: started
+2026/05/23-04:16:10.940 5a4 Level-0 table #16: 2339239 bytes OK
+2026/05/23-04:16:10.942 5a4 Delete type=0 #12
+2026/05/23-04:17:55.921 5e8c Compacting 1@1 + 1@2 files
+2026/05/23-04:17:55.930 5e8c Generated table #17@1: 97 keys, 15827 bytes
+2026/05/23-04:17:55.930 5e8c Compacted 1@1 + 1@2 files => 15827 bytes
+2026/05/23-04:17:55.931 5e8c compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/05/23-04:17:55.931 5e8c Delete type=2 #14
+2026/05/23-04:17:55.931 5e8c Delete type=2 #16
+2026/05/23-04:37:10.923 5e8c Level-0 table #19: started
+2026/05/23-04:37:10.941 5e8c Level-0 table #19: 2331516 bytes OK
+2026/05/23-04:37:10.942 5e8c Delete type=0 #15
+2026/05/23-04:38:50.924 5e8c Compacting 1@1 + 1@2 files
+2026/05/23-04:38:50.932 5e8c Generated table #20@1: 103 keys, 15908 bytes
+2026/05/23-04:38:50.932 5e8c Compacted 1@1 + 1@2 files => 15908 bytes
+2026/05/23-04:38:50.933 5e8c compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/05/23-04:38:50.933 5e8c Delete type=2 #17
+2026/05/23-04:38:50.933 5e8c Delete type=2 #19

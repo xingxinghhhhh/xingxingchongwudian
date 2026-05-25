@@ -617,4 +617,93 @@ describe("Pet toy shop API", () => {
         expect(body.message).toBe("Cart is empty");
       });
   });
+
+  it("creates a custom cloud pet and returns its dedicated homepage profile", async () => {
+    const createResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Demo Owner",
+        ownerPhone: "13800138000",
+        name: "小奶球",
+        species: "cat",
+        personality: "嘴硬但会偷偷靠近"
+      })
+      .expect(201);
+
+    expect(createResponse.body).toMatchObject({
+      ownerName: "Demo Owner",
+      ownerPhone: "13800138000",
+      name: "小奶球",
+      species: "cat",
+      personality: "嘴硬但会偷偷靠近",
+      stats: {
+        mood: 72,
+        energy: 68,
+        intimacy: 15
+      },
+      timeline: [
+        expect.objectContaining({
+          type: "adoption",
+          title: "小奶球来到这个小家"
+        })
+      ]
+    });
+    expect(createResponse.body.petNo).toMatch(/^VP\d{14}\d{4}$/);
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${createResponse.body.petNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          petNo: createResponse.body.petNo,
+          name: "小奶球",
+          species: "cat"
+        });
+      });
+  });
+
+  it("creates and lists community posts from a cloud pet", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Demo Owner",
+        ownerPhone: "13800138000",
+        name: "年糕糕",
+        species: "dog",
+        personality: "热情、黏人、永远想交朋友"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Demo Owner",
+        body: "今天年糕糕第一次把玩具叼到奶盖旁边，虽然被看了一眼就转开，但它还是开心地摇尾巴。"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          petNo: petResponse.body.petNo,
+          petName: "年糕糕",
+          authorName: "Demo Owner",
+          body: expect.stringContaining("玩具")
+        });
+        expect(body.postNo).toMatch(/^POST\d{14}\d{4}$/);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/community/posts")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              petName: "年糕糕"
+            })
+          ])
+        );
+      });
+  });
 });

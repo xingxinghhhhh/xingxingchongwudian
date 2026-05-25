@@ -13,16 +13,16 @@ export class AdminController {
   ) {}
 
   @Get("products")
-  listProducts() {
+  async listProducts() {
     return {
-      items: this.productsService.listAdminProducts()
+      items: await this.productsService.listAdminProducts()
     };
   }
 
   @Get("orders")
-  listOrders() {
+  async listOrders() {
     return {
-      items: this.ordersService.listOrders()
+      items: await this.ordersService.listOrders()
     };
   }
 

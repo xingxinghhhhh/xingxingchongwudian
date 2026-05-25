@@ -6,6 +6,8 @@ const navItems = [
   { href: "/", label: "首页" },
   { href: "/profiles", label: "档案" },
   { href: "/diary", label: "日记" },
+  { href: "/cloud-pets", label: "云养宠" },
+  { href: "/shop", label: "商城" },
   { href: "/about", label: "关于" },
   { href: "/#future", label: "未来计划" }
 ];

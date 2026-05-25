@@ -106,7 +106,7 @@ export const pets: PetProfile[] = [
     keywords: ["高冷", "嘴硬", "偷偷在意", "表面嫌弃", "实际依赖"],
     favoriteThing: "窗边晒太阳、偷偷盯着年糕、羽毛逗猫棒",
     signatureColor: "奶油白",
-    heroImage: "/images/naigai-niangao.png",
+    heroImage: "/brand/naigai-niangao/naigai-standard.png",
     heroImagePosition: "left center",
     summary:
       "奶盖总是一副“我才没有在意”的样子，可每次你起身、年糕靠近、门外有动静，它都会第一个偷偷看过去。"
@@ -122,7 +122,7 @@ export const pets: PetProfile[] = [
     keywords: ["热情", "贴贴", "委屈巴巴", "主动靠近", "永远开心"],
     favoriteThing: "追着奶盖跑、门口等人回家、圆滚滚地趴在脚边",
     signatureColor: "浅棕白",
-    heroImage: "/images/naigai-niangao.png",
+    heroImage: "/brand/naigai-niangao/niangao-standard.png",
     heroImagePosition: "right center",
     summary:
       "年糕把每一次靠近都当成新的机会，哪怕奶盖转身走开，它也会甩着小短腿再试一次。"

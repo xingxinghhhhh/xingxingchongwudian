@@ -6,9 +6,9 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get()
-  listProducts() {
+  async listProducts() {
     return {
-      items: this.productsService.listActiveProducts()
+      items: await this.productsService.listActiveProducts()
     };
   }
 

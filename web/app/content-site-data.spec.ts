@@ -21,9 +21,10 @@ describe("content site data", () => {
     expect(pets.map((pet) => pet.name)).toEqual(["奶盖", "年糕"]);
     expect(pets[0]?.temperament).toContain("傲娇");
     expect(pets[1]?.breedLabel).toBe("浅棕白色柯基幼犬");
-    expect(new Set(pets.map((pet) => pet.heroImage))).toEqual(
-      new Set(["/images/naigai-niangao.png"])
-    );
+    expect(pets.map((pet) => pet.heroImage)).toEqual([
+      "/brand/naigai-niangao/naigai-standard.png",
+      "/brand/naigai-niangao/niangao-standard.png"
+    ]);
   });
 
   it("returns the latest diary entries first", () => {

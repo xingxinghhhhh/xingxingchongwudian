@@ -1,0 +1,9 @@
+file '/mnt/data/naigai_niangao_auto_v1/output/tmp_slides/slide_01.png'
+duration 4.5
+file '/mnt/data/naigai_niangao_auto_v1/output/tmp_slides/slide_02.png'
+duration 4.5
+file '/mnt/data/naigai_niangao_auto_v1/output/tmp_slides/slide_03.png'
+duration 4.5
+file '/mnt/data/naigai_niangao_auto_v1/output/tmp_slides/slide_04.png'
+duration 4.5
+file '/mnt/data/naigai_niangao_auto_v1/output/tmp_slides/slide_04.png'

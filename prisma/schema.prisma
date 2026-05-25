@@ -40,6 +40,11 @@ enum PaymentStatus {
   refunded
 }
 
+enum VirtualPetSpecies {
+  cat
+  dog
+}
+
 model Product {
   id          String           @id @default(cuid())
   slug        String           @unique
@@ -93,6 +98,47 @@ model Customer {
   updatedAt      DateTime  @updatedAt
 }
 
+model VirtualPet {
+  id             String             @id @default(cuid())
+  petNo          String             @unique
+  ownerName      String
+  ownerPhone     String
+  name           String
+  species        VirtualPetSpecies
+  personality    String
+  avatarUrl      String
+  bio            String             @db.Text
+  mood           Int                @default(72)
+  energy         Int                @default(68)
+  intimacy       Int                @default(15)
+  timeline       VirtualPetEvent[]
+  communityPosts CommunityPost[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+}
+
+model VirtualPetEvent {
+  id        String     @id @default(cuid())
+  petId     String
+  pet       VirtualPet @relation(fields: [petId], references: [id])
+  type      String
+  title     String
+  body      String     @db.Text
+  createdAt DateTime   @default(now())
+}
+
+model CommunityPost {
+  id         String     @id @default(cuid())
+  postNo     String     @unique
+  petId      String
+  pet        VirtualPet @relation(fields: [petId], references: [id])
+  petNo      String
+  petName    String
+  authorName String
+  body       String     @db.Text
+  createdAt  DateTime   @default(now())
+}
+
 model Cart {
   id         String     @id @default(cuid())
   cartNo     String     @unique
@@ -130,17 +176,25 @@ model Address {
 }
 
 model Order {
-  id          String        @id @default(cuid())
-  orderNo     String        @unique
-  customerId  String?
-  customer    Customer?     @relation(fields: [customerId], references: [id])
-  status      OrderStatus   @default(pending_payment)
-  totalCents  Int
-  items       OrderItem[]
-  payments    Payment[]
-  shipments   Shipment[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  orderNo       String        @unique
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+  customerName  String
+  customerPhone String
+  receiverName  String
+  receiverPhone String
+  province      String
+  city          String
+  district      String
+  detail        String
+  status        OrderStatus   @default(pending_payment)
+  totalCents    Int
+  items         OrderItem[]
+  payments      Payment[]
+  shipments     Shipment[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 }
 
 model OrderItem {

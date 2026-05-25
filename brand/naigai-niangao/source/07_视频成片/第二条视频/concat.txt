@@ -1,0 +1,13 @@
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_01.png'
+duration 4
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_02.png'
+duration 4
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_03.png'
+duration 4
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_04.png'
+duration 4
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_05.png'
+duration 4
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_06.png'
+duration 4
+file '/mnt/data/day2_naigai_niangao/source/07_视频成片/第二条视频/scene_06.png'

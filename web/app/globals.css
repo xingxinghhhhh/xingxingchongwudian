@@ -15,6 +15,521 @@
   --shadow: 0 24px 70px rgba(30, 23, 19, 0.12);
 }
 
+.shop-page {
+  background:
+    linear-gradient(135deg, rgba(246, 247, 235, 0.92), rgba(228, 244, 232, 0.82)),
+    radial-gradient(circle at 18% 16%, rgba(238, 115, 78, 0.2), transparent 28%),
+    #f7f8f0;
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+.shop-hero {
+  padding: 96px 24px 36px;
+}
+
+.shop-hero__inner,
+.shop-section {
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.shop-hero h1 {
+  font-size: clamp(42px, 8vw, 88px);
+  line-height: 0.95;
+  margin: 12px 0 18px;
+  max-width: 760px;
+}
+
+.shop-hero p:not(.section__kicker) {
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.7;
+  max-width: 660px;
+}
+
+.shop-section {
+  padding: 0 24px 96px;
+}
+
+.shop-grid {
+  align-items: start;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+.shop-products {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shop-product,
+.shop-cart,
+.shop-error {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(42, 56, 44, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(55, 66, 52, 0.08);
+}
+
+.shop-product {
+  display: grid;
+  grid-template-rows: 210px 1fr;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+.shop-product__imageWrap {
+  background: #e6eadf;
+  overflow: hidden;
+}
+
+.shop-product__image {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.shop-product__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+}
+
+.shop-product__type,
+.shop-cart__eyebrow {
+  color: #5f7f62;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.shop-product h2,
+.shop-cart h2,
+.shop-error h2 {
+  font-size: 24px;
+  line-height: 1.18;
+  margin: 0;
+}
+
+.shop-product p {
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.shop-product__meta,
+.shop-cart__summary {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.shop-product__meta strong,
+.shop-cart__summary strong {
+  color: #c94f35;
+  font-size: 22px;
+}
+
+.shop-product__meta span,
+.shop-cart__summary span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.shop-product__button {
+  align-items: center;
+  background: #263d2b;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 800;
+  gap: 8px;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 18px;
+}
+
+.cloud-pets-page {
+  background:
+    radial-gradient(circle at 12% 14%, rgba(255, 197, 111, 0.28), transparent 26%),
+    radial-gradient(circle at 88% 8%, rgba(88, 148, 128, 0.24), transparent 30%),
+    linear-gradient(135deg, #fff8ec 0%, #eef7ee 48%, #f8efe4 100%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.cloud-pets-hero {
+  padding: 108px 24px 34px;
+}
+
+.cloud-pets-hero--compact {
+  padding-bottom: 8px;
+}
+
+.cloud-pets-hero__inner,
+.cloud-pets-section {
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.cloud-pets-hero h1 {
+  font-size: clamp(42px, 7.5vw, 86px);
+  line-height: 0.96;
+  margin: 14px 0 18px;
+  max-width: 920px;
+}
+
+.cloud-pets-hero p:not(.section__kicker) {
+  color: var(--muted-strong);
+  font-size: 18px;
+  line-height: 1.75;
+  max-width: 780px;
+}
+
+.cloud-pets-section {
+  padding: 0 24px 96px;
+}
+
+.cloud-pets-grid {
+  display: grid;
+  gap: 22px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+}
+
+.cloud-card {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(45, 58, 41, 0.13);
+  border-radius: 30px;
+  box-shadow: 0 22px 68px rgba(57, 49, 37, 0.1);
+  padding: 28px;
+}
+
+.cloud-card h2,
+.cloud-card h3 {
+  margin: 0;
+}
+
+.cloud-card h2 {
+  font-size: 30px;
+  line-height: 1.12;
+  margin-top: 6px;
+}
+
+.cloud-card p {
+  color: var(--muted-strong);
+  line-height: 1.7;
+}
+
+.cloud-card--form,
+.cloud-community {
+  min-height: 100%;
+}
+
+.cloud-form {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 22px;
+}
+
+.cloud-form label,
+.community-form {
+  display: grid;
+  gap: 8px;
+}
+
+.cloud-form label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.cloud-form__wide {
+  grid-column: 1 / -1;
+}
+
+.cloud-form input,
+.cloud-form select,
+.cloud-form textarea,
+.community-form textarea {
+  background: rgba(255, 253, 247, 0.88);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  padding: 12px 14px;
+}
+
+.cloud-form input:focus,
+.cloud-form select:focus,
+.cloud-form textarea:focus,
+.community-form textarea:focus {
+  border-color: rgba(199, 102, 71, 0.64);
+  box-shadow: 0 0 0 4px rgba(199, 102, 71, 0.12);
+}
+
+.cloud-button,
+.cloud-link-button {
+  align-items: center;
+  background: #264336;
+  border: 0;
+  border-radius: 999px;
+  color: white;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 850;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 20px;
+  text-decoration: none;
+}
+
+.cloud-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.cloud-link-button--light {
+  background: rgba(38, 67, 54, 0.1);
+  color: #264336;
+}
+
+.cloud-status {
+  background: rgba(255, 246, 224, 0.78);
+  border-radius: 18px;
+  margin: 18px 0 0;
+  padding: 12px 14px;
+}
+
+.cloud-status--error {
+  background: rgba(255, 230, 224, 0.9);
+  color: #a33d2b;
+}
+
+.cloud-empty {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.cloud-empty strong {
+  font-size: 20px;
+}
+
+.cloud-empty span,
+.cloud-muted {
+  color: var(--muted);
+}
+
+.pet-homepage-card {
+  display: grid;
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.pet-homepage-card img,
+.pet-homepage-detail img {
+  aspect-ratio: 16 / 10;
+  border-radius: 24px;
+  display: block;
+  height: auto;
+  object-fit: cover;
+  width: 100%;
+}
+
+.pet-homepage-card span,
+.pet-homepage-detail span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pet-homepage-card h3,
+.pet-homepage-detail h2 {
+  font-size: 36px;
+  line-height: 1.05;
+  margin: 6px 0 10px;
+}
+
+.pet-homepage-card a:not(.cloud-link-button) {
+  color: #b34c34;
+  font-weight: 850;
+}
+
+.pet-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.pet-stats strong {
+  background: rgba(246, 222, 180, 0.78);
+  border-radius: 999px;
+  color: #5f4528;
+  padding: 8px 12px;
+}
+
+.pet-timeline {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pet-timeline li {
+  background: rgba(255, 251, 244, 0.84);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.community-form {
+  margin-top: 20px;
+}
+
+.community-feed {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.community-post {
+  background: rgba(246, 252, 239, 0.82);
+  border: 1px solid rgba(38, 67, 54, 0.12);
+  border-radius: 20px;
+  padding: 16px;
+}
+
+.community-post strong {
+  color: #264336;
+}
+
+.community-post p {
+  margin: 8px 0;
+}
+
+.community-post span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.cloud-shop-bridge {
+  background:
+    linear-gradient(145deg, rgba(38, 67, 54, 0.94), rgba(80, 110, 70, 0.88)),
+    #264336;
+  color: white;
+}
+
+.cloud-shop-bridge p,
+.cloud-shop-bridge .section__kicker {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.cloud-shop-bridge .cloud-link-button {
+  background: white;
+  color: #264336;
+  margin-top: 8px;
+}
+
+.pet-homepage-detail {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+}
+
+.pet-timeline--detail {
+  grid-column: 1 / -1;
+}
+
+.pet-homepage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.shop-product__button:disabled {
+  background: #9ea99d;
+  cursor: not-allowed;
+}
+
+.shop-cart {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  position: sticky;
+  top: 96px;
+}
+
+.shop-cart__message,
+.shop-cart__error {
+  border-radius: 8px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 14px;
+}
+
+.shop-cart__message {
+  background: rgba(94, 128, 98, 0.12);
+  color: #33593b;
+}
+
+.shop-cart__error {
+  background: rgba(201, 79, 53, 0.12);
+  color: #a23f2c;
+}
+
+.shop-cart__summary {
+  border-top: 1px solid rgba(42, 56, 44, 0.14);
+  padding-top: 18px;
+}
+
+.shop-cart__summary--empty strong {
+  color: var(--muted);
+}
+
+.shop-error {
+  padding: 26px;
+}
+
+.shop-error p {
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+
+@media (max-width: 900px) {
+  .cloud-pets-grid,
+  .pet-homepage-detail,
+  .shop-grid,
+  .shop-products {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-form {
+    grid-template-columns: 1fr;
+  }
+
+  .shop-cart {
+    position: static;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -118,7 +633,7 @@ textarea {
   inset: 0;
   background:
     linear-gradient(180deg, rgba(253, 251, 248, 0.18), rgba(253, 251, 248, 0.88)),
-    url("/images/naigai-niangao.png")
+    url("/brand/naigai-niangao/duo-cover.png")
       center center / cover no-repeat;
   transform: scale(1.03);
 }

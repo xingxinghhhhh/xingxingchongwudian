@@ -1,0 +1,8 @@
+Day 4 输出文件
+
+D:\AI\kzt\brand\naigai-niangao\source\07_视频成片\第一条视频\output\day4-video-01.mp4
+D:\AI\kzt\brand\naigai-niangao\source\07_视频成片\第一条视频\output\day4-video-01-cover.png
+
+说明：
+- 成片为无配乐版本，方便后续在剪映中补音乐或旁白。
+- 封面图已单独导出，可直接用于抖音/小红书封面。

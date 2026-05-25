@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "../database/prisma.service";
 import { OrdersService } from "../orders/orders.service";
 import { ProductsService } from "../products/products.service";
 import { AddCartItemDto } from "./dto/add-cart-item.dto";
@@ -31,45 +33,85 @@ export class CartService {
 
   constructor(
     private readonly productsService: ProductsService,
-    private readonly ordersService: OrdersService
+    private readonly ordersService: OrdersService,
+    private readonly configService: ConfigService,
+    private readonly prisma: PrismaService
   ) {}
 
-  addItem(dto: AddCartItemDto): CartResponse {
+  async addItem(dto: AddCartItemDto): Promise<CartResponse> {
+    if (this.isDatabaseConfigured()) {
+      return this.addDatabaseItem(dto);
+    }
+
     const cart = dto.cartId ? this.getCartRecord(dto.cartId) : this.createCart();
     const existingQuantity = cart.items.get(dto.skuCode) ?? 0;
     const nextQuantity = existingQuantity + dto.quantity;
 
-    this.assertSkuHasStock(dto.skuCode, nextQuantity);
+    await this.assertSkuHasStock(dto.skuCode, nextQuantity);
     cart.items.set(dto.skuCode, nextQuantity);
 
     return this.toCartResponse(cart);
   }
 
-  getCart(cartId: string): CartResponse {
+  async getCart(cartId: string): Promise<CartResponse> {
+    if (this.isDatabaseConfigured()) {
+      return this.getDatabaseCart(cartId);
+    }
+
     return this.toCartResponse(this.getCartRecord(cartId));
   }
 
-  updateItem(skuCode: string, dto: UpdateCartItemDto): CartResponse {
+  async updateItem(
+    skuCode: string,
+    dto: UpdateCartItemDto
+  ): Promise<CartResponse> {
+    if (this.isDatabaseConfigured()) {
+      return this.updateDatabaseItem(skuCode, dto);
+    }
+
     const cart = this.getCartRecord(dto.cartId);
 
     if (!cart.items.has(skuCode)) {
       throw new NotFoundException(`Cart item ${skuCode} not found`);
     }
 
-    this.assertSkuHasStock(skuCode, dto.quantity);
+    await this.assertSkuHasStock(skuCode, dto.quantity);
     cart.items.set(skuCode, dto.quantity);
 
     return this.toCartResponse(cart);
   }
 
-  checkout(cartId: string, dto: CheckoutCartDto) {
+  async checkout(cartId: string, dto: CheckoutCartDto) {
+    if (this.isDatabaseConfigured()) {
+      const cart = await this.getDatabaseCart(cartId);
+
+      if (cart.items.length === 0) {
+        throw new BadRequestException("Cart is empty");
+      }
+
+      const order = await this.ordersService.createOrder({
+        customer: dto.customer,
+        address: dto.address,
+        items: cart.items.map((item) => ({
+          skuCode: item.skuCode,
+          quantity: item.quantity
+        }))
+      });
+
+      await this.prisma.cartItem.deleteMany({
+        where: { cart: { cartNo: cartId } }
+      });
+
+      return order;
+    }
+
     const cart = this.getCartRecord(cartId);
 
     if (cart.items.size === 0) {
       throw new BadRequestException("Cart is empty");
     }
 
-    const order = this.ordersService.createOrder({
+    const order = await this.ordersService.createOrder({
       customer: dto.customer,
       address: dto.address,
       items: Array.from(cart.items.entries()).map(([skuCode, quantity]) => ({
@@ -105,8 +147,8 @@ export class CartService {
     return cart;
   }
 
-  private assertSkuHasStock(skuCode: string, quantity: number) {
-    const match = this.productsService.findVariantBySkuCode(skuCode);
+  private async assertSkuHasStock(skuCode: string, quantity: number) {
+    const match = await this.productsService.findVariantBySkuCode(skuCode);
 
     if (!match) {
       throw new BadRequestException(`Unknown SKU ${skuCode}`);
@@ -117,22 +159,24 @@ export class CartService {
     }
   }
 
-  private toCartResponse(cart: CartRecord): CartResponse {
-    const items = Array.from(cart.items.entries()).map(([skuCode, quantity]) => {
-      const match = this.productsService.findVariantBySkuCode(skuCode);
+  private async toCartResponse(cart: CartRecord): Promise<CartResponse> {
+    const items = await Promise.all(
+      Array.from(cart.items.entries()).map(async ([skuCode, quantity]) => {
+        const match = await this.productsService.findVariantBySkuCode(skuCode);
 
-      if (!match) {
-        throw new BadRequestException(`Unknown SKU ${skuCode}`);
-      }
+        if (!match) {
+          throw new BadRequestException(`Unknown SKU ${skuCode}`);
+        }
 
-      return {
-        skuCode,
-        title: match.product.title,
-        quantity,
-        unitPriceCents: match.variant.priceCents,
-        lineTotalCents: match.variant.priceCents * quantity
-      };
-    });
+        return {
+          skuCode,
+          title: match.product.title,
+          quantity,
+          unitPriceCents: match.variant.priceCents,
+          lineTotalCents: match.variant.priceCents * quantity
+        };
+      })
+    );
 
     const subtotalCents = items.reduce(
       (total, item) => total + item.lineTotalCents,
@@ -144,5 +188,147 @@ export class CartService {
       items,
       subtotalCents
     };
+  }
+
+  private async addDatabaseItem(dto: AddCartItemDto): Promise<CartResponse> {
+    const match = await this.productsService.findVariantBySkuCode(dto.skuCode);
+
+    if (!match) {
+      throw new BadRequestException(`Unknown SKU ${dto.skuCode}`);
+    }
+
+    if (!match.variant.isAvailable || match.variant.stock < dto.quantity) {
+      throw new BadRequestException(`Insufficient stock for SKU ${dto.skuCode}`);
+    }
+
+    const cart = await this.prisma.$transaction(async (tx) => {
+      const savedCart = dto.cartId
+        ? await tx.cart.findUnique({ where: { cartNo: dto.cartId } })
+        : await tx.cart.create({ data: { cartNo: this.createDatabaseCartNo() } });
+
+      if (!savedCart) {
+        throw new NotFoundException("Cart not found");
+      }
+
+      await tx.cartItem.upsert({
+        where: {
+          cartId_variantId: {
+            cartId: savedCart.id,
+            variantId: match.variant.id
+          }
+        },
+        update: {
+          quantity: { increment: dto.quantity }
+        },
+        create: {
+          cartId: savedCart.id,
+          variantId: match.variant.id,
+          quantity: dto.quantity
+        }
+      });
+
+      return savedCart;
+    });
+
+    return this.getDatabaseCart(cart.cartNo);
+  }
+
+  private async updateDatabaseItem(
+    skuCode: string,
+    dto: UpdateCartItemDto
+  ): Promise<CartResponse> {
+    const cart = await this.prisma.cart.findUnique({
+      where: { cartNo: dto.cartId }
+    });
+
+    if (!cart) {
+      throw new NotFoundException("Cart not found");
+    }
+
+    const match = await this.productsService.findVariantBySkuCode(skuCode);
+
+    if (!match) {
+      throw new BadRequestException(`Unknown SKU ${skuCode}`);
+    }
+
+    if (!match.variant.isAvailable || match.variant.stock < dto.quantity) {
+      throw new BadRequestException(`Insufficient stock for SKU ${skuCode}`);
+    }
+
+    const updated = await this.prisma.cartItem.updateMany({
+      where: {
+        cartId: cart.id,
+        variantId: match.variant.id
+      },
+      data: { quantity: dto.quantity }
+    });
+
+    if (updated.count !== 1) {
+      throw new NotFoundException(`Cart item ${skuCode} not found`);
+    }
+
+    return this.getDatabaseCart(cart.cartNo);
+  }
+
+  private async getDatabaseCart(cartId: string): Promise<CartResponse> {
+    const cart = await this.prisma.cart.findUnique({
+      where: { cartNo: cartId },
+      include: {
+        items: {
+          include: {
+            variant: {
+              include: {
+                product: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!cart) {
+      throw new NotFoundException("Cart not found");
+    }
+
+    return this.toDatabaseCartResponse(cart);
+  }
+
+  private toDatabaseCartResponse(cart: {
+    cartNo: string;
+    items: Array<{
+      quantity: number;
+      variant: {
+        skuCode: string;
+        priceCents: number;
+        product: { title: string };
+      };
+    }>;
+  }): CartResponse {
+    const items = cart.items.map((item) => ({
+      skuCode: item.variant.skuCode,
+      title: item.variant.product.title,
+      quantity: item.quantity,
+      unitPriceCents: item.variant.priceCents,
+      lineTotalCents: item.variant.priceCents * item.quantity
+    }));
+    const subtotalCents = items.reduce(
+      (total, item) => total + item.lineTotalCents,
+      0
+    );
+
+    return {
+      cartId: cart.cartNo,
+      items,
+      subtotalCents
+    };
+  }
+
+  private isDatabaseConfigured() {
+    return Boolean(this.configService.get<string>("DATABASE_URL"));
+  }
+
+  private createDatabaseCartNo() {
+    this.sequence += 1;
+    return `cart_${Date.now()}_${String(this.sequence).padStart(4, "0")}`;
   }
 }

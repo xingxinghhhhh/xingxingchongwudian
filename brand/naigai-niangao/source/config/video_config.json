@@ -1,0 +1,10 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "seconds_per_image": 4.5,
+  "output": "output/videos/day04_奶盖和年糕第1天.mp4",
+  "font_size": 54,
+  "subtitle_bottom_margin": 210,
+  "subtitle_box_opacity": 150
+}
