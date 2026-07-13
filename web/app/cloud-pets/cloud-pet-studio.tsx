@@ -4,14 +4,22 @@ import Link from "next/link";
 import { FormEvent, startTransition, useEffect, useState } from "react";
 import type {
   CloudPetProfile,
+  CloudPetRecommendation,
   CommunityPost,
-  CreateCloudPetInput
+  CreateCloudPetInput,
+  UpdateCloudPetHomepageInput
 } from "./cloud-pets-api";
 import {
   createCloudPet,
   createCommunityPost,
+  commentOnCommunityPost,
+  followCloudPet,
   getCloudPet,
-  listCommunityPosts
+  getCloudPetRecommendations,
+  likeCommunityPost,
+  listCommunityPosts,
+  reportCommunityPost,
+  updateCloudPetHomepage
 } from "./cloud-pets-api";
 
 const defaultPet: CreateCloudPetInput = {
@@ -25,6 +33,9 @@ const defaultPet: CreateCloudPetInput = {
 export function CloudPetStudio() {
   const [form, setForm] = useState(defaultPet);
   const [activePet, setActivePet] = useState<CloudPetProfile | null>(null);
+  const [recommendations, setRecommendations] = useState<
+    CloudPetRecommendation[]
+  >([]);
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [postBody, setPostBody] = useState(
     "今天它在窗边晒太阳，听见年糕路过时悄悄抬头，又装作没看见。"
@@ -33,6 +44,7 @@ export function CloudPetStudio() {
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
+  const [busyInteraction, setBusyInteraction] = useState<string | null>(null);
 
   useEffect(() => {
     const storedPetNo = localStorage.getItem("kzt_active_cloud_pet");
@@ -44,6 +56,7 @@ export function CloudPetStudio() {
         .then((pet) => {
           setActivePet(pet);
           setStatus(`已恢复 ${pet.name} 的专属主页。`);
+          void refreshRecommendations(pet.petNo);
         })
         .catch(() => {
           localStorage.removeItem("kzt_active_cloud_pet");
@@ -60,6 +73,7 @@ export function CloudPetStudio() {
       const pet = await createCloudPet(form);
       localStorage.setItem("kzt_active_cloud_pet", pet.petNo);
       setActivePet(pet);
+      await refreshRecommendations(pet.petNo);
       setStatus(`${pet.name} 已创建，专属主页和社区身份都准备好了。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "定制云养宠失败");
@@ -97,11 +111,124 @@ export function CloudPetStudio() {
     }
   }
 
+  async function handleLike(post: CommunityPost) {
+    if (!activePet) {
+      setError("请先定制一只云养宠再互动");
+      return;
+    }
+
+    setBusyInteraction(`like-${post.postNo}`);
+    setError(null);
+
+    try {
+      await likeCommunityPost(post.postNo, {
+        memberPhone: activePet.ownerPhone,
+        authorName: activePet.ownerName
+      });
+      await refreshCommunity();
+      setStatus(`${post.petName} 的动态已点赞。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "点赞失败");
+    } finally {
+      setBusyInteraction(null);
+    }
+  }
+
+  async function handleComment(post: CommunityPost) {
+    if (!activePet) {
+      setError("请先定制一只云养宠再评论");
+      return;
+    }
+
+    setBusyInteraction(`comment-${post.postNo}`);
+    setError(null);
+
+    try {
+      await commentOnCommunityPost(post.postNo, {
+        memberPhone: activePet.ownerPhone,
+        authorName: activePet.ownerName,
+        body: `${activePet.name} 也来参与这条互动。`
+      });
+      await refreshCommunity();
+      setStatus(`${post.petName} 的动态已评论。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "评论失败");
+    } finally {
+      setBusyInteraction(null);
+    }
+  }
+
+  async function handleReport(post: CommunityPost) {
+    if (!activePet) {
+      setError("请先定制一只云养宠再举报");
+      return;
+    }
+
+    setBusyInteraction(`report-${post.postNo}`);
+    setError(null);
+
+    try {
+      await reportCommunityPost(post.postNo, {
+        memberPhone: activePet.ownerPhone,
+        reporterName: activePet.ownerName,
+        reason: "用户从社区前台提交的内容复核请求。"
+      });
+      await refreshCommunity();
+      setStatus("举报已进入商家后台处理队列。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "举报失败");
+    } finally {
+      setBusyInteraction(null);
+    }
+  }
+
+  async function handleFollowPet(pet: CloudPetProfile) {
+    setBusyInteraction(`follow-${pet.petNo}`);
+    setError(null);
+
+    try {
+      await followCloudPet(pet.petNo, {
+        followerPhone: pet.ownerPhone,
+        followerName: pet.ownerName
+      });
+      setStatus(`${pet.name} 已加入关注列表，后续可用于复访提醒。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "关注失败");
+    } finally {
+      setBusyInteraction(null);
+    }
+  }
+
+  async function handleHomepageUpdate(input: UpdateCloudPetHomepageInput) {
+    if (!activePet) {
+      setError("请先定制一只云养宠");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const updatedPet = await updateCloudPetHomepage(activePet.petNo, input);
+      setActivePet(updatedPet);
+      setStatus(`${updatedPet.name} 的专属主页配置已保存。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "主页配置保存失败");
+    }
+  }
+
   async function refreshCommunity() {
     try {
       setPosts(await listCommunityPosts());
     } catch {
       setPosts([]);
+    }
+  }
+
+  async function refreshRecommendations(petNo: string) {
+    try {
+      setRecommendations(await getCloudPetRecommendations(petNo));
+    } catch {
+      setRecommendations([]);
     }
   }
 
@@ -186,7 +313,18 @@ export function CloudPetStudio() {
         <p className="section__kicker">Pet Homepage</p>
         <h2>宠物专属主页</h2>
         {activePet ? (
-          <PetProfile pet={activePet} />
+          <>
+          <PetProfile
+            busyInteraction={busyInteraction}
+            onFollow={handleFollowPet}
+            pet={activePet}
+          />
+          <HomepageBuilder
+            key={activePet.petNo}
+            pet={activePet}
+            onSave={handleHomepageUpdate}
+          />
+          </>
         ) : (
           <div className="cloud-empty">
             <strong>还没有生成宠物主页</strong>
@@ -218,7 +356,44 @@ export function CloudPetStudio() {
               <article className="community-post" key={post.postNo}>
                 <strong>{post.petName}</strong>
                 <p>{post.body}</p>
-                <span>{post.authorName}</span>
+                <span>
+                  {post.authorName} · {post.likeCount} likes · {post.commentCount} comments
+                </span>
+                {post.commerceBridge ? (
+                  <Link className="cloud-recommendation" href={post.commerceBridge.ctaHref}>
+                    <strong>
+                      {post.commerceBridge.recommendedProduct?.title ??
+                        post.commerceBridge.ctaLabel}
+                    </strong>
+                    <span>{post.commerceBridge.reason}</span>
+                  </Link>
+                ) : null}
+                <div className="admin-inline-actions">
+                  <button
+                    className="cloud-button"
+                    disabled={!activePet || busyInteraction === `like-${post.postNo}`}
+                    onClick={() => void handleLike(post)}
+                    type="button"
+                  >
+                    点赞
+                  </button>
+                  <button
+                    className="cloud-button"
+                    disabled={!activePet || busyInteraction === `comment-${post.postNo}`}
+                    onClick={() => void handleComment(post)}
+                    type="button"
+                  >
+                    评论
+                  </button>
+                  <button
+                    className="cloud-button"
+                    disabled={!activePet || busyInteraction === `report-${post.postNo}`}
+                    onClick={() => void handleReport(post)}
+                    type="button"
+                  >
+                    举报
+                  </button>
+                </div>
               </article>
             ))
           ) : (
@@ -233,6 +408,20 @@ export function CloudPetStudio() {
         <p>
           云养宠档案可以继续驱动商品推荐：猫猫优先逗猫棒和猫抓配件，狗狗优先耐咬玩具与互动训练用品。
         </p>
+        {recommendations.length > 0 ? (
+          <div className="cloud-recommendations">
+            {recommendations.map((product) => (
+              <Link
+                className="cloud-recommendation"
+                href="/shop"
+                key={product.slug}
+              >
+                <strong>{product.title}</strong>
+                <span>{product.reason}</span>
+              </Link>
+            ))}
+          </div>
+        ) : null}
         <Link className="cloud-link-button" href="/shop">
           去宠物商城选礼物
         </Link>
@@ -241,7 +430,131 @@ export function CloudPetStudio() {
   );
 }
 
-function PetProfile({ pet }: { pet: CloudPetProfile }) {
+function getCareStateLabel(state: CloudPetProfile["growth"]["careState"]) {
+  const labels: Record<CloudPetProfile["growth"]["careState"], string> = {
+    needs_care: "需要陪伴",
+    steady: "状态稳定",
+    thriving: "元气满满"
+  };
+
+  return labels[state];
+}
+
+function HomepageBuilder({
+  onSave,
+  pet
+}: {
+  onSave: (input: UpdateCloudPetHomepageInput) => Promise<void>;
+  pet: CloudPetProfile;
+}) {
+  const [form, setForm] = useState<UpdateCloudPetHomepageInput>({
+    headline: pet.homepage.headline,
+    ownerStory: pet.homepage.ownerStory,
+    showGrowthArchive: pet.homepage.showGrowthArchive,
+    showMallRecommendations: pet.homepage.showMallRecommendations,
+    theme: pet.homepage.theme
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+
+    try {
+      await onSave(form);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <form className="homepage-builder" onSubmit={(event) => void handleSubmit(event)}>
+      <div>
+        <p className="section__kicker">Homepage Builder</p>
+        <h3>专属主页配置</h3>
+        <p>调整主题、头图文案和成长/商城模块，让分享页更像一只宠物自己的小空间。</p>
+      </div>
+      <label>
+        主页主题
+        <select
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              theme: event.target.value as UpdateCloudPetHomepageInput["theme"]
+            }))
+          }
+          value={form.theme}
+        >
+          <option value="sunny">暖阳日记</option>
+          <option value="forest">森林陪伴</option>
+          <option value="midnight">夜晚星窝</option>
+        </select>
+      </label>
+      <label>
+        主页标题
+        <input
+          maxLength={80}
+          onChange={(event) =>
+            setForm((current) => ({ ...current, headline: event.target.value }))
+          }
+          required
+          value={form.headline}
+        />
+      </label>
+      <label className="homepage-builder__wide">
+        主人故事
+        <textarea
+          maxLength={240}
+          onChange={(event) =>
+            setForm((current) => ({ ...current, ownerStory: event.target.value }))
+          }
+          required
+          rows={3}
+          value={form.ownerStory}
+        />
+      </label>
+      <label className="homepage-builder__toggle">
+        <input
+          checked={form.showGrowthArchive}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              showGrowthArchive: event.target.checked
+            }))
+          }
+          type="checkbox"
+        />
+        展示成长档案
+      </label>
+      <label className="homepage-builder__toggle">
+        <input
+          checked={form.showMallRecommendations}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              showMallRecommendations: event.target.checked
+            }))
+          }
+          type="checkbox"
+        />
+        展示商城推荐
+      </label>
+      <button className="cloud-button" disabled={isSaving} type="submit">
+        {isSaving ? "保存中" : "保存主页配置"}
+      </button>
+    </form>
+  );
+}
+
+function PetProfile({
+  busyInteraction,
+  onFollow,
+  pet
+}: {
+  busyInteraction: string | null;
+  onFollow: (pet: CloudPetProfile) => Promise<void>;
+  pet: CloudPetProfile;
+}) {
   return (
     <div className="pet-homepage-card">
       <img alt={pet.name} src={pet.avatarUrl} />
@@ -249,6 +562,19 @@ function PetProfile({ pet }: { pet: CloudPetProfile }) {
         <span>{pet.petNo}</span>
         <h3>{pet.name}</h3>
         <p>{pet.bio}</p>
+        <div className="pet-growth">
+          <div className="pet-growth__header">
+            <strong>{pet.growth.levelLabel}</strong>
+            <span>{getCareStateLabel(pet.growth.careState)}</span>
+          </div>
+          <div className="pet-growth__bar" aria-label="growth progress">
+            <span style={{ width: `${pet.growth.progressPercent}%` }} />
+          </div>
+          <p>
+            成长值 {pet.growth.experiencePoints}/{pet.growth.nextLevelExperience} ·
+            照护分 {pet.growth.careScore} · 今日任务 {pet.growth.todayCompletedTaskCount}
+          </p>
+        </div>
         <div className="pet-stats">
           <strong>心情 {pet.stats.mood}</strong>
           <strong>精力 {pet.stats.energy}</strong>
@@ -256,6 +582,14 @@ function PetProfile({ pet }: { pet: CloudPetProfile }) {
         </div>
         <Link href={`/cloud-pets/${pet.petNo}`}>打开完整主页</Link>
       </div>
+      <button
+        className="cloud-button"
+        disabled={busyInteraction === `follow-${pet.petNo}`}
+        onClick={() => void onFollow(pet)}
+        type="button"
+      >
+        关注这只宠物
+      </button>
       <ol className="pet-timeline">
         {pet.timeline.map((event) => (
           <li key={`${event.type}-${event.createdAt}`}>

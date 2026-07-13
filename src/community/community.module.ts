@@ -7,6 +7,7 @@ import { CommunityService } from "./community.service";
 @Module({
   imports: [CloudPetsModule, DatabaseModule],
   controllers: [CommunityController],
-  providers: [CommunityService]
+  providers: [CommunityService],
+  exports: [CommunityService]
 })
 export class CommunityModule {}

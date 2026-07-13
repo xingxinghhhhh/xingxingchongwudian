@@ -1,22 +1,317 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards
+} from "@nestjs/common";
+import { AfterSalesService } from "../after-sales/after-sales.service";
+import { UpdateRefundStatusDto } from "../after-sales/dto/update-refund-status.dto";
+import { AnalyticsService } from "../analytics/analytics.service";
+import { CloudPetsService } from "../cloud-pets/cloud-pets.service";
+import { CmsService } from "../cms/cms.service";
+import { CreateCmsBlockDto } from "../cms/dto/create-cms-block.dto";
+import { UpdateCmsBlockStatusDto } from "../cms/dto/update-cms-block-status.dto";
+import { CommunityService } from "../community/community.service";
+import { CustomersService } from "../customers/customers.service";
+import { CreateCustomerFollowUpDto } from "../customers/dto/create-customer-follow-up.dto";
+import { UpdateCustomerCrmDto } from "../customers/dto/update-customer-crm.dto";
+import { MarketingService } from "../marketing/marketing.service";
 import { OrdersService } from "../orders/orders.service";
+import { PaymentsService } from "../payments/payments.service";
 import { ProductsService } from "../products/products.service";
+import { ReviewsService } from "../reviews/reviews.service";
+import { UpdateReviewStatusDto } from "../reviews/dto/update-review-status.dto";
+import {
+  AdminPermission,
+  AdminRequest,
+  AdminStaff,
+  StaffService
+} from "../staff/staff.service";
 import { AdminTokenGuard } from "./admin-token.guard";
+import { BackfillCloudPetDailyDiaryDto } from "./dto/backfill-cloud-pet-daily-diary.dto";
+import { CreateAdminProductDto } from "./dto/create-admin-product.dto";
+import { CreateShipmentEventDto } from "./dto/create-shipment-event.dto";
+import { CreateShipmentDto } from "./dto/create-shipment.dto";
+import { UpdateCouponStatusDto } from "../marketing/dto/update-coupon-status.dto";
+import { UpdateCommunityPostStatusDto } from "./dto/update-community-post-status.dto";
+import { UpdateCommunityReportStatusDto } from "../community/dto/update-community-report-status.dto";
 import { UpdateOrderStatusDto } from "./dto/update-order-status.dto";
+import { UpdateProductStatusDto } from "./dto/update-product-status.dto";
+import { UpdateVariantStockDto } from "./dto/update-variant-stock.dto";
 
 @Controller("admin")
 @UseGuards(AdminTokenGuard)
 export class AdminController {
   constructor(
     private readonly productsService: ProductsService,
-    private readonly ordersService: OrdersService
+    private readonly ordersService: OrdersService,
+    private readonly cloudPetsService: CloudPetsService,
+    private readonly communityService: CommunityService,
+    private readonly marketingService: MarketingService,
+    private readonly afterSalesService: AfterSalesService,
+    private readonly paymentsService: PaymentsService,
+    private readonly reviewsService: ReviewsService,
+    private readonly analyticsService: AnalyticsService,
+    private readonly staffService: StaffService,
+    private readonly cmsService: CmsService,
+    private readonly customersService: CustomersService
   ) {}
+
+  @Get("dashboard")
+  async getDashboard() {
+    const [
+      activeProducts,
+      lowStockVariants,
+      orders,
+      cloudPetMetrics,
+      dailyDiaryStatus,
+      communityMetrics,
+      refunds,
+      operationAuditMetrics,
+      payments
+    ] = await Promise.all([
+      this.productsService.listActiveProducts(),
+      this.productsService.listLowStockVariants(),
+      this.ordersService.listOrders(),
+      this.cloudPetsService.getMetrics(),
+      this.cloudPetsService.getDailyDiaryStatusForToday(),
+      this.communityService.getMetrics(),
+      this.afterSalesService.listRefundRequests(),
+      this.staffService.getOperationAuditMetrics(),
+      this.paymentsService.listAdminPayments()
+    ]);
+    const pendingRefunds = refunds.filter(
+      (refund) => refund.status === "pending_review"
+    );
+    const paymentItems = payments.items;
+    const activePaymentIntents = paymentItems.filter((payment) =>
+      ["created", "pending"].includes(payment.status)
+    );
+
+    return {
+      activeProductCount: activeProducts.length,
+      lowStockVariantCount: lowStockVariants.length,
+      orderCount: orders.length,
+      pendingOrderCount: orders.filter(
+        (order) => order.status === "pending_payment"
+      ).length,
+      pendingRefundCount: pendingRefunds.length,
+      expeditedRefundCount: pendingRefunds.filter(
+        (refund) => refund.reviewRisk?.priority === "expedite"
+      ).length,
+      blockedRefundCount: pendingRefunds.filter(
+        (refund) => refund.reviewRisk?.priority === "blocked"
+      ).length,
+      dueSoonRefundCount: pendingRefunds.filter(
+        (refund) => refund.reviewSla?.status === "due_soon"
+      ).length,
+      overdueRefundCount: pendingRefunds.filter(
+        (refund) => refund.reviewSla?.status === "overdue"
+      ).length,
+      pendingRefundAmountCents: pendingRefunds.reduce(
+        (total, refund) => total + refund.requestedAmountCents,
+        0
+      ),
+      paymentIntentCount: paymentItems.length,
+      pendingPaymentIntentCount: activePaymentIntents.length,
+      failedPaymentIntentCount: paymentItems.filter(
+        (payment) => payment.status === "failed"
+      ).length,
+      overduePaymentIntentCount: activePaymentIntents.filter(
+        (payment) => payment.remainingSeconds === 0
+      ).length,
+      dailyDiaryCoveredCount: dailyDiaryStatus.generatedTodayCount,
+      dailyDiaryMissingCount: dailyDiaryStatus.missingTodayCount,
+      dailyDiaryCoverageRate: dailyDiaryStatus.coverageRate,
+      ...operationAuditMetrics,
+      ...cloudPetMetrics,
+      ...communityMetrics
+    };
+  }
+
+  @Get("analytics")
+  getAnalytics() {
+    return this.analyticsService.getMerchantAnalytics();
+  }
+
+  @Get("customers")
+  async listCustomers() {
+    return {
+      items: await this.customersService.listCustomers()
+    };
+  }
+
+  @Get("customers/:phone")
+  getCustomerProfile(@Param("phone") phone: string) {
+    return this.customersService.getCustomerProfile(phone);
+  }
+
+  @Patch("customers/:phone/crm")
+  async updateCustomerCrm(
+    @Param("phone") phone: string,
+    @Body() dto: UpdateCustomerCrmDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "customers:write");
+    const profile = await this.customersService.updateCrm(phone, dto);
+    await this.recordOperation(staff, {
+      action: "customers.crm.update",
+      targetType: "customer",
+      targetId: phone,
+      summary: `Updated customer CRM profile for ${phone}`
+    });
+
+    return profile;
+  }
+
+  @Post("customers/:phone/follow-ups")
+  async createCustomerFollowUp(
+    @Param("phone") phone: string,
+    @Body() dto: CreateCustomerFollowUpDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "customers:write");
+    const followUp = this.customersService.addFollowUp(phone, dto);
+    await this.recordOperation(staff, {
+      action: "customers.follow_up.create",
+      targetType: "customer",
+      targetId: phone,
+      summary: `Created customer follow-up ${followUp.followUpNo} for ${phone}`
+    });
+
+    return followUp;
+  }
+
+  @Get("staff/me")
+  getCurrentStaff(@Req() request: AdminRequest) {
+    return this.requireStaff(request);
+  }
+
+  @Get("operation-logs")
+  async listOperationLogs(@Req() request: AdminRequest) {
+    this.requireStaff(request, "audit:read");
+
+    return {
+      items: await this.staffService.listOperationLogs()
+    };
+  }
+
+  @Get("cms/blocks")
+  async listCmsBlocks() {
+    return {
+      items: await this.cmsService.listAdminBlocks()
+    };
+  }
+
+  @Post("cms/blocks")
+  async createCmsBlock(
+    @Body() dto: CreateCmsBlockDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "cms:write");
+    const block = await this.cmsService.createBlock(dto);
+    await this.recordOperation(staff, {
+      action: "cms.block.create",
+      targetType: "cms_block",
+      targetId: block.blockNo,
+      summary: `Created CMS block ${block.blockNo} for ${block.slotKey}`
+    });
+
+    return block;
+  }
+
+  @Patch("cms/blocks/:blockNo/status")
+  async updateCmsBlockStatus(
+    @Param("blockNo") blockNo: string,
+    @Body() dto: UpdateCmsBlockStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "cms:write");
+    const block = await this.cmsService.updateBlockStatus(blockNo, dto.status);
+    await this.recordOperation(staff, {
+      action: "cms.block_status.update",
+      targetType: "cms_block",
+      targetId: blockNo,
+      summary: `Updated CMS block ${blockNo} status to ${dto.status}`
+    });
+
+    return block;
+  }
 
   @Get("products")
   async listProducts() {
     return {
       items: await this.productsService.listAdminProducts()
     };
+  }
+
+  @Post("products")
+  async createProduct(@Body() dto: CreateAdminProductDto, @Req() request: AdminRequest) {
+    const staff = this.requireStaff(request, "catalog:write");
+    const product = await this.productsService.createAdminProduct(dto);
+    await this.recordOperation(staff, {
+      action: "catalog.product.create",
+      targetType: "product",
+      targetId: product.slug,
+      summary: `Created product ${product.slug}`
+    });
+
+    return product;
+  }
+
+  @Get("inventory/low-stock")
+  async listLowStockVariants() {
+    return {
+      items: await this.productsService.listLowStockVariants()
+    };
+  }
+
+  @Patch("products/:slug/status")
+  updateProductStatus(
+    @Param("slug") slug: string,
+    @Body() dto: UpdateProductStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "catalog:write");
+
+    return this.productsService.updateProductStatus(slug, dto.status).then(
+      async (product) => {
+        await this.recordOperation(staff, {
+          action: "catalog.product_status.update",
+          targetType: "product",
+          targetId: slug,
+          summary: `Updated product ${slug} status to ${dto.status}`
+        });
+
+        return product;
+      }
+    );
+  }
+
+  @Patch("products/variants/:skuCode/stock")
+  async updateVariantStock(
+    @Param("skuCode") skuCode: string,
+    @Body() dto: UpdateVariantStockDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "catalog:write");
+    const variant = await this.productsService.updateVariantStock(
+      skuCode,
+      dto.stock
+    );
+    await this.recordOperation(staff, {
+      action: "catalog.variant_stock.update",
+      targetType: "product_variant",
+      targetId: skuCode,
+      summary: `Updated ${skuCode} stock to ${dto.stock}`
+    });
+
+    return variant;
   }
 
   @Get("orders")
@@ -26,11 +321,370 @@ export class AdminController {
     };
   }
 
-  @Patch("orders/:orderNo/status")
-  updateOrderStatus(
-    @Param("orderNo") orderNo: string,
-    @Body() dto: UpdateOrderStatusDto
+  @Get("refunds")
+  async listRefunds() {
+    return {
+      items: await this.afterSalesService.listRefundRequests()
+    };
+  }
+
+  @Get("reviews")
+  async listReviews() {
+    return {
+      items: await this.reviewsService.listAdminReviews()
+    };
+  }
+
+  @Patch("reviews/:reviewNo/status")
+  updateReviewStatus(
+    @Param("reviewNo") reviewNo: string,
+    @Body() dto: UpdateReviewStatusDto,
+    @Req() request: AdminRequest
   ) {
-    return this.ordersService.updateOrderStatus(orderNo, dto.status);
+    const staff = this.requireStaff(request, "reviews:moderate");
+
+    return this.reviewsService.updateReviewStatus(reviewNo, dto.status).then(
+      async (review) => {
+        await this.recordOperation(staff, {
+          action: "reviews.status.update",
+          targetType: "product_review",
+          targetId: reviewNo,
+          summary: `Updated review ${reviewNo} status to ${dto.status}`
+        });
+
+        return review;
+      }
+    );
+  }
+
+  @Patch("refunds/:refundNo/status")
+  updateRefundStatus(
+    @Param("refundNo") refundNo: string,
+    @Body() dto: UpdateRefundStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "refunds:write");
+
+    return this.afterSalesService.updateRefundStatus(
+      refundNo,
+      dto.status,
+      dto.note
+    ).then(async (refund) => {
+      await this.recordOperation(staff, {
+        action: "after_sales.refund_status.update",
+        targetType: "refund_request",
+        targetId: refundNo,
+        summary: `Updated refund ${refundNo} status to ${dto.status}`
+      });
+
+      return refund;
+    });
+  }
+
+  @Get("coupons")
+  async listCoupons() {
+    return {
+      items: await this.marketingService.listCoupons(
+        this.getCouponUsageCounts(await this.ordersService.listOrders())
+      )
+    };
+  }
+
+  @Patch("coupons/:code/status")
+  async updateCouponStatus(
+    @Param("code") code: string,
+    @Body() dto: UpdateCouponStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "marketing:write");
+    const coupon = await this.marketingService.updateCouponStatus(
+      code,
+      dto.status,
+      this.getCouponUsageCounts(await this.ordersService.listOrders())
+    );
+    await this.recordOperation(staff, {
+      action: "marketing.coupon_status.update",
+      targetType: "coupon",
+      targetId: code,
+      summary: `Updated coupon ${code} status to ${dto.status}`
+    });
+
+    return coupon;
+  }
+
+  @Get("payments")
+  async listPayments(
+    @Query("orderId") orderId: string | undefined,
+    @Query("status") status: string | undefined,
+    @Query("provider") provider: string | undefined,
+    @Query("overdue") overdue: string | undefined,
+    @Query("failureCode") failureCode: string | undefined,
+    @Req() request: AdminRequest
+  ) {
+    this.requireStaff(request, "audit:read");
+
+    return this.paymentsService.listAdminPayments({
+      failureCode: failureCode as
+        | "INSUFFICIENT_BALANCE"
+        | "PAYMENT_DECLINED"
+        | "PROVIDER_UNAVAILABLE"
+        | "USER_CANCELLED_PAYMENT"
+        | "UNKNOWN_PROVIDER_ERROR"
+        | undefined,
+      orderId,
+      overdue: overdue === "true",
+      provider: provider as "mock_wechat" | "mock_alipay" | undefined,
+      status: status as
+        | "created"
+        | "pending"
+        | "paid"
+        | "failed"
+        | "expired"
+        | "cancelled"
+        | undefined
+    });
+  }
+
+  @Post("payments/expire-overdue")
+  async expireOverduePayments(
+    @Body() dto: { limit?: number },
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "audit:read");
+    const result = await this.paymentsService.scanExpiredPayments({
+      limit: dto?.limit
+    });
+    await this.recordOperation(staff, {
+      action: "payments.expire_overdue",
+      targetType: "payment",
+      targetId: "overdue",
+      summary: `Expired ${result.expiredIntentCount} overdue payment intents; scanned=${result.scannedCount}, closed=${result.closedOrderCount}, inventoryReleased=${result.inventoryReleasedCount}, failed=${result.failedCount}, skipped=${result.skippedCount}`
+    });
+
+    return result;
+  }
+  @Get("payments/:paymentIntentId")
+  async getPayment(
+    @Param("paymentIntentId") paymentIntentId: string,
+    @Req() request: AdminRequest
+  ) {
+    this.requireStaff(request, "audit:read");
+
+    return this.paymentsService.getAdminPayment(paymentIntentId);
+  }
+
+  @Get("cloud-pets")
+  async listCloudPets() {
+    const [pets, posts] = await Promise.all([
+      this.cloudPetsService.listAdminPets(),
+      this.communityService.listAdminPosts()
+    ]);
+
+    return {
+      items: pets.map((pet) => ({
+        ...pet,
+        communityPostCount: posts.filter((post) => post.petNo === pet.petNo)
+          .length
+      }))
+    };
+  }
+
+  @Get("cloud-pets/daily-diaries/status")
+  getCloudPetDailyDiaryStatus() {
+    return this.cloudPetsService.getDailyDiaryStatusForToday();
+  }
+
+  @Get("pets/daily-diary-coverage")
+  getCloudPetDailyDiaryCoverage(@Query("date") date?: string) {
+    return this.cloudPetsService.getDailyDiaryCoverage(date);
+  }
+
+  @Post("pets/daily-diary-coverage/backfill")
+  async backfillCloudPetDailyDiaryCoverage(
+    @Body() dto: BackfillCloudPetDailyDiaryDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "cms:write");
+    const result = await this.cloudPetsService.backfillDailyDiaryCoverage(dto);
+    await this.recordOperation(staff, {
+      action: "cloud_pets.daily_diary.backfill",
+      targetType: "cloud_pet_daily_diary_coverage",
+      targetId: dto.date,
+      summary:
+        `Backfilled cloud-pet daily diaries for ${dto.date} in ${dto.mode} mode; ` +
+        `attempted ${result.attemptedCount}, created ${result.successCount}, ` +
+        `skipped ${result.skippedCount}, failed ${result.failedCount}`
+    });
+
+    return result;
+  }
+
+  @Post("cloud-pets/daily-diaries/generate")
+  async generateCloudPetDailyDiaries(@Req() request: AdminRequest) {
+    const staff = this.requireStaff(request, "cms:write");
+    const result = await this.cloudPetsService.generateDailyDiariesForToday();
+    await this.recordOperation(staff, {
+      action: "cloud_pets.daily_diary.generate",
+      targetType: "cloud_pet_daily_diary",
+      targetId: result.date,
+      summary: `Generated ${result.generatedCount} daily cloud-pet diaries; skipped ${result.skippedCount}`
+    });
+
+    return result;
+  }
+
+  @Get("community/posts")
+  async listCommunityPosts() {
+    return {
+      items: await this.communityService.listAdminPosts()
+    };
+  }
+
+  @Get("community/reports")
+  async listCommunityReports() {
+    return {
+      items: await this.communityService.listReports()
+    };
+  }
+
+  @Patch("community/posts/:postNo/status")
+  updateCommunityPostStatus(
+    @Param("postNo") postNo: string,
+    @Body() dto: UpdateCommunityPostStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "community:moderate");
+
+    return this.communityService.updatePostStatus(postNo, dto.status).then(
+      async (post) => {
+        await this.recordOperation(staff, {
+          action: "community.post_status.update",
+          targetType: "community_post",
+          targetId: postNo,
+          summary: `Updated community post ${postNo} status to ${dto.status}`
+        });
+
+        return post;
+      }
+    );
+  }
+
+  @Patch("community/reports/:reportNo/status")
+  async updateCommunityReportStatus(
+    @Param("reportNo") reportNo: string,
+    @Body() dto: UpdateCommunityReportStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "community:moderate");
+    const report = await this.communityService.updateReportStatus(
+      reportNo,
+      dto.status,
+      dto.note
+    );
+    await this.recordOperation(staff, {
+      action: "community.report_status.update",
+      targetType: "community_report",
+      targetId: reportNo,
+      summary: `Updated community report ${reportNo} status to ${dto.status}`
+    });
+
+    return report;
+  }
+
+  @Patch("orders/:orderNo/status")
+  async updateOrderStatus(
+    @Param("orderNo") orderNo: string,
+    @Body() dto: UpdateOrderStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "fulfillment:write");
+    const order = await this.ordersService.updateOrderStatus(orderNo, dto.status);
+    await this.recordOperation(staff, {
+      action: "orders.status.update",
+      targetType: "order",
+      targetId: orderNo,
+      summary: `Updated order ${orderNo} status to ${dto.status}`
+    });
+
+    return order;
+  }
+
+  @Post("orders/:orderNo/shipments")
+  async createShipment(
+    @Param("orderNo") orderNo: string,
+    @Body() dto: CreateShipmentDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "fulfillment:write");
+    const order = await this.ordersService.fulfillOrder(orderNo, dto);
+    await this.recordOperation(staff, {
+      action: "orders.shipment.create",
+      targetType: "order",
+      targetId: orderNo,
+      summary: `Recorded shipment ${dto.trackingNumber} for order ${orderNo}`
+    });
+
+    return {
+      orderNo: order.orderNo,
+      status: order.status,
+      shipment: order.shipment
+    };
+  }
+
+  @Post("orders/:orderNo/shipments/events")
+  async recordShipmentEvent(
+    @Param("orderNo") orderNo: string,
+    @Body() dto: CreateShipmentEventDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "fulfillment:write");
+    const order = await this.ordersService.recordShipmentEvent(orderNo, dto);
+    await this.recordOperation(staff, {
+      action: "orders.shipment_event.create",
+      targetType: "order",
+      targetId: orderNo,
+      summary: `Recorded shipment event ${dto.status} for order ${orderNo}`
+    });
+
+    return order;
+  }
+
+  private requireStaff(
+    request: AdminRequest,
+    permission?: AdminPermission
+  ): AdminStaff {
+    const staff = request.adminStaff;
+
+    if (permission) {
+      this.staffService.ensurePermission(staff, permission, {
+        method: request.method,
+        path: request.originalUrl ?? request.url
+      });
+    }
+
+    return staff as AdminStaff;
+  }
+
+  private recordOperation(
+    staff: AdminStaff,
+    input: Parameters<StaffService["recordOperation"]>[1]
+  ) {
+    return this.staffService.recordOperation(staff, input);
+  }
+
+  private getCouponUsageCounts(orders: Awaited<ReturnType<OrdersService["listOrders"]>>) {
+    return orders.reduce<Record<string, number>>((counts, order) => {
+      if (order.couponCode) {
+        counts[order.couponCode] = (counts[order.couponCode] ?? 0) + 1;
+      }
+
+      return counts;
+    }, {});
   }
 }
+
+
+
+
+
+

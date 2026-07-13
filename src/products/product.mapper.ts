@@ -57,6 +57,7 @@ export function mapProductRecordToDetail(record: ProductRecord): ProductDetail {
     description: record.description,
     petType: record.petType,
     toyType: record.toyType,
+    tags: buildProductDiscoveryTags(record),
     priceCents: getLowestVariantPrice(variants),
     coverImageUrl: images[0] ?? "",
     images,
@@ -84,4 +85,25 @@ function getLowestVariantPrice(variants: ProductDetail["variants"]): number {
     (lowest, variant) => Math.min(lowest, variant.priceCents),
     variants[0]?.priceCents ?? 0
   );
+}
+
+function buildProductDiscoveryTags(record: ProductRecord): string[] {
+  return normalizeProductTags([
+    record.toyType,
+    ...record.variants.flatMap((variant) => [
+      variant.color,
+      variant.size,
+      variant.material
+    ])
+  ]);
+}
+
+function normalizeProductTags(values: Array<string | null | undefined>) {
+  return [
+    ...new Set(
+      values
+        .map((value) => value?.trim().toLowerCase().replace(/\s+/g, "-"))
+        .filter((value): value is string => Boolean(value))
+    )
+  ].sort();
 }

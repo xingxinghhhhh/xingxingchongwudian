@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -22,6 +22,7 @@ enum PetType {
 enum OrderStatus {
   pending_payment
   paid
+  refunding
   shipped
   completed
   cancelled
@@ -29,15 +30,39 @@ enum OrderStatus {
 }
 
 enum PaymentProvider {
-  wechat
-  alipay
+  mock_wechat
+  mock_alipay
 }
 
 enum PaymentStatus {
+  created
   pending
   paid
   failed
-  refunded
+  expired
+  cancelled
+}
+
+enum PaymentLedgerType {
+  payment
+}
+
+enum PaymentLedgerDirection {
+  credit
+}
+
+enum PaymentLedgerStatus {
+  pending
+  success
+  failed
+}
+
+enum PaymentLedgerEventType {
+  payment_created
+  payment_confirmed
+  payment_failed
+  payment_expired
+  payment_cancelled
 }
 
 enum VirtualPetSpecies {
@@ -45,16 +70,58 @@ enum VirtualPetSpecies {
   dog
 }
 
+enum CommunityPostStatus {
+  visible
+  hidden
+}
+
+enum CommunityReportStatus {
+  pending_review
+  reviewed
+  dismissed
+}
+
+enum CouponStatus {
+  active
+  paused
+  archived
+}
+
+enum CouponDiscountType {
+  fixed_amount
+}
+
+enum RefundRequestStatus {
+  pending_review
+  approved
+  rejected
+}
+
+enum ProductReviewStatus {
+  pending_review
+  visible
+  hidden
+}
+
+enum ShipmentStatus {
+  created
+  in_transit
+  out_for_delivery
+  delivered
+  exception
+}
+
 model Product {
   id          String           @id @default(cuid())
   slug        String           @unique
   title       String
-  description String           @db.Text
+  description String
   petType     PetType
   toyType     String
   status      ProductStatus    @default(draft)
   variants    ProductVariant[]
   images      ProductImage[]
+  reviews     ProductReview[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -78,11 +145,11 @@ model ProductVariant {
 }
 
 model ProductImage {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   productId String
-  product   Product  @relation(fields: [productId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
   url       String
-  sortOrder Int      @default(0)
+  sortOrder Int     @default(0)
 }
 
 model Customer {
@@ -99,22 +166,30 @@ model Customer {
 }
 
 model VirtualPet {
-  id             String             @id @default(cuid())
-  petNo          String             @unique
-  ownerName      String
-  ownerPhone     String
-  name           String
-  species        VirtualPetSpecies
-  personality    String
-  avatarUrl      String
-  bio            String             @db.Text
-  mood           Int                @default(72)
-  energy         Int                @default(68)
-  intimacy       Int                @default(15)
-  timeline       VirtualPetEvent[]
-  communityPosts CommunityPost[]
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  id                              String                     @id @default(cuid())
+  petNo                           String                     @unique
+  ownerName                       String
+  ownerPhone                      String
+  name                            String
+  species                         VirtualPetSpecies
+  personality                     String
+  avatarUrl                       String
+  bio                             String
+  homepageTheme                   String                     @default("sunny")
+  homepageHeadline                String                     @default("")
+  homepageOwnerStory              String                     @default("")
+  homepageShowGrowthArchive       Boolean                    @default(true)
+  homepageShowMallRecommendations Boolean                    @default(true)
+  mood                            Int                        @default(72)
+  energy                          Int                        @default(68)
+  intimacy                        Int                        @default(15)
+  timeline                        VirtualPetEvent[]
+  communityPosts                  CommunityPost[]
+  followers                       CommunityFollow[]
+  taskCompletions                 VirtualPetTaskCompletion[]
+  homepageVisits                  VirtualPetHomepageVisit[]
+  createdAt                       DateTime                   @default(now())
+  updatedAt                       DateTime                   @updatedAt
 }
 
 model VirtualPetEvent {
@@ -123,20 +198,125 @@ model VirtualPetEvent {
   pet       VirtualPet @relation(fields: [petId], references: [id])
   type      String
   title     String
-  body      String     @db.Text
+  body      String
   createdAt DateTime   @default(now())
 }
 
+model VirtualPetTaskCompletion {
+  id            String     @id @default(cuid())
+  petId         String
+  pet           VirtualPet @relation(fields: [petId], references: [id])
+  petNo         String
+  taskKey       String
+  completedDate String
+  createdAt     DateTime   @default(now())
+
+  @@unique([petNo, taskKey, completedDate])
+  @@index([petId])
+}
+
+model VirtualPetHomepageVisit {
+  id        String     @id @default(cuid())
+  petId     String
+  pet       VirtualPet @relation(fields: [petId], references: [id])
+  petNo     String
+  source    String     @default("direct")
+  createdAt DateTime   @default(now())
+
+  @@index([petId])
+  @@index([petNo])
+  @@index([createdAt])
+}
+
+model MemberSession {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  phone      String
+  name       String
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([phone])
+}
+
 model CommunityPost {
-  id         String     @id @default(cuid())
-  postNo     String     @unique
+  id         String              @id @default(cuid())
+  postNo     String              @unique
   petId      String
-  pet        VirtualPet @relation(fields: [petId], references: [id])
+  pet        VirtualPet          @relation(fields: [petId], references: [id])
   petNo      String
   petName    String
   authorName String
-  body       String     @db.Text
-  createdAt  DateTime   @default(now())
+  body       String
+  status     CommunityPostStatus @default(visible)
+  comments   CommunityComment[]
+  likes      CommunityLike[]
+  reports    CommunityReport[]
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+}
+
+model CommunityComment {
+  id          String              @id @default(cuid())
+  commentNo   String              @unique
+  postId      String
+  post        CommunityPost       @relation(fields: [postId], references: [id])
+  postNo      String
+  memberPhone String?
+  authorName  String
+  body        String
+  status      CommunityPostStatus @default(visible)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([postNo])
+  @@index([memberPhone])
+}
+
+model CommunityLike {
+  id          String        @id @default(cuid())
+  postId      String
+  post        CommunityPost @relation(fields: [postId], references: [id])
+  postNo      String
+  memberPhone String
+  authorName  String?
+  createdAt   DateTime      @default(now())
+
+  @@unique([postNo, memberPhone])
+  @@index([memberPhone])
+}
+
+model CommunityFollow {
+  id            String     @id @default(cuid())
+  petId         String
+  pet           VirtualPet @relation(fields: [petId], references: [id])
+  petNo         String
+  followerPhone String
+  followerName  String
+  createdAt     DateTime   @default(now())
+
+  @@unique([petNo, followerPhone])
+  @@index([followerPhone])
+}
+
+model CommunityReport {
+  id           String                @id @default(cuid())
+  reportNo     String                @unique
+  postId       String
+  post         CommunityPost         @relation(fields: [postId], references: [id])
+  postNo       String
+  memberPhone  String?
+  reporterName String
+  reason       String
+  status       CommunityReportStatus @default(pending_review)
+  note         String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  resolvedAt   DateTime?
+
+  @@index([postNo])
+  @@index([memberPhone])
 }
 
 model Cart {
@@ -176,25 +356,36 @@ model Address {
 }
 
 model Order {
-  id            String        @id @default(cuid())
-  orderNo       String        @unique
-  customerId    String?
-  customer      Customer?     @relation(fields: [customerId], references: [id])
-  customerName  String
-  customerPhone String
-  receiverName  String
-  receiverPhone String
-  province      String
-  city          String
-  district      String
-  detail        String
-  status        OrderStatus   @default(pending_payment)
-  totalCents    Int
-  items         OrderItem[]
-  payments      Payment[]
-  shipments     Shipment[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id             String          @id @default(cuid())
+  orderNo        String          @unique
+  customerId     String?
+  customer       Customer?       @relation(fields: [customerId], references: [id])
+  customerName   String
+  customerPhone  String
+  receiverName   String
+  receiverPhone  String
+  province       String
+  city           String
+  district       String
+  detail         String
+  status         OrderStatus     @default(pending_payment)
+  closedAt       DateTime?
+  closeReason    String?
+  memberCancelReason String?
+  memberCancelNote String?
+  inventoryReleasedAt DateTime?
+  subtotalCents  Int             @default(0)
+  discountCents  Int             @default(0)
+  couponCode     String?
+  totalCents     Int
+  items          OrderItem[]
+  payments       Payment[]
+  paymentLedgerEntries PaymentLedgerEntry[]
+  shipments      Shipment[]
+  refundRequests RefundRequest[]
+  reviews        ProductReview[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model OrderItem {
@@ -210,25 +401,182 @@ model OrderItem {
 }
 
 model Payment {
-  id            String          @id @default(cuid())
-  orderId       String
-  order         Order           @relation(fields: [orderId], references: [id])
-  provider      PaymentProvider
-  status        PaymentStatus   @default(pending)
-  amountCents   Int
-  providerTxnId String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id              String               @id
+  orderId         String
+  order           Order                @relation(fields: [orderId], references: [id])
+  memberId        String
+  provider        PaymentProvider
+  status          PaymentStatus        @default(created)
+  amountCents     Int
+  currency        String               @default("CNY")
+  payUrl          String
+  providerTxnId   String?
+  providerTradeNo String?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  failureCode     String?
+  failureMessage  String?
+  failedAt        DateTime?
+  attemptNo       Int                  @default(1)
+  previousPaymentIntentId String?
+  idempotencyKey  String               @unique
+  paidAt          DateTime?
+  expiresAt       DateTime?
+  expiredAt       DateTime?
+  ledgerEntries   PaymentLedgerEntry[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([orderId, status])
+  @@index([memberId])
+  @@index([provider, status])
+}
+
+model PaymentLedgerEntry {
+  id              String                 @id
+  orderId         String
+  order           Order                  @relation(fields: [orderId], references: [id])
+  paymentIntentId String
+  paymentIntent   Payment                @relation(fields: [paymentIntentId], references: [id])
+  memberId        String
+  type            PaymentLedgerType
+  direction       PaymentLedgerDirection
+  amountCents     Int
+  currency        String                 @default("CNY")
+  provider        PaymentProvider
+  status          PaymentLedgerStatus
+  providerTradeNo String?
+  eventType       PaymentLedgerEventType
+  idempotencyKey  String                 @unique
+  metadata        Json?
+  createdAt       DateTime               @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([paymentIntentId, createdAt])
+  @@index([memberId, createdAt])
+}
+
+model Coupon {
+  id                 String             @id @default(cuid())
+  code               String             @unique
+  title              String
+  description        String?
+  status             CouponStatus       @default(active)
+  discountType       CouponDiscountType @default(fixed_amount)
+  discountValueCents Int
+  minSpendCents      Int                @default(0)
+  startsAt           DateTime?
+  endsAt             DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+model RefundRequest {
+  id                   String              @id @default(cuid())
+  refundNo             String              @unique
+  orderId              String
+  order                Order               @relation(fields: [orderId], references: [id])
+  orderNo              String
+  customerPhone        String
+  reason               String
+  status               RefundRequestStatus @default(pending_review)
+  requestedAmountCents Int
+  refundedAmountCents  Int?
+  note                 String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  resolvedAt           DateTime?
+
+  @@index([orderId])
+  @@index([orderNo])
+}
+
+model ProductReview {
+  id          String              @id @default(cuid())
+  reviewNo    String              @unique
+  orderId     String
+  order       Order               @relation(fields: [orderId], references: [id])
+  orderNo     String
+  productId   String
+  product     Product             @relation(fields: [productId], references: [id])
+  productSlug String
+  skuCode     String
+  rating      Int
+  body        String
+  images      Json?
+  authorName  String
+  status      ProductReviewStatus @default(pending_review)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([orderNo, skuCode])
+  @@index([productSlug])
+  @@index([orderNo])
 }
 
 model Shipment {
-  id             String   @id @default(cuid())
+  id             String          @id @default(cuid())
   orderId        String
-  order          Order    @relation(fields: [orderId], references: [id])
+  order          Order           @relation(fields: [orderId], references: [id])
   carrier        String
   trackingNumber String
+  status         ShipmentStatus  @default(created)
   shippedAt      DateTime?
-  createdAt      DateTime @default(now())
+  deliveredAt    DateTime?
+  events         ShipmentEvent[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([orderId])
+  @@index([trackingNumber])
+}
+
+model ShipmentEvent {
+  id          String         @id @default(cuid())
+  shipmentId  String
+  shipment    Shipment       @relation(fields: [shipmentId], references: [id])
+  status      ShipmentStatus
+  location    String
+  description String
+  happenedAt  DateTime       @default(now())
+  createdAt   DateTime       @default(now())
+
+  @@index([shipmentId])
+}
+
+model OperationLog {
+  id         String   @id @default(cuid())
+  logNo      String   @unique
+  staffNo    String
+  staffName  String
+  role       String
+  action     String
+  targetType String
+  targetId   String
+  summary    String
+  createdAt  DateTime @default(now())
+
+  @@index([staffNo])
+  @@index([action])
+  @@index([targetType, targetId])
+}
+
+model CmsBlock {
+  id        String   @id @default(cuid())
+  blockNo   String   @unique
+  slotKey   String
+  title     String
+  body      String
+  ctaLabel  String?
+  href      String?
+  imageUrl  String?
+  status    String   @default("draft")
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slotKey])
+  @@index([status])
 }
 
 model TrafficEvent {
@@ -240,3 +588,9 @@ model TrafficEvent {
   eventType   String
   createdAt   DateTime @default(now())
 }
+
+
+
+
+
+

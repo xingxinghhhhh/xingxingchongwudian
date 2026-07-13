@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsNotEmpty, IsString, Matches, ValidateNested } from "class-validator";
+import { IsArray, IsNotEmpty, IsOptional, IsString, Matches, ValidateNested } from "class-validator";
 
 class CheckoutCustomerDto {
   @IsString()
@@ -36,6 +36,15 @@ class CheckoutAddressDto {
 }
 
 export class CheckoutCartDto {
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  couponCodes?: string[];
+
   @ValidateNested()
   @Type(() => CheckoutCustomerDto)
   customer: CheckoutCustomerDto;

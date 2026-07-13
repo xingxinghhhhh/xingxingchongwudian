@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, BookOpen, Heart, Sparkles, Stars, SunMedium } from "lucide-react";
+import { CmsSlot } from "./cms-slot";
 import { SiteHeader } from "./components/site-header";
 import {
   accountName,
@@ -206,6 +207,8 @@ export default function Home() {
           })}
         </div>
       </section>
+
+      <CmsSlot slotPrefix="homepage" />
 
       <section className="section section--favorites">
         <div className="section__header">

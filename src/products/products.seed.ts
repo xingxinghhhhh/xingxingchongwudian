@@ -8,6 +8,7 @@ export const starterProducts: ProductDetail[] = [
     description: "A washable cotton rope toy for daily tug and chew play.",
     petType: "dog",
     toyType: "chew",
+    tags: ["daily-care", "tug-play", "washable"],
     priceCents: 3990,
     coverImageUrl: "/brand/naigai-niangao/duo-toy-play.png",
     images: [
@@ -37,6 +38,7 @@ export const starterProducts: ProductDetail[] = [
     description: "A light interactive wand set for indoor cat hunting play.",
     petType: "cat",
     toyType: "interactive",
+    tags: ["feather", "hunting", "indoor-play"],
     priceCents: 2990,
     coverImageUrl: "/brand/naigai-niangao/naigai-observing.png",
     images: [

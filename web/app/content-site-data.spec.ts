@@ -1,4 +1,4 @@
-import {
+﻿import {
   accountName,
   accountTagline,
   aboutChapters,
@@ -32,9 +32,9 @@ describe("content site data", () => {
 
     expect(latest).toHaveLength(3);
     expect(latest.map((entry) => entry.id)).toEqual([
-      "entry-05",
-      "entry-04",
-      "entry-03"
+      "entry-09",
+      "entry-08",
+      "entry-07"
     ]);
   });
 
@@ -58,11 +58,15 @@ describe("content site data", () => {
     const niangaoEntries = getJournalEntriesByPetId("niangao");
 
     expect(naigaiEntries.map((entry) => entry.id)).toEqual([
+      "entry-08",
+      "entry-06",
       "entry-05",
       "entry-03",
       "entry-01"
     ]);
     expect(niangaoEntries.map((entry) => entry.id)).toEqual([
+      "entry-09",
+      "entry-07",
       "entry-04",
       "entry-02"
     ]);
@@ -92,8 +96,28 @@ describe("content site data", () => {
     });
 
     expect(getAdjacentJournalEntries("entry-05")).toEqual({
-      previous: undefined,
+      previous: expect.objectContaining({ id: "entry-06" }),
       next: expect.objectContaining({ id: "entry-04" })
+    });
+
+    expect(getAdjacentJournalEntries("entry-06")).toEqual({
+      previous: expect.objectContaining({ id: "entry-07" }),
+      next: expect.objectContaining({ id: "entry-05" })
+    });
+
+    expect(getAdjacentJournalEntries("entry-07")).toEqual({
+      previous: expect.objectContaining({ id: "entry-08" }),
+      next: expect.objectContaining({ id: "entry-06" })
+    });
+
+    expect(getAdjacentJournalEntries("entry-08")).toEqual({
+      previous: expect.objectContaining({ id: "entry-09" }),
+      next: expect.objectContaining({ id: "entry-07" })
+    });
+
+    expect(getAdjacentJournalEntries("entry-09")).toEqual({
+      previous: undefined,
+      next: expect.objectContaining({ id: "entry-08" })
     });
 
     expect(getAdjacentJournalEntries("entry-01")).toEqual({
@@ -104,6 +128,10 @@ describe("content site data", () => {
 
   it("builds archive views for all, naigai, and niangao", () => {
     expect(getDiaryArchiveEntries("all").map((entry) => entry.id)).toEqual([
+      "entry-09",
+      "entry-08",
+      "entry-07",
+      "entry-06",
       "entry-05",
       "entry-04",
       "entry-03",
@@ -112,12 +140,16 @@ describe("content site data", () => {
     ]);
 
     expect(getDiaryArchiveEntries("naigai").map((entry) => entry.id)).toEqual([
+      "entry-08",
+      "entry-06",
       "entry-05",
       "entry-03",
       "entry-01"
     ]);
 
     expect(getDiaryArchiveEntries("niangao").map((entry) => entry.id)).toEqual([
+      "entry-09",
+      "entry-07",
       "entry-04",
       "entry-02"
     ]);

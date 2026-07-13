@@ -1,12 +1,48 @@
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import * as request from "supertest";
-import { AppModule } from "../src/app.module";
 
 describe("Pet toy shop API", () => {
   let app: INestApplication;
 
+  async function loginAsAdmin(role: "owner" | "operator") {
+    const credentials = {
+      owner: {
+        email: "owner@example.com",
+        password: "owner123456"
+      },
+      operator: {
+        email: "operator@example.com",
+        password: "operator123456"
+      }
+    }[role];
+
+    const response = await request(app.getHttpServer())
+      .post("/api/admin/auth/login")
+      .send(credentials)
+      .expect(201);
+
+    return response.body.sessionToken as string;
+  }
+
+  async function loginAsMember(phone: string, name = "Member Session") {
+    const response = await request(app.getHttpServer())
+      .post("/api/auth/login")
+      .send({
+        name,
+        phone
+      })
+      .expect(201);
+
+    return response.body.sessionToken as string;
+  }
+
   beforeAll(async () => {
+    process.env.NODE_ENV = "test";
+    process.env.DATABASE_URL = "";
+    delete process.env.ADMIN_API_KEY;
+    const { AppModule } = await import("../src/app.module");
+
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule]
     }).compile();
@@ -54,6 +90,102 @@ describe("Pet toy shop API", () => {
           petType: "dog",
           status: "active"
         });
+      });
+  });
+
+  it("filters and sorts public product catalog items", async () => {
+    await request(app.getHttpServer())
+      .get(
+        "/api/products?q=rope&petType=dog&toyType=chew&minPriceCents=3000&maxPriceCents=4500&sort=price_desc"
+      )
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.meta).toMatchObject({
+          total: 1,
+          filters: {
+            q: "rope",
+            petType: "dog",
+            toyType: "chew",
+            minPriceCents: 3000,
+            maxPriceCents: 4500
+          },
+          sort: "price_desc"
+        });
+        expect(body.meta.availablePetTypes).toEqual(
+          expect.arrayContaining(["cat", "dog"])
+        );
+        expect(body.meta.availableToyTypes).toEqual(
+          expect.arrayContaining(["chew", "interactive"])
+        );
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            slug: "durable-bite-rope",
+            petType: "dog",
+            toyType: "chew"
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/products?petType=cat&sort=price_asc")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.meta.total).toBe(1);
+        expect(body.items[0]).toMatchObject({
+          slug: "cat-teaser-wand",
+          petType: "cat"
+        });
+      });
+  });
+
+  it("returns sellable recommendations when product discovery has no matches", async () => {
+    await request(app.getHttpServer())
+      .get("/api/products?q=moon-collar&petType=dog&maxPriceCents=100")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([]);
+        expect(body.meta).toMatchObject({
+          total: 0,
+          recommendationReason:
+            "No exact match found, so we surfaced active in-stock toys to keep checkout moving."
+        });
+        expect(body.meta.recommendedItems).toEqual([
+          expect.objectContaining({
+            slug: "cat-teaser-wand",
+            status: "active"
+          }),
+          expect.objectContaining({
+            slug: "durable-bite-rope",
+            status: "active"
+          })
+        ]);
+      });
+  });
+
+  it("matches product discovery tags in catalog search", async () => {
+    await request(app.getHttpServer())
+      .get("/api/products?q=daily-care")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.meta.total).toBe(1);
+        expect(body.meta.availableTags).toEqual(
+          expect.arrayContaining(["daily-care", "indoor-play"])
+        );
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            slug: "durable-bite-rope",
+            tags: expect.arrayContaining(["daily-care", "tug-play", "washable"])
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/products/durable-bite-rope")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.tags).toEqual(
+          expect.arrayContaining(["daily-care", "tug-play", "washable"])
+        );
       });
   });
 
@@ -123,7 +255,7 @@ describe("Pet toy shop API", () => {
             }
           ]
         });
-        expect(body.orderNo).toMatch(/^KZT\d{14}$/);
+        expect(body.orderNo).toMatch(/^KZT\d{18}$/);
       });
   });
 
@@ -133,11 +265,11 @@ describe("Pet toy shop API", () => {
       .send({
         customer: {
           name: "Demo Customer",
-          phone: "13800138000"
+          phone: "13600137169"
         },
         address: {
           receiverName: "Demo Customer",
-          phone: "13800138000",
+          phone: "13600137169",
           province: "Guangdong",
           city: "Shenzhen",
           district: "Nanshan",
@@ -434,8 +566,564 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("creates and approves an after-sales refund request", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Refund Customer",
+          phone: "13600136088"
+        },
+        address: {
+          receiverName: "Refund Customer",
+          phone: "13600136088",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    const paymentResponse = await request(app.getHttpServer())
+      .post("/api/payments/wechat")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        channel: "h5"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/payments/wechat/notify")
+      .send({
+        paymentNo: paymentResponse.body.paymentNo,
+        providerTradeNo: "wx_refund_trade_001",
+        paidAmountCents: paymentResponse.body.amountCents
+      })
+      .expect(200);
+
+    const refundResponse = await request(app.getHttpServer())
+      .post("/api/after-sales/refunds")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        reason: "Customer requested a refund after payment",
+        requestedAmountCents: paymentResponse.body.amountCents
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          orderNo: orderResponse.body.orderNo,
+          status: "pending_review",
+          requestedAmountCents: paymentResponse.body.amountCents
+        });
+        expect(body.refundNo).toMatch(/^REF\d{14}/);
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("refunding");
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/refunds")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              refundNo: refundResponse.body.refundNo,
+              status: "pending_review",
+              reviewSla: expect.objectContaining({
+                policyHours: 24,
+                status: "on_track",
+                dueAt: expect.any(String),
+                hoursUntilDue: expect.any(Number)
+              })
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/refunds/${refundResponse.body.refundNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "approved",
+        note: "Refund approved by merchant"
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          refundNo: refundResponse.body.refundNo,
+          status: "approved",
+          refundedAmountCents: paymentResponse.body.amountCents
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("refunded");
+      });
+  });
+
+  it("prevents after-sales refunds from exceeding the remaining refundable balance", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Partial Refund Customer",
+          phone: "13600136123"
+        },
+        address: {
+          receiverName: "Partial Refund Customer",
+          phone: "13600136123",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Partial Refund Road 2"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 2
+          }
+        ]
+      })
+      .expect(201);
+
+    const paymentResponse = await request(app.getHttpServer())
+      .post("/api/payments/wechat")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        channel: "h5"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/payments/wechat/notify")
+      .send({
+        paymentNo: paymentResponse.body.paymentNo,
+        providerTradeNo: "wx_partial_refund_trade",
+        paidAmountCents: paymentResponse.body.amountCents
+      })
+      .expect(200);
+
+    const firstRefund = await request(app.getHttpServer())
+      .post("/api/after-sales/refunds")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        reason: "Partial refund for one damaged item",
+        requestedAmountCents: 3000
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/refunds")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              refundNo: firstRefund.body.refundNo,
+              refundableBalanceCents: 7980,
+              remainingAfterRequestCents: 4980,
+              reviewRisk: {
+                level: "low",
+                priority: "normal",
+                reason: "Request is within refundable balance"
+              }
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/refunds/${firstRefund.body.refundNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "approved",
+        note: "Partial refund approved"
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.refundedAmountCents).toBe(3000);
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("paid");
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/after-sales/refunds")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        reason: "Attempt to over-refund the remaining balance",
+        requestedAmountCents: 6000
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Refund amount exceeds refundable balance");
+      });
+
+    const finalRefund = await request(app.getHttpServer())
+      .post("/api/after-sales/refunds")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        reason: "Refund the remaining paid balance",
+        requestedAmountCents: 4980
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/refunds")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              refundNo: finalRefund.body.refundNo,
+              refundableBalanceCents: 4980,
+              remainingAfterRequestCents: 0,
+              reviewSla: expect.objectContaining({
+                policyHours: 24,
+                status: "on_track",
+                dueAt: expect.any(String),
+                hoursUntilDue: expect.any(Number)
+              }),
+              reviewRisk: {
+                level: "medium",
+                priority: "expedite",
+                reason: "Request will fully refund the order"
+              }
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/dashboard")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          pendingRefundCount: 1,
+          expeditedRefundCount: 1,
+          blockedRefundCount: 0,
+          dueSoonRefundCount: 0,
+          overdueRefundCount: 0,
+          pendingRefundAmountCents: 4980
+        });
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/refunds/${finalRefund.body.refundNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "approved",
+        note: "Final refund approved"
+      })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("refunded");
+      });
+  });
+
   it("rejects admin requests without an admin token", async () => {
     await request(app.getHttpServer()).get("/api/admin/products").expect(401);
+    await request(app.getHttpServer())
+      .get("/api/admin/pets/daily-diary-coverage")
+      .expect(401);
+  });
+
+  it("logs in an admin, resolves the session, and protects admin routes", async () => {
+    const loginResponse = await request(app.getHttpServer())
+      .post("/api/admin/auth/login")
+      .send({
+        email: "owner@example.com",
+        password: "owner123456"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.sessionToken).toMatch(/^admin_/);
+        expect(body.staff).toMatchObject({
+          staffNo: "STAFF_OWNER",
+          role: "owner"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/auth/me")
+      .set("X-Admin-Session", loginResponse.body.sessionToken)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          staffNo: "STAFF_OWNER",
+          role: "owner"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/dashboard")
+      .set("X-Admin-Session", loginResponse.body.sessionToken)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Session", loginResponse.body.sessionToken)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              staffNo: "STAFF_OWNER",
+              action: "security.admin_login",
+              targetType: "admin_session",
+              targetId: loginResponse.body.sessionToken
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/admin/auth/logout")
+      .set("X-Admin-Session", loginResponse.body.sessionToken)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              staffNo: "STAFF_OWNER",
+              action: "security.admin_logout",
+              targetType: "admin_session",
+              targetId: loginResponse.body.sessionToken
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/auth/me")
+      .set("X-Admin-Session", loginResponse.body.sessionToken)
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid admin session");
+      });
+  });
+
+  it("rejects disabled admins and preserves permission checks when using admin sessions", async () => {
+    await request(app.getHttpServer())
+      .post("/api/admin/auth/login")
+      .send({
+        email: "disabled@example.com",
+        password: "disabled123456"
+      })
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Admin account is disabled");
+      });
+
+    const operatorSession = await loginAsAdmin("operator");
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/durable-bite-rope/status")
+      .set("X-Admin-Session", operatorSession)
+      .send({ status: "archived" })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: catalog:write");
+      });
+  });
+
+  it("scopes admin staff permissions and records operation logs", async () => {
+    await request(app.getHttpServer())
+      .get("/api/admin/staff/me")
+      .set("X-Admin-Token", "ops-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          staffNo: "STAFF_OPS",
+          role: "operator",
+          permissions: expect.arrayContaining(["fulfillment:write"])
+        });
+        expect(body.permissions).not.toContain("catalog:write");
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/durable-bite-rope/status")
+      .set("X-Admin-Token", "ops-admin-key")
+      .send({ status: "archived" })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: catalog:write");
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/variants/DBR-GREEN-M/stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ stock: 11 })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              staffNo: "STAFF_OWNER",
+              action: "catalog.variant_stock.update",
+              targetType: "product_variant",
+              targetId: "DBR-GREEN-M"
+            }),
+            expect.objectContaining({
+              staffNo: "STAFF_OPS",
+              action: "security.permission_denied",
+              targetType: "permission",
+              targetId: "catalog:write",
+              summary: expect.stringContaining(
+                "Denied Operations Admin access to catalog:write"
+              )
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/dashboard")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.operationLogCount).toBeGreaterThanOrEqual(2);
+        expect(body.highRiskOperationCount).toBeGreaterThanOrEqual(2);
+        expect(body.permissionDeniedCount).toBeGreaterThanOrEqual(1);
+      });
+  });
+
+  it("publishes CMS blocks into public homepage slots with staff audit logs", async () => {
+    await request(app.getHttpServer())
+      .post("/api/admin/cms/blocks")
+      .set("X-Admin-Token", "ops-admin-key")
+      .send({
+        slotKey: "homepage.campaign",
+        title: "Ops should not publish",
+        body: "Operators cannot publish CMS campaign content.",
+        status: "published"
+      })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: cms:write");
+      });
+
+    const blockResponse = await request(app.getHttpServer())
+      .post("/api/admin/cms/blocks")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        slotKey: "homepage.campaign",
+        title: "Naigai and Niangao daily growth campaign",
+        body: "Recommend interactive toys and cloud-pet tasks from today's growth diary.",
+        ctaLabel: "Visit shop",
+        href: "/shop",
+        imageUrl: "/brand/naigai-niangao/naigai-standard.png",
+        status: "published",
+        sortOrder: 1
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          slotKey: "homepage.campaign",
+          title: "Naigai and Niangao daily growth campaign",
+          status: "published"
+        });
+        expect(body.blockNo).toMatch(/^CMS\d{14}\d{4}$/);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/cms/slots/homepage")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              blockNo: blockResponse.body.blockNo,
+              slotKey: "homepage.campaign",
+              title: "Naigai and Niangao daily growth campaign",
+              href: "/shop"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/cms/blocks/${blockResponse.body.blockNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "archived" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          blockNo: blockResponse.body.blockNo,
+          status: "archived"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/cms/slots/homepage")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              blockNo: blockResponse.body.blockNo
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              action: "cms.block.create",
+              targetType: "cms_block",
+              targetId: blockResponse.body.blockNo
+            }),
+            expect.objectContaining({
+              action: "cms.block_status.update",
+              targetType: "cms_block",
+              targetId: blockResponse.body.blockNo
+            })
+          ])
+        );
+      });
   });
 
   it("lists products for an authenticated admin", async () => {
@@ -450,7 +1138,8 @@ describe("Pet toy shop API", () => {
             variants: [
               expect.objectContaining({
                 skuCode: "DBR-GREEN-M",
-                stock: 50
+                stock: expect.any(Number),
+                isAvailable: true
               })
             ]
           }),
@@ -516,6 +1205,1205 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("returns admin dashboard metrics for merchant operations", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Dashboard Owner",
+        ownerPhone: "13800138000",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Dashboard Owner",
+        body: "Today the ops kitten completed a community interaction.",
+      })
+      .expect(201);
+
+    const dashboardPaymentSession = await loginAsMember(
+      "13600136288",
+      "Dashboard Payment Customer"
+    );
+    const failedPaymentOrder = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Dashboard Payment Customer",
+          phone: "13600136288"
+        },
+        address: {
+          receiverName: "Dashboard Payment Customer",
+          phone: "13600136288",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Dashboard Payment Street"
+        },
+        items: [{ skuCode: "DBR-GREEN-M", quantity: 1 }]
+      })
+      .expect(201);
+    const failedPaymentIntent = await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", dashboardPaymentSession)
+      .send({
+        orderId: failedPaymentOrder.body.orderNo,
+        provider: "mock_wechat"
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/payments/${failedPaymentIntent.body.id}/confirm`)
+      .set("X-Member-Token", dashboardPaymentSession)
+      .send({ result: "failed", failureCode: "PAYMENT_DECLINED" })
+      .expect(201);
+
+    const pendingPaymentOrder = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Dashboard Payment Customer",
+          phone: "13600136288"
+        },
+        address: {
+          receiverName: "Dashboard Payment Customer",
+          phone: "13600136288",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Dashboard Pending Payment Street"
+        },
+        items: [{ skuCode: "CTW-BASIC", quantity: 1 }]
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", dashboardPaymentSession)
+      .send({
+        orderId: pendingPaymentOrder.body.orderNo,
+        provider: "mock_alipay"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/dashboard")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          activeProductCount: 2,
+          cloudPetCount: expect.any(Number),
+          dailyDiaryCoveredCount: expect.any(Number),
+          dailyDiaryMissingCount: expect.any(Number),
+          dailyDiaryCoverageRate: expect.any(Number),
+          communityPostCount: expect.any(Number),
+          orderCount: expect.any(Number),
+          pendingOrderCount: expect.any(Number),
+          paymentIntentCount: expect.any(Number),
+          pendingPaymentIntentCount: expect.any(Number),
+          failedPaymentIntentCount: expect.any(Number),
+          overduePaymentIntentCount: expect.any(Number),
+          hiddenCommunityPostCount: 0
+        });
+        expect(body.cloudPetCount).toBeGreaterThanOrEqual(1);
+        expect(body.dailyDiaryMissingCount).toBeGreaterThanOrEqual(1);
+        expect(body.dailyDiaryCoveredCount + body.dailyDiaryMissingCount).toBe(
+          body.cloudPetCount
+        );
+        expect(body.communityPostCount).toBeGreaterThanOrEqual(1);
+        expect(body.paymentIntentCount).toBeGreaterThanOrEqual(2);
+        expect(body.pendingPaymentIntentCount).toBeGreaterThanOrEqual(1);
+        expect(body.failedPaymentIntentCount).toBeGreaterThanOrEqual(1);
+      });
+  });
+
+  it("returns merchant analytics for revenue, repeat purchase, and product rankings", async () => {
+    const phone = "13600136988";
+
+    for (const index of [1, 2]) {
+      const orderResponse = await request(app.getHttpServer())
+        .post("/api/orders")
+        .send({
+          customer: {
+            name: "Analytics Customer",
+            phone
+          },
+          address: {
+            receiverName: "Analytics Customer",
+            phone,
+            province: "Guangdong",
+            city: "Shenzhen",
+            district: "Nanshan",
+            detail: `Science Park ${index}`
+          },
+          items: [
+            {
+              skuCode: "DBR-GREEN-M",
+              quantity: 1
+            }
+          ]
+        })
+        .expect(201);
+      const paymentResponse = await request(app.getHttpServer())
+        .post("/api/payments/wechat")
+        .send({
+          orderNo: orderResponse.body.orderNo,
+          channel: "h5"
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post("/api/payments/wechat/notify")
+        .send({
+          paymentNo: paymentResponse.body.paymentNo,
+          providerTradeNo: `wx_analytics_${index}`,
+          paidAmountCents: paymentResponse.body.amountCents
+        })
+        .expect(200);
+    }
+
+    const analyticsPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Analytics Pet Owner",
+        ownerPhone: phone,
+        name: "Analytics Visit Pet",
+        species: "dog",
+        personality: "turns homepage visits into analytics"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${analyticsPetResponse.body.petNo}/homepage/visits`)
+      .send({ source: "analytics_test" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Activation Pet Owner",
+        ownerPhone: "13600136989",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/analytics")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.revenue).toMatchObject({
+          gmvCents: expect.any(Number),
+          paidOrderCount: expect.any(Number),
+          averageOrderValueCents: expect.any(Number)
+        });
+        expect(body.revenue.gmvCents).toBeGreaterThanOrEqual(7980);
+        expect(body.conversion.paidOrderRate).toBeGreaterThan(0);
+        expect(body.customers.repeatCustomerCount).toBeGreaterThanOrEqual(1);
+        expect(body.productRankings).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              skuCode: "DBR-GREEN-M",
+              quantitySold: expect.any(Number),
+              revenueCents: expect.any(Number)
+            })
+          ])
+        );
+        expect(body.retentionSignals).toMatchObject({
+          cloudPetCount: expect.any(Number),
+          homepageVisitCount: expect.any(Number),
+          communityPostCount: expect.any(Number),
+          reviewCount: expect.any(Number)
+        });
+        expect(body.retentionSignals.homepageVisitCount).toBeGreaterThanOrEqual(1);
+        expect(body.customerSegments).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              key: "high_value_pet_parent",
+              memberCount: expect.any(Number),
+              samplePhones: expect.arrayContaining([phone]),
+              actionLabel: "Send VIP bundle offer"
+            }),
+            expect.objectContaining({
+              key: "pet_parent_activation",
+              memberCount: expect.any(Number),
+              samplePhones: expect.arrayContaining(["13600136989"]),
+              actionLabel: "Push first-order coupon"
+            })
+          ])
+        );
+        expect(body.retentionFunnel).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              key: "cloud_pet_created",
+              count: expect.any(Number),
+              conversionRate: 100,
+              actionLabel: "Keep pet onboarding active"
+            }),
+            expect.objectContaining({
+              key: "homepage_engaged",
+              count: expect.any(Number),
+              conversionRate: expect.any(Number),
+              dropOffCount: expect.any(Number),
+              actionLabel: "Promote shareable homepage"
+            }),
+            expect.objectContaining({
+              key: "order_created",
+              count: expect.any(Number),
+              conversionRate: expect.any(Number),
+              actionLabel: "Nudge cart and checkout"
+            }),
+            expect.objectContaining({
+              key: "paid_customer",
+              count: expect.any(Number),
+              conversionRate: expect.any(Number),
+              actionLabel: "Issue post-purchase task"
+            }),
+            expect.objectContaining({
+              key: "repeat_customer",
+              count: expect.any(Number),
+              conversionRate: expect.any(Number),
+              actionLabel: "Offer VIP bundle"
+            })
+          ])
+        );
+        expect(
+          body.retentionFunnel.find(
+            (stage: { key: string }) => stage.key === "cloud_pet_created"
+          ).count
+        ).toBeGreaterThanOrEqual(2);
+      });
+  });
+
+  it("returns admin customer CRM profiles with tags, notes, and follow-ups", async () => {
+    const phone = "13600137988";
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "CRM Customer",
+          phone
+        },
+        address: {
+          receiverName: "CRM Customer",
+          phone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "CRM Street 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+    const paymentResponse = await request(app.getHttpServer())
+      .post("/api/payments/wechat")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        channel: "h5"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/payments/wechat/notify")
+      .send({
+        paymentNo: paymentResponse.body.paymentNo,
+        providerTradeNo: "wx_crm_customer",
+        paidAmountCents: paymentResponse.body.amountCents
+      })
+      .expect(200);
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "CRM Customer",
+        ownerPhone: phone,
+        name: "CRM Segment Pet",
+        species: "dog",
+        personality: "needs merchant follow-up"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "CRM Customer",
+        body: "CRM customer shared a pet growth moment."
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/customers/${phone}/crm`)
+      .set("X-Admin-Token", "ops-admin-key")
+      .send({
+        tags: ["vip_candidate"],
+        note: "Operator should not update CRM."
+      })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: customers:write");
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/customers/${phone}/follow-ups`)
+      .set("X-Admin-Token", "ops-admin-key")
+      .send({
+        type: "wechat",
+        summary: "Operator should not log follow-up."
+      })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: customers:write");
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/customers/${phone}/crm`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        tags: ["vip_candidate", "cloud_pet_parent"],
+        note: "Prefers cloud-pet bundles and follow-up through WeChat.",
+        ownerStaffName: "Owner Admin"
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.crm).toMatchObject({
+          tags: expect.arrayContaining(["vip_candidate", "cloud_pet_parent"]),
+          note: "Prefers cloud-pet bundles and follow-up through WeChat.",
+          ownerStaffName: "Owner Admin"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/customers/${phone}/follow-ups`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        type: "wechat",
+        summary: "Sent VIP bundle recommendation after pet homepage activity.",
+        nextActionAt: "2026-06-03T10:00:00.000Z"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.followUpNo).toMatch(/^FU\d{14}/);
+        expect(body.summary).toContain("VIP bundle");
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/customers")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              phone,
+              name: "CRM Customer",
+              paidOrderCount: 1,
+              petCount: 1,
+              communityPostCount: 1,
+              tags: expect.arrayContaining(["vip_candidate"])
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/admin/customers/${phone}`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          phone,
+          name: "CRM Customer",
+          summary: {
+            orderCount: 1,
+            paidOrderCount: 1,
+            petCount: 1,
+            communityPostCount: 1
+          },
+          crm: {
+            tags: expect.arrayContaining(["vip_candidate"]),
+            followUps: [
+              expect.objectContaining({
+                type: "wechat",
+                summary: expect.stringContaining("VIP bundle")
+              })
+            ]
+          },
+          nextBestAction: {
+            key: expect.any(String),
+            ctaLabel: expect.any(String)
+          }
+        });
+        expect(body.pets).toEqual([
+          expect.objectContaining({ petNo: petResponse.body.petNo })
+        ]);
+        expect(body.orders).toEqual([
+          expect.objectContaining({ orderNo: orderResponse.body.orderNo })
+        ]);
+      });
+  });
+
+  it("lets an authenticated admin list cloud pets and hide community posts", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Moderation Owner",
+        ownerPhone: "13800138000",
+        name: "Moderation Pet",
+        species: "dog",
+        personality: "shares community posts often"
+      })
+      .expect(201);
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Moderation Owner",
+        body: "This content needs merchant moderation before it can be hidden.",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              name: "Moderation Pet",
+              communityPostCount: 1
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/posts/${postResponse.body.postNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "hidden" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          status: "hidden"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/community/posts")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              postNo: postResponse.body.postNo
+            })
+          ])
+        );
+      });
+  });
+
+  it("lets an authenticated admin update product inventory and catalog status", async () => {
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/variants/DBR-GREEN-M/stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ stock: 7 })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          skuCode: "DBR-GREEN-M",
+          stock: 7,
+          isAvailable: true
+        });
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/durable-bite-rope/status")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "archived" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          slug: "durable-bite-rope",
+          status: "archived"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/products")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ slug: "durable-bite-rope" })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/durable-bite-rope/status")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "active" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/products/variants/DBR-GREEN-M/stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ stock: 50 })
+      .expect(200);
+  });
+
+  it("lets an authenticated admin create a sellable product and exposes low stock signals", async () => {
+    await request(app.getHttpServer())
+      .post("/api/admin/products")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        slug: "merchant-training-ball",
+        title: "Merchant training ball",
+        description: "A merchant-created toy for testing catalog operations.",
+        petType: "dog",
+        toyType: "training",
+        status: "active",
+        images: ["/brand/naigai-niangao/niangao-toy.png"],
+        variants: [
+          {
+            skuCode: "MTB-RED-S",
+            name: "Red / Small",
+            color: "red",
+            size: "S",
+            material: "rubber",
+            priceCents: 2590,
+            compareAtCents: 2990,
+            stock: 3
+          }
+        ]
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          slug: "merchant-training-ball",
+          status: "active",
+          priceCents: 2590,
+          variants: [
+            expect.objectContaining({
+              skuCode: "MTB-RED-S",
+              stock: 3,
+              isAvailable: true
+            })
+          ]
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/products")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              slug: "merchant-training-ball",
+              priceCents: 2590
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/dashboard")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.lowStockVariantCount).toBeGreaterThanOrEqual(1);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/inventory/low-stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              skuCode: "MTB-RED-S",
+              stock: 3,
+              threshold: 5
+            })
+          ])
+        );
+      });
+  });
+
+  it("locks stock on order creation and releases it on cancellation or approved refund", async () => {
+    await request(app.getHttpServer())
+      .post("/api/admin/products")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        slug: "inventory-hardening-ball",
+        title: "Inventory hardening ball",
+        description: "A low-stock item used to verify reservation behavior.",
+        petType: "dog",
+        toyType: "training",
+        status: "active",
+        images: ["/brand/naigai-niangao/niangao-toy.png"],
+        variants: [
+          {
+            skuCode: "IHB-LOCK-1",
+            name: "Locked stock test",
+            priceCents: 1990,
+            stock: 2
+          }
+        ]
+      })
+      .expect(201);
+
+    const cancelledOrder = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Inventory Customer",
+          phone: "13600136188"
+        },
+        address: {
+          receiverName: "Inventory Customer",
+          phone: "13600136188",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "IHB-LOCK-1",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/inventory/low-stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              skuCode: "IHB-LOCK-1",
+              stock: 1
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/orders/${cancelledOrder.body.orderNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "cancelled" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/inventory/low-stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              skuCode: "IHB-LOCK-1",
+              stock: 2
+            })
+          ])
+        );
+      });
+
+    const refundOrder = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Inventory Refund Customer",
+          phone: "13600136189"
+        },
+        address: {
+          receiverName: "Inventory Refund Customer",
+          phone: "13600136189",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "IHB-LOCK-1",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+    const refundPayment = await request(app.getHttpServer())
+      .post("/api/payments/wechat")
+      .send({
+        orderNo: refundOrder.body.orderNo,
+        channel: "h5"
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post("/api/payments/wechat/notify")
+      .send({
+        paymentNo: refundPayment.body.paymentNo,
+        providerTradeNo: "wx_inventory_refund",
+        paidAmountCents: refundPayment.body.amountCents
+      })
+      .expect(200);
+    const refund = await request(app.getHttpServer())
+      .post("/api/after-sales/refunds")
+      .send({
+        orderNo: refundOrder.body.orderNo,
+        reason: "Restock after approved refund",
+        requestedAmountCents: refundPayment.body.amountCents
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/admin/refunds/${refund.body.refundNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "approved", note: "Restock approved" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/inventory/low-stock")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              skuCode: "IHB-LOCK-1",
+              stock: 2
+            })
+          ])
+        );
+      });
+  });
+
+  it("lets an authenticated admin fulfill a paid order with shipment tracking", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Fulfillment Customer",
+          phone: "13800138000"
+        },
+        address: {
+          receiverName: "Fulfillment Customer",
+          phone: "13800138000",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        carrier: "SF Express",
+        trackingNumber: "SF1234567890"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          orderNo: orderResponse.body.orderNo,
+          status: "shipped",
+          shipment: {
+            carrier: "SF Express",
+            trackingNumber: "SF1234567890"
+          }
+        });
+      });
+  });
+
+  it("records shipment events and exposes customer-facing tracking details", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Tracking Customer",
+          phone: "13600136288"
+        },
+        address: {
+          receiverName: "Tracking Customer",
+          phone: "13600136288",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        carrier: "SF Express",
+        trackingNumber: "SFTRACK123456"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments/events`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "out_for_delivery",
+        location: "Shenzhen Nanshan service point",
+        description: "Courier is dispatching the parcel",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments/events`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "delivered",
+        location: "Shenzhen Nanshan service point",
+        description: "Package delivered to the service point and signed.",
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.status).toBe("completed");
+        expect(body.shipment).toMatchObject({
+          carrier: "SF Express",
+          trackingNumber: "SFTRACK123456",
+          status: "delivered",
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              status: "in_transit"
+            }),
+            expect.objectContaining({
+              status: "delivered"
+            })
+          ])
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}/tracking`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          orderNo: orderResponse.body.orderNo,
+          orderStatus: "completed",
+          currentStatus: "delivered",
+          shipment: {
+            carrier: "SF Express",
+            trackingNumber: "SFTRACK123456"
+          }
+        });
+        expect(body.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              status: "out_for_delivery",
+              location: "Shenzhen Nanshan service point",
+            }),
+            expect.objectContaining({
+              status: "delivered",
+              location: "Shenzhen Nanshan service point"
+            })
+          ])
+        );
+      });
+  });
+
+  it("collects product reviews after delivery and moderates them for the storefront", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Review Customer",
+          phone: "13600136488"
+        },
+        address: {
+          receiverName: "Review Customer",
+          phone: "13600136488",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        carrier: "SF Express",
+        trackingNumber: "SFREVIEW123456"
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments/events`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "delivered",
+        location: "Shenzhen Nanshan service point",
+        description: "Review test order has been signed",
+      })
+      .expect(201);
+
+    const reviewResponse = await request(app.getHttpServer())
+      .post("/api/reviews")
+      .send({
+        orderNo: orderResponse.body.orderNo,
+        skuCode: "DBR-GREEN-M",
+        rating: 5,
+        body: "The durable rope is suitable for Naigai and stayed intact after long play.",
+        authorName: "Review Customer"
+      })
+      .expect(201);
+
+    expect(reviewResponse.body).toMatchObject({
+      orderNo: orderResponse.body.orderNo,
+      skuCode: "DBR-GREEN-M",
+      productSlug: "durable-bite-rope",
+      rating: 5,
+      status: "pending_review"
+    });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/reviews")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              reviewNo: reviewResponse.body.reviewNo,
+              status: "pending_review"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/reviews/${reviewResponse.body.reviewNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "visible" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          reviewNo: reviewResponse.body.reviewNo,
+          status: "visible"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/products/durable-bite-rope/reviews")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.summary).toMatchObject({
+          averageRating: 5,
+          reviewCount: 1
+        });
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              reviewNo: reviewResponse.body.reviewNo,
+              rating: 5,
+              body: "The durable rope is suitable for Naigai and stayed intact after long play.",
+            })
+          ])
+        );
+      });
+  });
+
+  it("returns member notifications for orders, delivery, reviews, growth, and coupons", async () => {
+    const memberPhone = "13600136588";
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Notification Owner",
+        ownerPhone: memberPhone,
+        name: "Notification Buddy",
+        species: "dog",
+        personality: "Loves daily care check-ins and playful updates",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201);
+
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Notification Owner",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Notification Owner",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        carrier: "SF Express",
+        trackingNumber: "SFNOTICE123456"
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/admin/orders/${orderResponse.body.orderNo}/shipments/events`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "delivered",
+        location: "Shenzhen Nanshan service point",
+        description: "Notification test order has been signed",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${memberPhone}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.notifications).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "coupon_available",
+              actionHref: "/shop"
+            }),
+            expect.objectContaining({
+              type: "growth_task_completed",
+              sourceId: petResponse.body.petNo
+            }),
+            expect.objectContaining({
+              type: "shipment_delivered",
+              sourceId: orderResponse.body.orderNo
+            }),
+            expect.objectContaining({
+              type: "review_request",
+              sourceId: orderResponse.body.orderNo
+            })
+          ])
+        );
+      });
+  });
+
+  it("lets an authenticated admin manage coupon status for checkout campaigns", async () => {
+    await request(app.getHttpServer())
+      .get("/api/admin/coupons")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              code: "WELCOME20",
+              status: "active",
+              discountType: "fixed_amount",
+              discountValueCents: 2000,
+              minSpendCents: 0,
+              usageLimitPerMember: 1,
+              usageCount: expect.any(Number)
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/coupons/WELCOME20/status")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "paused" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          code: "WELCOME20",
+          status: "paused"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        couponCode: "WELCOME20",
+        customer: {
+          name: "Paused Coupon Customer",
+          phone: "13600136077"
+        },
+        address: {
+          receiverName: "Paused Coupon Customer",
+          phone: "13600136077",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Coupon is not active");
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/coupons/WELCOME20/status")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "active" })
+      .expect(200);
+  });
+
   it("checks out a cart into a pending order and clears the cart", async () => {
     const cartResponse = await request(app.getHttpServer())
       .post("/api/cart/items")
@@ -530,11 +2418,11 @@ describe("Pet toy shop API", () => {
       .send({
         customer: {
           name: "Demo Customer",
-          phone: "13800138000"
+          phone: "13600137169"
         },
         address: {
           receiverName: "Demo Customer",
-          phone: "13800138000",
+          phone: "13600137169",
           province: "Guangdong",
           city: "Shenzhen",
           district: "Nanshan",
@@ -554,7 +2442,7 @@ describe("Pet toy shop API", () => {
             }
           ]
         });
-        expect(body.orderNo).toMatch(/^KZT\d{14}$/);
+        expect(body.orderNo).toMatch(/^KZT\d{18}$/);
       });
 
     await request(app.getHttpServer())
@@ -565,6 +2453,215 @@ describe("Pet toy shop API", () => {
           cartId: cartResponse.body.cartId,
           subtotalCents: 0,
           items: []
+        });
+      });
+  });
+
+  it("applies a member welcome coupon when checking out a cart", async () => {
+    const cartResponse = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "DBR-GREEN-M",
+        quantity: 1
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${cartResponse.body.cartId}/checkout`)
+      .send({
+        couponCode: "WELCOME20",
+        customer: {
+          name: "Coupon Customer",
+          phone: "13600136066"
+        },
+        address: {
+          receiverName: "Coupon Customer",
+          phone: "13600136066",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        }
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          couponCode: "WELCOME20",
+          discountCents: 2000,
+          subtotalCents: 3990,
+          totalCents: 1990
+        });
+      });
+  });
+
+  it("rejects reuse of the member welcome coupon by the same customer", async () => {
+    const memberPhone = "13600136069";
+
+    await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        couponCode: "WELCOME20",
+        customer: {
+          name: "Welcome Reuse Customer",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Welcome Reuse Customer",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    const secondCart = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "CTW-BASIC",
+        quantity: 1
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${secondCart.body.cartId}/checkout`)
+      .send({
+        couponCode: "WELCOME20",
+        customer: {
+          name: "Welcome Reuse Customer",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Welcome Reuse Customer",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 2"
+        }
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Coupon has already been used by this member");
+      });
+  });
+
+  it("rejects checkout when non-stackable coupons are combined", async () => {
+    const cartResponse = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "DBR-GREEN-M",
+        quantity: 2
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${cartResponse.body.cartId}/checkout`)
+      .send({
+        couponCode: "WELCOME20",
+        couponCodes: ["WELCOME20", "POINTS8"],
+        customer: {
+          name: "Coupon Stack Customer",
+          phone: "13600136067"
+        },
+        address: {
+          receiverName: "Coupon Stack Customer",
+          phone: "13600136067",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        }
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Coupon combination is not allowed");
+      });
+  });
+
+  it("applies member tier pricing before checkout coupons", async () => {
+    const memberPhone = "13600136068";
+
+    const tierSeedOrder = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Silver Price Customer",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Silver Price Customer",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 3
+          }
+        ]
+      })
+      .expect(201);
+
+    const tierSeedPayment = await request(app.getHttpServer())
+      .post("/api/payments/wechat")
+      .send({
+        orderNo: tierSeedOrder.body.orderNo,
+        channel: "h5"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/payments/wechat/notify")
+      .send({
+        paymentNo: tierSeedPayment.body.paymentNo,
+        providerTradeNo: "wx_member_tier_price_seed",
+        paidAmountCents: tierSeedPayment.body.amountCents
+      })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        couponCode: "WELCOME20",
+        customer: {
+          name: "Silver Price Customer",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Silver Price Customer",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 2"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          memberTier: "silver",
+          memberDiscountCents: 200,
+          couponCode: "WELCOME20",
+          discountCents: 2000,
+          subtotalCents: 3990,
+          totalCents: 1790
         });
       });
   });
@@ -624,18 +2721,18 @@ describe("Pet toy shop API", () => {
       .send({
         ownerName: "Demo Owner",
         ownerPhone: "13800138000",
-        name: "小奶球",
+        name: "Dashboard Pet",
         species: "cat",
-        personality: "嘴硬但会偷偷靠近"
+        personality: "spots dashboard signals quickly"
       })
       .expect(201);
 
     expect(createResponse.body).toMatchObject({
       ownerName: "Demo Owner",
       ownerPhone: "13800138000",
-      name: "小奶球",
-      species: "cat",
-      personality: "嘴硬但会偷偷靠近",
+      name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly",
       stats: {
         mood: 72,
         energy: 68,
@@ -644,7 +2741,7 @@ describe("Pet toy shop API", () => {
       timeline: [
         expect.objectContaining({
           type: "adoption",
-          title: "小奶球来到这个小家"
+          title: "Dashboard Pet arrived at the cloud-pet home",
         })
       ]
     });
@@ -656,9 +2753,1194 @@ describe("Pet toy shop API", () => {
       .expect(({ body }) => {
         expect(body).toMatchObject({
           petNo: createResponse.body.petNo,
-          name: "小奶球",
+          name: "Dashboard Pet",
           species: "cat"
         });
+      });
+  });
+
+  it("returns pet-aware product recommendations for a cloud pet", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Demo Owner",
+        ownerPhone: "13800138000",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/recommendations`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            slug: "cat-teaser-wand",
+            petType: "cat",
+            reason: expect.stringContaining("cat interaction needs")
+          })
+        ]);
+      });
+  });
+
+  it("returns a member profile connecting pets, orders, community, and recommendations", async () => {
+    const memberPhone = "13988776655";
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Member Owner",
+        ownerPhone: memberPhone,
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Member Owner",
+        body: "Today the retention kitten completed the first community interaction.",
+      })
+      .expect(201);
+
+    const cartResponse = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "CTW-BASIC",
+        quantity: 1
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${cartResponse.body.cartId}/checkout`)
+      .send({
+        customer: {
+          name: "Member Owner",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Member Owner",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        }
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${memberPhone}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.member).toMatchObject({
+          phone: memberPhone,
+          name: "Member Owner",
+          tier: expect.any(String)
+        });
+        expect(body.pets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              name: "Dashboard Pet"
+            })
+          ])
+        );
+        expect(body.orders).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              totalCents: 2990
+            })
+          ])
+        );
+        expect(body.communityPosts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo
+            })
+          ])
+        );
+        expect(body.recommendations).toEqual([
+          expect.objectContaining({
+            slug: "cat-teaser-wand"
+          })
+        ]);
+        expect(body.loyalty).toMatchObject({
+          summary: {
+            lifetimePoints: 49,
+            availablePoints: 49,
+            tier: "bronze",
+            nextTier: "silver",
+            pointsToNextTier: 51
+          },
+          ledger: expect.arrayContaining([
+            expect.objectContaining({
+              eventType: "order_purchase",
+              points: 29
+            }),
+            expect.objectContaining({
+              eventType: "community_post",
+              points: 5
+            }),
+            expect.objectContaining({
+              eventType: "pet_bond",
+              points: 15
+            })
+          ]),
+          rules: expect.arrayContaining([
+            expect.objectContaining({
+              eventType: "growth_task"
+            })
+          ])
+        });
+        expect(body.commercePlan).toMatchObject({
+          tierProgress: {
+            currentTier: expect.any(String),
+            progressPercent: expect.any(Number)
+          },
+          benefits: expect.arrayContaining([
+            expect.objectContaining({
+              key: "welcome-gift",
+              href: "/shop",
+              unlocked: true
+            })
+          ]),
+          nextBestActions: expect.any(Array)
+        });
+      });
+  });
+
+  it("lets a member save a default address and returns it in the profile", async () => {
+    const phone = "13600137955";
+
+    await request(app.getHttpServer())
+      .post(`/api/members/${phone}/addresses`)
+      .send({
+        receiverName: "Address Member",
+        phone,
+        province: "Guangdong",
+        city: "Shenzhen",
+        district: "Nanshan",
+        detail: "Cloud Pet Avenue 9",
+        isDefault: true
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.addressNo).toMatch(/^ADDR\d{14}/);
+        expect(body).toMatchObject({
+          receiverName: "Address Member",
+          phone,
+          isDefault: true
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${phone}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.addresses).toEqual([
+          expect.objectContaining({
+            receiverName: "Address Member",
+            city: "Shenzhen",
+            detail: "Cloud Pet Avenue 9",
+            isDefault: true
+          })
+        ]);
+        expect(body.defaultAddress).toMatchObject({
+          receiverName: "Address Member",
+          phone
+        });
+      });
+  });
+
+  it("lets a member redeem points for a checkout coupon", async () => {
+    const memberPhone = "13900139777";
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Points Owner",
+        ownerPhone: memberPhone,
+        name: "Points Pet",
+        species: "dog",
+        personality: "earns rewards from care and shopping"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Points Owner",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Points Owner",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Reward Road 8"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 2
+          }
+        ]
+      })
+      .expect(201);
+
+    const beforeProfile = await request(app.getHttpServer())
+      .get(`/api/members/${memberPhone}`)
+      .expect(200);
+
+    expect(beforeProfile.body.loyalty.redemptionRewards).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "points-coupon-8",
+          pointsCost: 80,
+          couponCode: "POINTS8"
+        })
+      ])
+    );
+    expect(beforeProfile.body.loyalty.summary.availablePoints).toBeGreaterThanOrEqual(
+      80
+    );
+
+    await request(app.getHttpServer())
+      .post(`/api/members/${memberPhone}/points/redemptions`)
+      .send({ rewardKey: "points-coupon-8" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          rewardKey: "points-coupon-8",
+          couponCode: "POINTS8",
+          pointsCost: 80,
+          discountCents: 800,
+          status: "issued"
+        });
+        expect(body.redemptionNo).toMatch(/^LPR\d{14}\d{4}$/);
+        expect(body.remainingPoints).toBe(
+          beforeProfile.body.loyalty.summary.availablePoints - 80
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${memberPhone}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.loyalty.summary.availablePoints).toBe(
+          beforeProfile.body.loyalty.summary.availablePoints - 80
+        );
+        expect(body.loyalty.redemptions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              rewardKey: "points-coupon-8",
+              couponCode: "POINTS8"
+            })
+          ])
+        );
+      });
+
+    const otherCartResponse = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "DBR-GREEN-M",
+        quantity: 1
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${otherCartResponse.body.cartId}/checkout`)
+      .send({
+        couponCode: "POINTS8",
+        customer: {
+          name: "Other Owner",
+          phone: "13900139778"
+        },
+        address: {
+          receiverName: "Other Owner",
+          phone: "13900139778",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Other Road 9"
+        }
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Coupon is not issued to this member");
+      });
+
+    const cartResponse = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "DBR-GREEN-M",
+        quantity: 1
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${cartResponse.body.cartId}/checkout`)
+      .send({
+        couponCode: "POINTS8",
+        customer: {
+          name: "Points Owner",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Points Owner",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Reward Road 8"
+        }
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          couponCode: "POINTS8",
+          discountCents: 800,
+          subtotalCents: 3990,
+          totalCents: 3190
+        });
+      });
+
+    const usedCartResponse = await request(app.getHttpServer())
+      .post("/api/cart/items")
+      .send({
+        skuCode: "DBR-GREEN-M",
+        quantity: 1
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cart/${usedCartResponse.body.cartId}/checkout`)
+      .send({
+        couponCode: "POINTS8",
+        customer: {
+          name: "Points Owner",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Points Owner",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Reward Road 8"
+        }
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Coupon has already been used");
+      });
+  });
+
+  it("returns advanced personalized recommendations from pets, commerce, community, and CMS", async () => {
+    const memberPhone = "13988770088";
+    await request(app.getHttpServer())
+      .post("/api/admin/cms/blocks")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        slotKey: "homepage.personalized",
+        title: "Daily care task and mall bundle",
+        body: "Recommend matching tasks and products from today's Naigai and Niangao growth rhythm.",
+        href: "/shop",
+        ctaLabel: "Shop recommended toy",
+        status: "published",
+        sortOrder: 1
+      })
+      .expect(201);
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Personalized Owner",
+        ownerPhone: memberPhone,
+        name: "Personalized Buddy",
+        species: "dog",
+        personality: "Likes tug play and community sharing",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Personalized Owner",
+        body: "Recommended puppy completed a tug training task today.",
+      })
+      .expect(201);
+
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Personalized Owner",
+          phone: memberPhone
+        },
+        address: {
+          receiverName: "Personalized Owner",
+          phone: memberPhone,
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Science Park 1"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({ source: "member_personalization" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${memberPhone}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.personalizedRecommendations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "product",
+              targetId: "durable-bite-rope",
+              actionHref: "/shop",
+              reasonCodes: expect.arrayContaining([
+                "pet_profile_match",
+                "homepage_share_heat"
+              ])
+            }),
+            expect.objectContaining({
+              type: "growth_task",
+              targetId: expect.any(String),
+              actionHref: "/member",
+              reasonCodes: expect.arrayContaining(["retention_next_step"])
+            }),
+            expect.objectContaining({
+              type: "content",
+              targetId: expect.stringMatching(/^CMS/),
+              actionHref: "/shop",
+              reasonCodes: expect.arrayContaining(["cms_campaign"])
+            })
+          ])
+        );
+        expect(body.personalizedRecommendations[0].score).toBeGreaterThanOrEqual(
+          body.personalizedRecommendations.at(-1).score
+        );
+        expect(body.personalizationSummary).toMatchObject({
+          petCount: 1,
+          orderCount: expect.any(Number),
+          communitySignalCount: expect.any(Number),
+          homepageVisitCount: expect.any(Number),
+          cmsSignalCount: expect.any(Number)
+        });
+        expect(body.personalizationSummary.homepageVisitCount).toBeGreaterThanOrEqual(1);
+        expect(body.orders).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              orderNo: orderResponse.body.orderNo
+            })
+          ])
+        );
+      });
+  });
+
+  it("logs in a member and returns the current member profile from the session", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Session Owner",
+        ownerPhone: "13600136000",
+        name: "Session Pet",
+        species: "dog",
+        personality: "Checks in every day"
+      })
+      .expect(201);
+
+    const loginResponse = await request(app.getHttpServer())
+      .post("/api/auth/login")
+      .send({
+        name: "Session Owner",
+        phone: "13600136000"
+      })
+      .expect(201);
+
+    expect(loginResponse.body).toMatchObject({
+      member: {
+        name: "Session Owner",
+        phone: "13600136000"
+      }
+    });
+    expect(loginResponse.body.sessionToken).toMatch(/^member_/);
+
+    await request(app.getHttpServer()).get("/api/members/me").expect(401);
+
+    await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", loginResponse.body.sessionToken)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.member).toMatchObject({
+          name: "Session Owner",
+          phone: "13600136000"
+        });
+        expect(body.pets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              name: "Session Pet"
+            })
+          ])
+        );
+      });
+  });
+
+  it("completes a cloud pet growth task and updates member retention signals", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Task Owner",
+        ownerPhone: "13900139000",
+        name: "Task Buddy",
+        species: "dog",
+        personality: "Wants to interact with the owner every day",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.completedTask).toMatchObject({
+          key: "daily-care",
+          points: 20
+        });
+        expect(body.nextActions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              key: "open-homepage",
+              href: `/cloud-pets/${petResponse.body.petNo}`
+            }),
+            expect.objectContaining({
+              key: "share-community",
+              href: "/cloud-pets#community"
+            }),
+            expect.objectContaining({
+              key: "shop-reward",
+              href: "/shop"
+            })
+          ])
+        );
+        expect(body.pet.stats).toMatchObject({
+          mood: 80,
+          energy: 72,
+          intimacy: 25
+        });
+        expect(body.pet.timeline).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "daily_diary",
+              title: expect.stringContaining("Daily diary"),
+              body: expect.stringContaining("WELCOME20")
+            })
+          ])
+        );
+        expect(body.pet.timeline).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "growth_task",
+              title: "Completed Daily care"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/members/13900139000")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.member.points).toBeGreaterThanOrEqual(25);
+        expect(body.growthTasks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              key: "daily-care",
+              title: "Daily care"
+            })
+          ])
+        );
+        expect(body.taskActivity).toMatchObject({
+          totalCompletedTasks: 1,
+          activeDays: 1,
+          currentStreakDays: 1,
+          calendar: expect.arrayContaining([
+            expect.objectContaining({
+              completedCount: 1,
+              taskKeys: ["daily-care"]
+            })
+          ])
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Growth task already completed today");
+      });
+  });
+
+  it("returns cloud-pet growth level, progress, and care state", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Growth Owner",
+        ownerPhone: "13900139111",
+        name: "Growth Buddy",
+        species: "dog",
+        personality: "Enjoys building habits and collecting growth rewards",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.growth).toMatchObject({
+          level: 1,
+          careState: "needs_care",
+          todayCompletedTaskCount: 0,
+          nextLevelExperience: expect.any(Number),
+          progressPercent: expect.any(Number)
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.pet.growth).toMatchObject({
+          level: 2,
+          careState: "thriving",
+          todayCompletedTaskCount: 1
+        });
+        expect(body.pet.growth.experiencePoints).toBeGreaterThanOrEqual(40);
+      });
+  });
+
+  it("updates a cloud-pet dedicated homepage builder profile", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Homepage Owner",
+        ownerPhone: "13900139991",
+        name: "Builder Pet",
+        species: "dog",
+        personality: "keeps a public growth archive"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .send({
+        theme: "forest",
+        headline: "Builder Pet's warm little homepage",
+        ownerStory: "Every visit should feel like a fresh growth archive.",
+        showGrowthArchive: false,
+        showMallRecommendations: true
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.homepage).toMatchObject({
+          theme: "forest",
+          headline: "Builder Pet's warm little homepage",
+          ownerStory: "Every visit should feel like a fresh growth archive.",
+          showGrowthArchive: false,
+          showMallRecommendations: true
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.homepage).toMatchObject({
+          theme: "forest",
+          headline: "Builder Pet's warm little homepage",
+          ownerStory: "Every visit should feel like a fresh growth archive.",
+          showGrowthArchive: false,
+          showMallRecommendations: true
+        });
+      });
+  });
+
+  it("returns a shareable cloud-pet homepage archive with filters", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Archive Owner",
+        ownerPhone: "13900139992",
+        name: "Archive Pet",
+        species: "dog",
+        personality: "turns growth moments into a shareable story"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .send({
+        theme: "midnight",
+        headline: "Archive Pet's growth archive",
+        ownerStory: "A public timeline for daily care and memories.",
+        showGrowthArchive: true,
+        showMallRecommendations: true
+      })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=growth_task`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          petNo: petResponse.body.petNo,
+          share: {
+            title: "Archive Pet's growth archive",
+            ctaLabel: "Open pet homepage"
+          },
+          commerceReward: {
+            status: "unlocked",
+            couponCode: "WELCOME20",
+            discountCents: 2000,
+            ctaHref: "/shop",
+            recommendedProductSlug: expect.any(String)
+          }
+        });
+        expect(body.share.url).toBe(`/cloud-pets/${petResponse.body.petNo}`);
+        expect(body.filters).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ key: "all", count: 3 }),
+            expect.objectContaining({ key: "growth_task", count: 1 }),
+            expect.objectContaining({ key: "daily_diary", count: 1 })
+          ])
+        );
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            type: "growth_task",
+            title: expect.any(String)
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=daily_diary`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            type: "daily_diary",
+            title: expect.stringContaining("Daily diary"),
+            body: expect.stringContaining("WELCOME20")
+          })
+        ]);
+      });
+  });
+
+  it("records cloud-pet homepage visits back into archive and admin metrics", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Visit Owner",
+        ownerPhone: "13900139993",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({ source: "share_link" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          petNo: petResponse.body.petNo,
+          source: "share_link",
+          visitCount: 1
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({ source: "homepage_refresh" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.visitCount).toBe(2);
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.engagement).toMatchObject({
+          homepageVisitCount: 2
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              homepageVisitCount: 2
+            })
+          ])
+        );
+      });
+  });
+
+  it("lets admin generate missing daily cloud-pet diaries idempotently", async () => {
+    const caredPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Diary Owner A",
+        ownerPhone: "13900139994",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    const missingPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Diary Owner B",
+        ownerPhone: "13900139995",
+        name: "Diary Pet B",
+        species: "dog",
+        personality: "needs today's generated diary"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${caredPetResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets/daily-diaries/status")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.totalPetCount).toBeGreaterThanOrEqual(2);
+        expect(body.missingTodayCount).toBeGreaterThanOrEqual(1);
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: caredPetResponse.body.petNo,
+              status: "covered"
+            }),
+            expect.objectContaining({
+              petNo: missingPetResponse.body.petNo,
+              status: "missing"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/pets/daily-diary-coverage")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.coveredCount).toBeGreaterThanOrEqual(1);
+        expect(body.missingCount).toBeGreaterThanOrEqual(1);
+        expect(body.coverageRate).toBeLessThan(1);
+        expect(body.missingPets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petId: missingPetResponse.body.petNo,
+              petNo: missingPetResponse.body.petNo,
+              petName: "Diary Pet B",
+              memberId: "13900139995",
+              memberPhone: "13900139995",
+              reason: "NO_TASK_COMPLETED"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/admin/cloud-pets/daily-diaries/generate")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.generatedCount).toBeGreaterThanOrEqual(1);
+        expect(body.skippedCount).toBeGreaterThanOrEqual(1);
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: caredPetResponse.body.petNo,
+              status: "skipped"
+            }),
+            expect.objectContaining({
+              petNo: missingPetResponse.body.petNo,
+              status: "generated",
+              event: expect.objectContaining({
+                type: "daily_diary",
+                title: expect.stringContaining("Daily diary")
+              })
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/admin/cloud-pets/daily-diaries/generate")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.generatedCount).toBe(0);
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: missingPetResponse.body.petNo,
+              status: "skipped"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets/daily-diaries/status")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.missingTodayCount).toBe(0);
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: missingPetResponse.body.petNo,
+              status: "covered"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${missingPetResponse.body.petNo}/homepage/archive?eventType=daily_diary`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            type: "daily_diary",
+            body: expect.stringContaining("WELCOME20")
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              action: "cloud_pets.daily_diary.generate",
+              targetType: "cloud_pet_daily_diary"
+            })
+          ])
+        );
+      });
+  });
+
+  it("backfills missing daily cloud-pet diaries with selected and missing-only modes", async () => {
+    const selectedPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Backfill Owner A",
+        ownerPhone: "13900139984",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    const remainingPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Backfill Owner B",
+        ownerPhone: "13900139985",
+        name: "Backfill Pet B",
+        species: "dog",
+        personality: "should remain missing until missingOnly runs"
+      })
+      .expect(201);
+
+    const coveredPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Backfill Owner C",
+        ownerPhone: "13900139986",
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${coveredPetResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(201);
+
+    const ownerSession = await loginAsAdmin("owner");
+
+    await request(app.getHttpServer())
+      .post("/api/admin/pets/daily-diary-coverage/backfill")
+      .set("X-Admin-Session", ownerSession)
+      .send({
+        date: new Date().toISOString().slice(0, 10),
+        mode: "selected",
+        petIds: [
+          selectedPetResponse.body.petNo,
+          coveredPetResponse.body.petNo,
+          "VP_MISSING_TEST"
+        ]
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.mode).toBe("selected");
+        expect(body.attemptedCount).toBe(3);
+        expect(body.successCount).toBe(1);
+        expect(body.skippedCount).toBe(2);
+        expect(body.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petId: selectedPetResponse.body.petNo,
+              petNo: selectedPetResponse.body.petNo,
+              status: "created",
+              reason: "NO_TASK_COMPLETED"
+            }),
+            expect.objectContaining({
+              petId: coveredPetResponse.body.petNo,
+              status: "skipped",
+              reason: "ALREADY_HAS_DIARY"
+            }),
+            expect.objectContaining({
+              petId: "VP_MISSING_TEST",
+              status: "skipped",
+              reason: "PET_NOT_FOUND"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/admin/pets/daily-diary-coverage/backfill")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        date: new Date().toISOString().slice(0, 10),
+        mode: "selected",
+        petIds: [selectedPetResponse.body.petNo]
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.successCount).toBe(0);
+        expect(body.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petId: selectedPetResponse.body.petNo,
+              status: "skipped",
+              reason: "ALREADY_HAS_DIARY"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/pets/daily-diary-coverage")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.missingPets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petId: remainingPetResponse.body.petNo
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/admin/pets/daily-diary-coverage/backfill")
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        date: new Date().toISOString().slice(0, 10),
+        mode: "missingOnly"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.mode).toBe("missingOnly");
+        expect(body.successCount).toBeGreaterThanOrEqual(1);
+        expect(body.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petId: remainingPetResponse.body.petNo,
+              status: "created",
+              reason: "NO_TASK_COMPLETED"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/pets/daily-diary-coverage")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.missingCount).toBe(0);
+        expect(body.coverageRate).toBe(1);
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              staffNo: "STAFF_OWNER",
+              staffName: "Owner Admin",
+              role: "owner",
+              action: "cloud_pets.daily_diary.backfill",
+              targetType: "cloud_pet_daily_diary_coverage"
+            })
+          ])
+        );
       });
   });
 
@@ -668,9 +3950,9 @@ describe("Pet toy shop API", () => {
       .send({
         ownerName: "Demo Owner",
         ownerPhone: "13800138000",
-        name: "年糕糕",
+        name: "Nian Gao",
         species: "dog",
-        personality: "热情、黏人、永远想交朋友"
+        personality: "Warm, clingy, and always wants friends",
       })
       .expect(201);
 
@@ -679,16 +3961,27 @@ describe("Pet toy shop API", () => {
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Demo Owner",
-        body: "今天年糕糕第一次把玩具叼到奶盖旁边，虽然被看了一眼就转开，但它还是开心地摇尾巴。"
+        body: "Today Nian Gao brought the toy next to Naigai for the first time and wagged happily.",
       })
       .expect(201)
       .expect(({ body }) => {
         expect(body).toMatchObject({
           petNo: petResponse.body.petNo,
-          petName: "年糕糕",
+          petName: "Nian Gao",
           authorName: "Demo Owner",
-          body: expect.stringContaining("玩具")
+          body: expect.stringContaining("toy")
         });
+        expect(body.commerceBridge).toMatchObject({
+          ctaHref: "/shop",
+          ctaLabel: "Shop recommended toy",
+          recommendedProduct: expect.objectContaining({
+            slug: "durable-bite-rope",
+            petType: "dog"
+          })
+        });
+        expect(body.commerceBridge.reason).toEqual(
+          expect.stringContaining(body.petName)
+        );
         expect(body.postNo).toMatch(/^POST\d{14}\d{4}$/);
       });
 
@@ -700,10 +3993,790 @@ describe("Pet toy shop API", () => {
           expect.arrayContaining([
             expect.objectContaining({
               petNo: petResponse.body.petNo,
-              petName: "年糕糕"
+              petName: "Nian Gao",
+            })
+          ])
+        );
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              commerceBridge: expect.objectContaining({
+                ctaHref: "/shop",
+                ctaLabel: "Shop recommended toy",
+                recommendedProduct: expect.objectContaining({
+                  slug: "durable-bite-rope",
+                  petType: "dog"
+                })
+              })
             })
           ])
         );
       });
   });
+
+  it("supports community likes, comments, follows, reports, and admin report handling", async () => {
+    const memberPhone = "13600136788";
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Community Owner",
+        ownerPhone: memberPhone,
+        name: "Dashboard Pet",
+        species: "cat",
+        personality: "spots dashboard signals quickly"
+      })
+      .expect(201);
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Community Owner",
+        body: "Interactive kitten made its first community business post today.",
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/likes`)
+      .send({
+        memberPhone,
+        authorName: "Community Owner"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          liked: true,
+          likeCount: 1
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .send({
+        authorName: "Community Owner",
+        memberPhone,
+        body: "This update can settle into real community engagement.",
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          authorName: "Community Owner",
+          body: "This update can settle into real community engagement.",
+          status: "visible"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/pets/${petResponse.body.petNo}/follows`)
+      .send({
+        followerPhone: memberPhone,
+        followerName: "Community Owner"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          petNo: petResponse.body.petNo,
+          followerPhone: memberPhone,
+          following: true,
+          followerCount: 1
+        });
+      });
+
+    const reportResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .send({
+        reporterName: "Community Owner",
+        memberPhone,
+        reason: "婵炴潙顑堥惁顖涚▔閻愵剙袚閺夆晜绋戦崣鍡涘触鎼粹€抽叡濠㈣泛瀚幃濠偯规担琛℃煠"
+      })
+      .expect(201);
+
+    expect(reportResponse.body).toMatchObject({
+      postNo: postResponse.body.postNo,
+      status: "pending_review"
+    });
+
+    await request(app.getHttpServer())
+      .get("/api/community/posts")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              postNo: postResponse.body.postNo,
+              likeCount: 1,
+              commentCount: 1
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/community/reports")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              reportNo: reportResponse.body.reportNo,
+              status: "pending_review"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/reports/${reportResponse.body.reportNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({
+        status: "dismissed",
+        note: "No violation in smoke test"
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          reportNo: reportResponse.body.reportNo,
+          status: "dismissed",
+          note: "No violation in smoke test"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${memberPhone}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.communityEngagement).toMatchObject({
+          likedPostCount: 1,
+          commentCount: 1,
+          followingPetCount: 1,
+          reportCount: 1
+        });
+      });
+  });
+
+  it("requires member auth for payment intents and keeps payment confirmation idempotent", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Intent Customer",
+          phone: "13600136222"
+        },
+        address: {
+          receiverName: "Intent Customer",
+          phone: "13600136222",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Intent Street 2"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .send({
+        orderId: orderResponse.body.orderNo,
+        provider: "mock_wechat"
+      })
+      .expect(401);
+
+    const memberSession = await loginAsMember("13600136222", "Intent Customer");
+
+    const paymentIntent = await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", memberSession)
+      .send({
+        orderId: orderResponse.body.orderNo,
+        provider: "mock_wechat"
+      })
+      .expect(201);
+
+    expect(paymentIntent.body).toMatchObject({
+      orderId: orderResponse.body.orderNo,
+      amount: 3990,
+      provider: "mock_wechat",
+      status: "pending"
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${paymentIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "success" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.orderStatus).toBe("paid");
+        expect(body.paymentIntent.status).toBe("paid");
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${paymentIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "success" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.orderStatus).toBe("paid");
+        expect(body.paymentIntent.status).toBe("paid");
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("paid");
+      });
+  });
+
+  it("exposes payment ledger to owner admin and rejects operator access", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Ledger Customer",
+          phone: "13600136223"
+        },
+        address: {
+          receiverName: "Ledger Customer",
+          phone: "13600136223",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Ledger Street 3"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    const memberSession = await loginAsMember("13600136223", "Ledger Customer");
+    const paymentIntent = await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", memberSession)
+      .send({
+        orderId: orderResponse.body.orderNo,
+        provider: "mock_alipay"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${paymentIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "success" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/payments")
+      .expect(401);
+
+    const ownerSession = await loginAsAdmin("owner");
+    await request(app.getHttpServer())
+      .get("/api/admin/payments?orderId=" + orderResponse.body.orderNo)
+      .set("X-Admin-Session", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: paymentIntent.body.id,
+              orderId: orderResponse.body.orderNo,
+              provider: "mock_alipay",
+              status: "paid"
+            })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/admin/payments/${paymentIntent.body.id}`)
+      .set("X-Admin-Session", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.paymentIntent).toMatchObject({
+          id: paymentIntent.body.id,
+          orderId: orderResponse.body.orderNo,
+          status: "paid"
+        });
+        expect(
+          body.ledger.filter((entry: { eventType: string }) => entry.eventType === "payment_confirmed")
+        ).toHaveLength(1);
+      });
+
+    const operatorSession = await loginAsAdmin("operator");
+    await request(app.getHttpServer())
+      .get("/api/admin/payments")
+      .set("X-Admin-Session", operatorSession)
+      .expect(403);
+  });
+
+  it("lets a member cancel an unpaid order and exposes the cancelled payment to admin", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Cancel Customer",
+          phone: "13600136226"
+        },
+        address: {
+          receiverName: "Cancel Customer",
+          phone: "13600136226",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Cancel Street 6"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    const memberSession = await loginAsMember("13600136226", "Cancel Customer");
+    const paymentIntent = await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", memberSession)
+      .send({
+        orderId: orderResponse.body.orderNo,
+        provider: "mock_wechat"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/orders/${orderResponse.body.orderNo}/cancel`)
+      .set("X-Member-Token", memberSession)
+      .send({
+        reason: "CHANGED_MIND",
+        note: "Need a different variant"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          orderId: orderResponse.body.orderNo,
+          orderStatus: "cancelled",
+          closeReason: "MEMBER_CANCELLED",
+          memberCancelReason: "CHANGED_MIND",
+          memberCancelNote: "Need a different variant",
+          inventoryReleased: true,
+          paymentIntent: {
+            id: paymentIntent.body.id,
+            status: "cancelled"
+          }
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/orders/${orderResponse.body.orderNo}/cancel`)
+      .set("X-Member-Token", memberSession)
+      .send({
+        reason: "CHANGED_MIND"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.orderStatus).toBe("cancelled");
+        expect(body.inventoryReleased).toBe(true);
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${paymentIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "success" })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Payment intent has been cancelled");
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/payments/${paymentIntent.body.id}`)
+      .set("X-Member-Token", memberSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          id: paymentIntent.body.id,
+          status: "cancelled",
+          orderStatus: "cancelled",
+          orderCloseReason: "MEMBER_CANCELLED",
+          orderMemberCancelReason: "CHANGED_MIND",
+          orderMemberCancelNote: "Need a different variant"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          orderNo: orderResponse.body.orderNo,
+          status: "cancelled",
+          closeReason: "MEMBER_CANCELLED",
+          memberCancelReason: "CHANGED_MIND",
+          memberCancelNote: "Need a different variant"
+        });
+      });
+
+    const ownerSession = await loginAsAdmin("owner");
+    await request(app.getHttpServer())
+      .get(`/api/admin/payments/${paymentIntent.body.id}`)
+      .set("X-Admin-Session", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.paymentIntent).toMatchObject({
+          id: paymentIntent.body.id,
+          orderId: orderResponse.body.orderNo,
+          status: "cancelled",
+          orderCloseReason: "MEMBER_CANCELLED",
+          orderMemberCancelReason: "CHANGED_MIND",
+          orderMemberCancelNote: "Need a different variant"
+        });
+        expect(
+          body.ledger.filter((entry: { eventType: string }) => entry.eventType === "payment_cancelled")
+        ).toHaveLength(1);
+      });
+  });
+  it("expires a user payment intent and prevents late confirmation", async () => {
+    const previousTimeout = process.env.PAYMENT_TIMEOUT_MINUTES;
+    process.env.PAYMENT_TIMEOUT_MINUTES = "0.0001";
+
+    try {
+      const orderResponse = await request(app.getHttpServer())
+        .post("/api/orders")
+        .send({
+          customer: {
+            name: "Expired Customer",
+            phone: "13600136224"
+          },
+          address: {
+            receiverName: "Expired Customer",
+            phone: "13600136224",
+            province: "Guangdong",
+            city: "Shenzhen",
+            district: "Nanshan",
+            detail: "Expired Street 4"
+          },
+          items: [
+            {
+              skuCode: "DBR-GREEN-M",
+              quantity: 1
+            }
+          ]
+        })
+        .expect(201);
+
+      const memberSession = await loginAsMember("13600136224", "Expired Customer");
+      const paymentIntent = await request(app.getHttpServer())
+        .post("/api/payments/intents")
+        .set("X-Member-Token", memberSession)
+        .send({
+          orderId: orderResponse.body.orderNo,
+          provider: "mock_wechat"
+        })
+        .expect(201);
+
+      expect(paymentIntent.body.expiresAt).toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      await request(app.getHttpServer())
+        .post(`/api/payments/${paymentIntent.body.id}/confirm`)
+        .set("X-Member-Token", memberSession)
+        .send({ result: "success" })
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.message).toBe("Payment intent has expired");
+        });
+
+      await request(app.getHttpServer())
+        .get(`/api/payments/${paymentIntent.body.id}`)
+        .set("X-Member-Token", memberSession)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.status).toBe("expired");
+          expect(body.orderStatus).toBe("cancelled");
+          expect(body.orderCloseReason).toBe("PAYMENT_TIMEOUT");
+        });
+
+      await request(app.getHttpServer())
+        .get(`/api/orders/${orderResponse.body.orderNo}`)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.status).toBe("cancelled");
+          expect(body.closeReason).toBe("PAYMENT_TIMEOUT");
+        });
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.PAYMENT_TIMEOUT_MINUTES;
+      } else {
+        process.env.PAYMENT_TIMEOUT_MINUTES = previousTimeout;
+      }
+    }
+  });
+
+  it("lets owner admin scan overdue payment intents", async () => {
+    const previousTimeout = process.env.PAYMENT_TIMEOUT_MINUTES;
+    process.env.PAYMENT_TIMEOUT_MINUTES = "0.0001";
+
+    try {
+      const orderResponse = await request(app.getHttpServer())
+        .post("/api/orders")
+        .send({
+          customer: {
+            name: "Overdue Admin Customer",
+            phone: "13600136225"
+          },
+          address: {
+            receiverName: "Overdue Admin Customer",
+            phone: "13600136225",
+            province: "Guangdong",
+            city: "Shenzhen",
+            district: "Nanshan",
+            detail: "Overdue Street 5"
+          },
+          items: [
+            {
+              skuCode: "DBR-GREEN-M",
+              quantity: 1
+            }
+          ]
+        })
+        .expect(201);
+
+      const memberSession = await loginAsMember("13600136225", "Overdue Admin Customer");
+      const paymentIntent = await request(app.getHttpServer())
+        .post("/api/payments/intents")
+        .set("X-Member-Token", memberSession)
+        .send({
+          orderId: orderResponse.body.orderNo,
+          provider: "mock_alipay"
+        })
+        .expect(201);
+
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const ownerSession = await loginAsAdmin("owner");
+
+      await request(app.getHttpServer())
+        .post("/api/admin/payments/expire-overdue")
+        .set("X-Admin-Session", ownerSession)
+        .send({ limit: 10 })
+        .expect(201)
+        .expect(({ body }) => {
+          expect(body.expiredIntentCount).toBeGreaterThanOrEqual(1);
+          expect(body.closedOrderCount).toBeGreaterThanOrEqual(1);
+          expect(body.inventoryReleasedCount).toBeGreaterThanOrEqual(1);
+          expect(body.results).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                paymentIntentId: paymentIntent.body.id,
+                status: "expired"
+              })
+            ])
+          );
+        });
+
+      await request(app.getHttpServer())
+        .get(`/api/admin/payments/${paymentIntent.body.id}`)
+        .set("X-Admin-Session", ownerSession)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.paymentIntent).toMatchObject({
+            id: paymentIntent.body.id,
+            orderId: orderResponse.body.orderNo,
+            orderCloseReason: "PAYMENT_TIMEOUT",
+            status: "expired"
+          });
+          expect(
+            body.ledger.filter((entry: { eventType: string }) => entry.eventType === "payment_expired")
+          ).toHaveLength(1);
+        });
+
+      await request(app.getHttpServer())
+        .get("/api/admin/operation-logs")
+        .set("X-Admin-Session", ownerSession)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                action: "payments.expire_overdue",
+                staffName: "Owner Admin"
+              })
+            ])
+          );
+        });
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.PAYMENT_TIMEOUT_MINUTES;
+      } else {
+        process.env.PAYMENT_TIMEOUT_MINUTES = previousTimeout;
+      }
+    }
+  });
+  it("lets a member retry after payment failure and exposes the attempt chain to admin", async () => {
+    const orderResponse = await request(app.getHttpServer())
+      .post("/api/orders")
+      .send({
+        customer: {
+          name: "Retry Customer",
+          phone: "13600136227"
+        },
+        address: {
+          receiverName: "Retry Customer",
+          phone: "13600136227",
+          province: "Guangdong",
+          city: "Shenzhen",
+          district: "Nanshan",
+          detail: "Retry Street 7"
+        },
+        items: [
+          {
+            skuCode: "DBR-GREEN-M",
+            quantity: 1
+          }
+        ]
+      })
+      .expect(201);
+
+    const memberSession = await loginAsMember("13600136227", "Retry Customer");
+    const firstIntent = await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", memberSession)
+      .send({
+        orderId: orderResponse.body.orderNo,
+        provider: "mock_alipay"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${firstIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "failed" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.paymentIntent).toMatchObject({
+          id: firstIntent.body.id,
+          status: "failed",
+          failureCode: "INSUFFICIENT_BALANCE",
+          attemptNo: 1
+        });
+        expect(body.orderStatus).toBe("pending_payment");
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${firstIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "success" })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Payment intent has failed. Create a new payment attempt."
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}/payment-attempts`)
+      .set("X-Member-Token", memberSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.attempts).toEqual([
+          expect.objectContaining({
+            paymentIntentId: firstIntent.body.id,
+            attemptNo: 1,
+            status: "failed"
+          })
+        ]);
+      });
+
+    const secondIntent = await request(app.getHttpServer())
+      .post("/api/payments/intents")
+      .set("X-Member-Token", memberSession)
+      .send({
+        orderId: orderResponse.body.orderNo,
+        provider: "mock_wechat"
+      })
+      .expect(201);
+
+    expect(secondIntent.body.id).not.toBe(firstIntent.body.id);
+    expect(secondIntent.body.attemptNo).toBe(2);
+    expect(secondIntent.body.previousPaymentIntentId).toBe(firstIntent.body.id);
+
+    await request(app.getHttpServer())
+      .post(`/api/payments/${secondIntent.body.id}/confirm`)
+      .set("X-Member-Token", memberSession)
+      .send({ result: "success" })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.paymentIntent).toMatchObject({
+          id: secondIntent.body.id,
+          status: "paid",
+          attemptNo: 2
+        });
+        expect(body.orderStatus).toBe("paid");
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("paid");
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderResponse.body.orderNo}/payment-attempts`)
+      .set("X-Member-Token", memberSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.attempts).toEqual([
+          expect.objectContaining({ paymentIntentId: firstIntent.body.id, attemptNo: 1, status: "failed" }),
+          expect.objectContaining({ paymentIntentId: secondIntent.body.id, attemptNo: 2, status: "paid" })
+        ]);
+      });
+
+    const ownerSession = await loginAsAdmin("owner");
+    await request(app.getHttpServer())
+      .get("/api/admin/payments?status=failed&failureCode=INSUFFICIENT_BALANCE")
+      .set("X-Admin-Session", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: firstIntent.body.id, failureCode: "INSUFFICIENT_BALANCE" })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/admin/payments/${secondIntent.body.id}`)
+      .set("X-Admin-Session", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.paymentIntent).toMatchObject({
+          id: secondIntent.body.id,
+          previousPaymentIntentId: firstIntent.body.id,
+          attemptNo: 2,
+          status: "paid"
+        });
+        expect(body.relatedIntents).toEqual([
+          expect.objectContaining({ id: firstIntent.body.id, attemptNo: 1, status: "failed" }),
+          expect.objectContaining({ id: secondIntent.body.id, attemptNo: 2, status: "paid" })
+        ]);
+      });
+  });
 });
+
+
+
+
+
+

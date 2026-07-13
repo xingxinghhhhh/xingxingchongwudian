@@ -3,6 +3,7 @@ import {
   IsArray,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   Min,
@@ -55,6 +56,15 @@ class CreateOrderItemDto {
 }
 
 export class CreateOrderDto {
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  couponCodes?: string[];
+
   @ValidateNested()
   @Type(() => CreateOrderCustomerDto)
   customer: CreateOrderCustomerDto;

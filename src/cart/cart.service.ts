@@ -90,6 +90,8 @@ export class CartService {
       }
 
       const order = await this.ordersService.createOrder({
+        couponCode: dto.couponCode,
+        couponCodes: dto.couponCodes,
         customer: dto.customer,
         address: dto.address,
         items: cart.items.map((item) => ({
@@ -112,6 +114,8 @@ export class CartService {
     }
 
     const order = await this.ordersService.createOrder({
+      couponCode: dto.couponCode,
+      couponCodes: dto.couponCodes,
       customer: dto.customer,
       address: dto.address,
       items: Array.from(cart.items.entries()).map(([skuCode, quantity]) => ({

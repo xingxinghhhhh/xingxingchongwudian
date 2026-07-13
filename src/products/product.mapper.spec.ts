@@ -40,6 +40,7 @@ describe("product mapper", () => {
       description: "Database backed rope",
       petType: "dog",
       toyType: "chew",
+      tags: ["chew", "cotton", "green", "m"],
       priceCents: 3990,
       coverImageUrl: "/one.jpg",
       images: ["/one.jpg", "/two.jpg"],
@@ -68,6 +69,7 @@ describe("product mapper", () => {
       title: "DB rope",
       petType: "dog",
       toyType: "chew",
+      tags: ["chew", "cotton", "green", "m"],
       priceCents: 3990,
       coverImageUrl: "/one.jpg",
       status: "active"
