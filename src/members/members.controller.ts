@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Headers, Param, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Headers,
+  Param,
+  Post
+} from "@nestjs/common";
 import { AuthService } from "../auth/auth.service";
 import { CustomersService } from "../customers/customers.service";
 import { CreateCustomerAddressDto } from "../customers/dto/create-customer-address.dto";
@@ -21,23 +29,67 @@ export class MembersController {
   }
 
   @Get(":phone")
-  getProfile(@Param("phone") phone: string) {
+  async getProfile(
+    @Param("phone") phone: string,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    await this.assertMemberOwnsPhone(phone, sessionToken);
+
     return this.membersService.getProfile(phone);
   }
 
-  @Post(":phone/addresses")
-  createAddress(
-    @Param("phone") phone: string,
+  @Post("me/addresses")
+  async createCurrentAddress(
+    @Headers("x-member-token") sessionToken: string | undefined,
     @Body() dto: CreateCustomerAddressDto
   ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.customersService.addAddress(session.phone, dto);
+  }
+
+  @Post(":phone/addresses")
+  async createAddress(
+    @Param("phone") phone: string,
+    @Headers("x-member-token") sessionToken: string | undefined,
+    @Body() dto: CreateCustomerAddressDto
+  ) {
+    await this.assertMemberOwnsPhone(phone, sessionToken);
+
     return this.customersService.addAddress(phone, dto);
   }
 
-  @Post(":phone/points/redemptions")
-  redeemPoints(
-    @Param("phone") phone: string,
+  @Post("me/points/redemptions")
+  async redeemCurrentMemberPoints(
+    @Headers("x-member-token") sessionToken: string | undefined,
     @Body() dto: RedeemMemberPointsDto
   ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.membersService.redeemPoints(session.phone, dto.rewardKey);
+  }
+
+  @Post(":phone/points/redemptions")
+  async redeemPoints(
+    @Param("phone") phone: string,
+    @Headers("x-member-token") sessionToken: string | undefined,
+    @Body() dto: RedeemMemberPointsDto
+  ) {
+    await this.assertMemberOwnsPhone(phone, sessionToken);
+
     return this.membersService.redeemPoints(phone, dto.rewardKey);
+  }
+
+  private async assertMemberOwnsPhone(
+    phone: string,
+    sessionToken?: string
+  ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    if (session.phone !== phone) {
+      throw new ForbiddenException(
+        "Member session does not match requested profile"
+      );
+    }
   }
 }

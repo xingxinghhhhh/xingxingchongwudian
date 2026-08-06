@@ -203,13 +203,26 @@ export interface GrowthTaskCompletion {
   }>;
 }
 
-export interface MemberLoginInput {
+export interface MemberVerificationRequestInput {
   name: string;
   phone: string;
 }
 
+export interface MemberVerificationResponse {
+  challengeId: string;
+  expiresAt: string;
+  retryAfterSeconds: number;
+  developmentCode?: string;
+}
+
+export interface MemberLoginInput {
+  challengeId: string;
+  code: string;
+}
+
 export interface MemberLoginResponse {
   sessionToken: string;
+  expiresAt: string;
   member: {
     phone: string;
     name: string;
@@ -243,10 +256,19 @@ type Fetcher = typeof fetch;
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 
-export function getMemberProfile(phone: string, fetcher: Fetcher = fetch) {
+export function getMemberProfile(
+  phone: string,
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
   return requestJson<MemberProfile>(
     `/members/${encodeURIComponent(phone)}`,
-    { cache: "no-store" },
+    {
+      cache: "no-store",
+      headers: {
+        "X-Member-Token": sessionToken
+      }
+    },
     fetcher
   );
 }
@@ -282,13 +304,12 @@ export function loginMember(input: MemberLoginInput, fetcher: Fetcher = fetch) {
   );
 }
 
-export function createMemberAddress(
-  phone: string,
-  input: CreateMemberAddressInput,
+export function requestMemberVerification(
+  input: MemberVerificationRequestInput,
   fetcher: Fetcher = fetch
 ) {
-  return requestJson<MemberAddress>(
-    `/members/${encodeURIComponent(phone)}/addresses`,
+  return requestJson<MemberVerificationResponse>(
+    "/auth/verification-codes",
     {
       body: JSON.stringify(input),
       cache: "no-store",
@@ -301,18 +322,55 @@ export function createMemberAddress(
   );
 }
 
-export function redeemMemberPoints(
-  phone: string,
-  input: RedeemMemberPointsInput,
+export function logoutMember(sessionToken: string, fetcher: Fetcher = fetch) {
+  return requestJson<{ success: boolean }>(
+    "/auth/logout",
+    {
+      body: JSON.stringify({}),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Member-Token": sessionToken
+      },
+      method: "POST"
+    },
+    fetcher
+  );
+}
+
+export function createMemberAddress(
+  sessionToken: string,
+  input: CreateMemberAddressInput,
   fetcher: Fetcher = fetch
 ) {
-  return requestJson<MemberRedemption>(
-    `/members/${encodeURIComponent(phone)}/points/redemptions`,
+  return requestJson<MemberAddress>(
+    "/members/me/addresses",
     {
       body: JSON.stringify(input),
       cache: "no-store",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Member-Token": sessionToken
+      },
+      method: "POST"
+    },
+    fetcher
+  );
+}
+
+export function redeemMemberPoints(
+  sessionToken: string,
+  input: RedeemMemberPointsInput,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<MemberRedemption>(
+    "/members/me/points/redemptions",
+    {
+      body: JSON.stringify(input),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Member-Token": sessionToken
       },
       method: "POST"
     },
@@ -323,6 +381,7 @@ export function redeemMemberPoints(
 export function completeGrowthTask(
   petNo: string,
   taskKey: string,
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<GrowthTaskCompletion>(
@@ -331,12 +390,14 @@ export function completeGrowthTask(
     )}/complete`,
     {
       cache: "no-store",
+      headers: {
+        "X-Member-Token": sessionToken
+      },
       method: "POST"
     },
     fetcher
   );
 }
-
 async function requestJson<T>(
   path: string,
   init: RequestInit,
@@ -362,5 +423,5 @@ function getErrorMessage(payload: unknown) {
     return payload.message;
   }
 
-  return "Request failed";
+  return "请求失败";
 }

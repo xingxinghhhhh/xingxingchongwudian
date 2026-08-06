@@ -10,6 +10,12 @@ import {
   getDailyDiaryCoverage,
   getCloudPetDailyDiaryStatus,
   getAdminCustomer,
+  getAdminCloudPetCareScoreRules,
+  getAdminCloudPetDetail,
+  getAdminCloudPetRetentionMetrics,
+  getAdminCloudPetGrowthTaskOperations,
+  updateAdminCloudPetCareScoreRules,
+  updateAdminCloudPetGrowthTask,
   getCurrentAdminStaff,
   getAdminDashboard,
   getMerchantAnalytics,
@@ -30,6 +36,7 @@ import {
   listOperationLogs,
   listLowStockVariants,
   recordShipmentEvent,
+  removeAdminCloudPetDiaryNote,
   updateProductStatus,
   updateCouponStatus,
   updateCustomerCrm,
@@ -70,6 +77,13 @@ describe("admin api client", () => {
         operationLogCount: 4,
         highRiskOperationCount: 3,
         permissionDeniedCount: 1,
+        memberVerificationIssuedCount: 12,
+        memberVerificationSuccessCount: 9,
+        memberVerificationActiveCount: 1,
+        memberVerificationExpiredCount: 1,
+        memberVerificationLockedCount: 1,
+        memberVerificationFailedAttemptCount: 4,
+        memberVerificationSuccessRate: 0.75,
         hiddenCommunityPostCount: 0
       })
     });
@@ -92,7 +106,11 @@ describe("admin api client", () => {
       overduePaymentIntentCount: 1,
       operationLogCount: 4,
       highRiskOperationCount: 3,
-      permissionDeniedCount: 1
+      permissionDeniedCount: 1,
+      memberVerificationIssuedCount: 12,
+      memberVerificationSuccessCount: 9,
+      memberVerificationFailedAttemptCount: 4,
+      memberVerificationSuccessRate: 0.75
     });
     expect(fetcher).toHaveBeenCalledWith(
       "http://localhost:3000/api/admin/dashboard",
@@ -764,6 +782,255 @@ describe("admin api client", () => {
     );
   });
 
+
+  it("filters cloud pets for operations", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [{ petNo: "VP_FILTER", name: "Filtered Pet", communityPostCount: 0 }]
+      })
+    });
+
+    await expect(
+      listAdminCloudPets(
+        token,
+        { q: "Filtered", species: "cat", careState: "thriving" },
+        fetcher
+      )
+    ).resolves.toEqual([
+      { petNo: "VP_FILTER", name: "Filtered Pet", communityPostCount: 0 }
+    ]);
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets?q=Filtered&species=cat&careState=thriving",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+
+    fetcher.mockClear();
+    await expect(listAdminCloudPets(token, { q: "   " }, fetcher)).resolves.toEqual([
+      { petNo: "VP_FILTER", name: "Filtered Pet", communityPostCount: 0 }
+    ]);
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("loads cloud-pet retention metrics", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        date: "2026-06-03",
+        totalPetCount: 2,
+        careCompletedTodayCount: 1,
+        careCompletionRate: 0.5,
+        averageCareScore: 50,
+        maxCareStreakDays: 3,
+        careStateCounts: { needsCare: 1, steady: 1, thriving: 0 },
+        dailyDiaryCoveredCount: 1,
+        dailyDiaryMissingCount: 1,
+        dailyDiaryCoverageRate: 0.5,
+        homepageVisitCount: 4,
+        communityPostCount: 2,
+        pendingCommunityReportCount: 1
+      })
+    });
+
+    await expect(
+      getAdminCloudPetRetentionMetrics(token, fetcher)
+    ).resolves.toMatchObject({
+      careCompletedTodayCount: 1,
+      careStateCounts: { needsCare: 1, steady: 1, thriving: 0 }
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets/retention-metrics",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("loads and updates cloud-pet care score rules", async () => {
+    const fetcher = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          dailyTaskBonus: 12,
+          steadyMinScore: 60,
+          thrivingMinScore: 70,
+          thrivingRequiresCareToday: true
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          dailyTaskBonus: 15,
+          steadyMinScore: 55,
+          thrivingMinScore: 75,
+          thrivingRequiresCareToday: true,
+          updatedAt: "2026-07-14T00:00:00.000Z"
+        })
+      });
+
+    await expect(getAdminCloudPetCareScoreRules(token, fetcher)).resolves.toMatchObject({
+      dailyTaskBonus: 12,
+      steadyMinScore: 60
+    });
+    await expect(
+      updateAdminCloudPetCareScoreRules(
+        token,
+        { dailyTaskBonus: 15, steadyMinScore: 55, thrivingMinScore: 75 },
+        fetcher
+      )
+    ).resolves.toMatchObject({
+      dailyTaskBonus: 15,
+      thrivingMinScore: 75
+    });
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:3000/api/admin/cloud-pets/care-score-rules",
+      { cache: "no-store", headers: { "X-Admin-Token": token } }
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:3000/api/admin/cloud-pets/care-score-rules",
+      {
+        body: JSON.stringify({
+          dailyTaskBonus: 15,
+          steadyMinScore: 55,
+          thrivingMinScore: 75
+        }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Token": token
+        },
+        method: "PATCH"
+      }
+    );
+  });
+
+  it("updates a cloud-pet growth task template", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        key: "daily-care",
+        title: "Daily care",
+        points: 24,
+        rewards: { mood: 7, energy: 5, intimacy: 9 }
+      })
+    });
+
+    await expect(
+      updateAdminCloudPetGrowthTask(
+        token,
+        "daily care",
+        { points: 24, rewards: { mood: 7, energy: 5, intimacy: 9 } },
+        fetcher
+      )
+    ).resolves.toMatchObject({ key: "daily-care", points: 24 });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets/growth-tasks/daily%20care",
+      {
+        body: JSON.stringify({
+          points: 24,
+          rewards: { mood: 7, energy: 5, intimacy: 9 }
+        }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Token": token
+        },
+        method: "PATCH"
+      }
+    );
+  });
+
+  it("loads cloud-pet growth task operations", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        totalPetCount: 2,
+        items: [
+          {
+            key: "daily-care",
+            title: "Daily care",
+            points: 20,
+            rewards: { mood: 8, energy: 4, intimacy: 10 },
+            completedTodayCount: 1,
+            completionRate: 0.5
+          }
+        ]
+      })
+    });
+
+    await expect(
+      getAdminCloudPetGrowthTaskOperations(token, fetcher)
+    ).resolves.toMatchObject({
+      totalPetCount: 2,
+      items: [expect.objectContaining({ key: "daily-care", completedTodayCount: 1 })]
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets/growth-tasks",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("removes an owner diary note from a cloud pet", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ petNo: "VP_NOTE", name: "Note Pet", timeline: [] })
+    });
+
+    await expect(
+      removeAdminCloudPetDiaryNote(token, "VP NOTE", "note 1", fetcher)
+    ).resolves.toMatchObject({ petNo: "VP_NOTE" });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets/VP%20NOTE/diary-notes/note%201",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token },
+        method: "DELETE"
+      }
+    );
+  });
+
+  it("loads a cloud-pet operational detail", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        pet: { petNo: "VP_DETAIL", name: "Detail Pet" },
+        archive: { engagement: { homepageVisitCount: 3 }, items: [] },
+        community: { posts: [], postCount: 0, likeCount: 0, commentCount: 0, reportCount: 0, pendingReportCount: 0 },
+        diary: { entryCount: 0 }
+      })
+    });
+
+    await expect(
+      getAdminCloudPetDetail(token, "VP DETAIL", fetcher)
+    ).resolves.toMatchObject({
+      pet: { petNo: "VP_DETAIL" },
+      diary: { entryCount: 0 },
+      community: { postCount: 0, likeCount: 0, commentCount: 0 }
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/cloud-pets/VP%20DETAIL/detail",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
   it("generates missing cloud-pet daily diaries from admin operations", async () => {
     const fetcher = jest.fn().mockResolvedValue({
       ok: true,
@@ -990,6 +1257,25 @@ describe("admin api client", () => {
     ]);
     expect(listFetcher).toHaveBeenCalledWith(
       "http://localhost:3000/api/admin/community/reports",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+
+    await expect(
+      listAdminCommunityReports(
+        token,
+        {
+          status: "pending_review",
+          postNo: " POST001 ",
+          memberPhone: " 13600136788 "
+        },
+        listFetcher
+      )
+    ).resolves.toEqual([expect.objectContaining({ reportNo: "RPT001" })]);
+    expect(listFetcher).toHaveBeenLastCalledWith(
+      "http://localhost:3000/api/admin/community/reports?status=pending_review&postNo=POST001&memberPhone=13600136788",
       {
         cache: "no-store",
         headers: { "X-Admin-Token": token }

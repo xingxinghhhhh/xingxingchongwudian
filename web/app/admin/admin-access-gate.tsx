@@ -35,9 +35,9 @@ export function AdminAccessGate({ children }: AdminAccessGateProps) {
   if (!ready) {
     return (
       <section className="admin-card">
-        <p className="section__kicker">Admin Session</p>
-        <h2>Checking merchant console access</h2>
-        <p>Validating the admin session before loading the protected console.</p>
+        <p className="section__kicker">后台会话</p>
+        <h2>正在验证商家后台访问权限</h2>
+        <p>验证完成后将自动进入后台，请稍候。</p>
       </section>
     );
   }

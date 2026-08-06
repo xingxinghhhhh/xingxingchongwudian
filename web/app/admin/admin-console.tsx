@@ -4,8 +4,14 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import type { CommunityPost } from "../cloud-pets/cloud-pets-api";
 import { formatCents, OrderResponse, ShopProductDetail } from "../shop/shop-api";
+import { getGrowthTaskCopy } from "../cloud-pets/cloud-pet-copy";
+import { getProductTitleLabel } from "../shop/shop-copy";
 import {
   AdminCloudPet,
+  AdminCloudPetCareScoreRules,
+  AdminCloudPetOperationalDetail,
+  AdminCloudPetRetentionMetrics,
+  AdminCloudPetGrowthTaskOperations,
   AdminCommunityReport,
   AdminDashboardMetrics,
   AdminCmsBlock,
@@ -20,6 +26,7 @@ import {
   CouponStatus,
   LowStockVariant,
   CommunityModerationStatus,
+  CommunityReportStatus,
   MerchantAnalytics,
   OperationLogRecord,
   ProductStatus,
@@ -30,6 +37,10 @@ import {
   fulfillOrder,
   generateCloudPetDailyDiaries,
   getCloudPetDailyDiaryStatus,
+  getAdminCloudPetCareScoreRules,
+  getAdminCloudPetDetail,
+  getAdminCloudPetRetentionMetrics,
+  getAdminCloudPetGrowthTaskOperations,
   getCurrentAdminStaff,
   getAdminDashboard,
   getMerchantAnalytics,
@@ -46,16 +57,32 @@ import {
   listLowStockVariants,
   listOperationLogs,
   recordShipmentEvent,
+  removeAdminCloudPetDiaryNote,
   updateCommunityPostStatus,
   updateCommunityReportStatus,
   updateCmsBlockStatus,
   updateCouponStatus,
   updateCustomerCrm,
+  updateAdminCloudPetCareScoreRules,
+  updateAdminCloudPetGrowthTask,
   updateProductStatus,
   updateRefundStatus,
   updateReviewStatus,
   updateVariantStock
 } from "./admin-api";
+import {
+  getAdminRoleLabel,
+  getAdminStaffNameLabel,
+  getCustomerSegmentCopy,
+  getCustomerTagLabel,
+  getOperationActionLabel,
+  getOperationTargetLabel,
+  getPermissionLabel,
+  getPriorityLabel,
+  getRetentionFunnelCopy,
+  getRiskLevelLabel,
+  getStatusLabel
+} from "./admin-copy";
 
 const defaultToken = "";
 
@@ -76,7 +103,7 @@ export function AdminConsole() {
   const [reviews, setReviews] = useState<AdminProductReview[]>([]);
   const [lowStock, setLowStock] = useState<LowStockVariant[]>([]);
   const [operationLogs, setOperationLogs] = useState<OperationLogRecord[]>([]);
-  const [status, setStatus] = useState("Load merchant operations data.");
+  const [status, setStatus] = useState("正在加载商家运营数据...");
   const [error, setError] = useState<string | null>(null);
   const [busyPostNo, setBusyPostNo] = useState<string | null>(null);
   const [busyReportNo, setBusyReportNo] = useState<string | null>(null);
@@ -89,13 +116,47 @@ export function AdminConsole() {
   const [busyCmsBlockNo, setBusyCmsBlockNo] = useState<string | null>(null);
   const [isCreatingCmsBlock, setIsCreatingCmsBlock] = useState(false);
   const [busyCustomerPhone, setBusyCustomerPhone] = useState<string | null>(null);
+  const [busyCloudPetNo, setBusyCloudPetNo] = useState<string | null>(null);
+  const [busyGrowthTaskKey, setBusyGrowthTaskKey] = useState<string | null>(null);
+  const [busyDiaryNoteId, setBusyDiaryNoteId] = useState<string | null>(null);
+  const [selectedCloudPetDetail, setSelectedCloudPetDetail] =
+    useState<AdminCloudPetOperationalDetail | null>(null);
   const [isGeneratingDailyDiaries, setIsGeneratingDailyDiaries] = useState(false);
   const [dailyDiaryGeneration, setDailyDiaryGeneration] =
     useState<CloudPetDailyDiaryGenerationResult | null>(null);
   const [dailyDiaryStatus, setDailyDiaryStatus] =
     useState<CloudPetDailyDiaryStatusResult | null>(null);
+  const [cloudPetRetentionMetrics, setCloudPetRetentionMetrics] =
+    useState<AdminCloudPetRetentionMetrics | null>(null);
+  const [cloudPetGrowthTaskOperations, setCloudPetGrowthTaskOperations] =
+    useState<AdminCloudPetGrowthTaskOperations | null>(null);
+  const [cloudPetCareScoreRules, setCloudPetCareScoreRules] =
+    useState<AdminCloudPetCareScoreRules | null>(null);
+  const [isUpdatingCareScoreRules, setIsUpdatingCareScoreRules] = useState(false);
+  const [cloudPetFilters, setCloudPetFilters] = useState({
+    q: "",
+    species: "",
+    careState: "",
+    riskLevel: "",
+    sortBy: ""
+  });
+  const [reportFilters, setReportFilters] = useState({
+    status: "",
+    postNo: "",
+    memberPhone: ""
+  });
   const canManageCustomers =
     currentStaff?.permissions.includes("customers:write") ?? false;
+  const canManageCloudPets =
+    currentStaff?.permissions.includes("cloud_pets:write") ?? false;
+  const filteredCloudPets = cloudPetFilters.riskLevel
+    ? pets.filter(
+        (pet) => getCloudPetListRiskSummary(pet).highestLevel === cloudPetFilters.riskLevel
+      )
+    : pets;
+  const displayedCloudPets = cloudPetFilters.sortBy === "risk_desc"
+    ? [...filteredCloudPets].sort(compareCloudPetRisk)
+    : filteredCloudPets;
 
   useEffect(() => {
     const storedToken = localStorage.getItem("kzt_admin_session") ?? defaultToken;
@@ -107,7 +168,7 @@ export function AdminConsole() {
 
   async function loadAdminData(nextToken = token) {
     if (!nextToken) {
-      setError("Admin session required");
+      setError("需要后台登录会话");
       return;
     }
 
@@ -130,6 +191,9 @@ export function AdminConsole() {
         nextReviews,
         nextLowStock,
         nextDailyDiaryStatus,
+        nextCloudPetRetentionMetrics,
+        nextCloudPetGrowthTaskOperations,
+        nextCloudPetCareScoreRules,
         nextOperationLogs
       ] = await Promise.all([
         getAdminDashboard(nextToken),
@@ -146,8 +210,10 @@ export function AdminConsole() {
         listAdminReviews(nextToken),
         listLowStockVariants(nextToken),
         getCloudPetDailyDiaryStatus(nextToken),
-        nextStaff.permissions.includes("audit:read")
-          ? listOperationLogs(nextToken)
+        getAdminCloudPetRetentionMetrics(nextToken),
+        getAdminCloudPetGrowthTaskOperations(nextToken),
+        getAdminCloudPetCareScoreRules(nextToken),
+        nextStaff.permissions.includes("audit:read") ? listOperationLogs(nextToken)
           : Promise.resolve([])
       ]);
 
@@ -166,8 +232,11 @@ export function AdminConsole() {
       setReviews(nextReviews);
       setLowStock(nextLowStock);
       setDailyDiaryStatus(nextDailyDiaryStatus);
+      setCloudPetRetentionMetrics(nextCloudPetRetentionMetrics);
+      setCloudPetGrowthTaskOperations(nextCloudPetGrowthTaskOperations);
+      setCloudPetCareScoreRules(nextCloudPetCareScoreRules);
       setOperationLogs(nextOperationLogs);
-      setStatus("Merchant operations data refreshed.");
+      setStatus("商家运营数据已刷新。");
     } catch (caught) {
       if (
         nextToken.startsWith("admin_") &&
@@ -179,7 +248,7 @@ export function AdminConsole() {
         return;
       }
 
-      setError(caught instanceof Error ? caught.message : "Failed to load admin data");
+      setError(caught instanceof Error ? caught.message : "后台数据加载失败");
     }
   }
 
@@ -188,7 +257,7 @@ export function AdminConsole() {
       try {
         await adminLogout(token);
       } catch {
-        // Best-effort logout: clear the local session even if the request fails.
+        // 无论接口是否成功，前端会话都必须清除。
       }
     }
 
@@ -200,7 +269,7 @@ export function AdminConsole() {
     const stock = Number(stockText);
 
     if (!Number.isInteger(stock) || stock < 0) {
-      setError("Stock must be 0 or a positive integer");
+      setError("库存必须是 0 或正整数");
       return;
     }
 
@@ -210,9 +279,9 @@ export function AdminConsole() {
     try {
       await updateVariantStock(skuCode, stock, token);
       await loadAdminData(token);
-      setStatus(`${skuCode} stock updated to ${stock}.`);
+      setStatus(`${skuCode} 库存已更新为 ${stock}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Stock update failed");
+      setError(caught instanceof Error ? caught.message : "库存更新失败");
     } finally {
       setBusyProductKey(null);
     }
@@ -225,9 +294,9 @@ export function AdminConsole() {
     try {
       await updateProductStatus(slug, statusValue, token);
       await loadAdminData(token);
-      setStatus(`Product ${statusValue === "active" ? "published" : "archived"}.`);
+      setStatus(`商品已${statusValue === "active" ? "上架" : "下架"}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Product status update failed");
+      setError(caught instanceof Error ? caught.message : "商品状态更新失败");
     } finally {
       setBusyProductKey(null);
     }
@@ -240,12 +309,12 @@ export function AdminConsole() {
     const stock = Number(formData.get("stock"));
 
     if (!Number.isInteger(priceCents) || priceCents <= 0) {
-      setError("Product price must be greater than 0");
+      setError("商品价格必须大于 0");
       return;
     }
 
     if (!Number.isInteger(stock) || stock < 0) {
-      setError("Stock must be 0 or a positive integer");
+      setError("库存必须是 0 或正整数");
       return;
     }
 
@@ -278,9 +347,9 @@ export function AdminConsole() {
       );
       event.currentTarget.reset();
       await loadAdminData(token);
-      setStatus("Product created and published.");
+      setStatus("商品已创建并上架。");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Product creation failed");
+      setError(caught instanceof Error ? caught.message : "商品创建失败");
     } finally {
       setIsCreatingProduct(false);
     }
@@ -292,7 +361,7 @@ export function AdminConsole() {
     const sortOrder = Number(formData.get("sortOrder") ?? 100);
 
     if (!Number.isInteger(sortOrder) || sortOrder < 0) {
-      setError("CMS sort order must be 0 or a positive integer");
+      setError("内容块排序值必须是 0 或正整数");
       return;
     }
 
@@ -315,9 +384,9 @@ export function AdminConsole() {
       );
       event.currentTarget.reset();
       await loadAdminData(token);
-      setStatus("CMS block created.");
+      setStatus("内容块已创建。");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "CMS block creation failed");
+      setError(caught instanceof Error ? caught.message : "内容块创建失败");
     } finally {
       setIsCreatingCmsBlock(false);
     }
@@ -333,9 +402,9 @@ export function AdminConsole() {
     try {
       await updateCmsBlockStatus(blockNo, statusValue, token);
       await loadAdminData(token);
-      setStatus(`${blockNo} CMS block ${statusValue}.`);
+      setStatus(`${blockNo} 内容块已更新为${getStatusLabel(statusValue)}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "CMS status update failed");
+      setError(caught instanceof Error ? caught.message : "内容块状态更新失败");
     } finally {
       setBusyCmsBlockNo(null);
     }
@@ -343,7 +412,7 @@ export function AdminConsole() {
 
   async function handleMarkCustomerVip(customer: AdminCustomerListItem) {
     if (!canManageCustomers) {
-      setError("Permission denied: customers:write");
+      setError("权限不足，无法执行该操作：customers:write");
       return;
     }
 
@@ -355,15 +424,15 @@ export function AdminConsole() {
         customer.phone,
         {
           tags: Array.from(new Set([...customer.tags, "vip_candidate"])),
-          note: "Marked from merchant CRM console for bundle follow-up.",
+          note: "从商家客户管理台标记，后续跟进组合权益。",
           ownerStaffName: currentStaff?.name
         },
         token
       );
       await loadAdminData(token);
-      setStatus(`${customer.phone} marked as VIP candidate.`);
+      setStatus(`${customer.phone} 已标记为 VIP 候选客户。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Customer CRM update failed");
+      setError(caught instanceof Error ? caught.message : "客户资料更新失败");
     } finally {
       setBusyCustomerPhone(null);
     }
@@ -371,7 +440,7 @@ export function AdminConsole() {
 
   async function handleCustomerFollowUp(customer: AdminCustomerListItem) {
     if (!canManageCustomers) {
-      setError("Permission denied: customers:write");
+      setError("权限不足，无法执行该操作：customers:write");
       return;
     }
 
@@ -383,14 +452,14 @@ export function AdminConsole() {
         customer.phone,
         {
           type: "wechat",
-          summary: `Followed up with ${customer.nextBestAction.ctaLabel}.`
+          summary: `已跟进：${customer.nextBestAction.ctaLabel}。`
         },
         token
       );
       await loadAdminData(token);
-      setStatus(`${customer.phone} follow-up recorded.`);
+      setStatus(`${customer.phone} 的跟进记录已保存。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Customer follow-up failed");
+      setError(caught instanceof Error ? caught.message : "客户跟进记录保存失败");
     } finally {
       setBusyCustomerPhone(null);
     }
@@ -403,9 +472,9 @@ export function AdminConsole() {
     try {
       await updateCouponStatus(code, statusValue, token);
       await loadAdminData(token);
-      setStatus(`${code} is now ${statusValue}.`);
+      setStatus(`${code} 已更新为${getStatusLabel(statusValue)}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Coupon update failed");
+      setError(caught instanceof Error ? caught.message : "优惠券更新失败");
     } finally {
       setBusyCouponCode(null);
     }
@@ -422,13 +491,13 @@ export function AdminConsole() {
       await updateRefundStatus(
         refundNo,
         statusValue,
-        statusValue === "approved" ? "Approved in merchant console" : "Rejected in merchant console",
+        statusValue === "approved" ? "商家后台审核通过" : "商家后台审核拒绝",
         token
       );
       await loadAdminData(token);
-      setStatus(`${refundNo} ${statusValue}.`);
+      setStatus(`${refundNo} 已${statusValue === "approved" ? "通过" : "拒绝"}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Refund update failed");
+      setError(caught instanceof Error ? caught.message : "退款审核失败");
     } finally {
       setBusyRefundNo(null);
     }
@@ -444,9 +513,9 @@ export function AdminConsole() {
     try {
       await updateReviewStatus(reviewNo, statusValue, token);
       await loadAdminData(token);
-      setStatus(`${reviewNo} review ${statusValue}.`);
+      setStatus(`${reviewNo} 评价已更新为${getStatusLabel(statusValue)}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Review update failed");
+      setError(caught instanceof Error ? caught.message : "评价更新失败");
     } finally {
       setBusyReviewNo(null);
     }
@@ -467,9 +536,9 @@ export function AdminConsole() {
     try {
       await fulfillOrder(orderNo, { carrier, trackingNumber }, token);
       await loadAdminData(token);
-      setStatus(`${orderNo} shipment recorded.`);
+      setStatus(`${orderNo} 物流信息已登记。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Fulfillment failed");
+      setError(caught instanceof Error ? caught.message : "订单履约失败");
     } finally {
       setBusyOrderNo(null);
     }
@@ -484,20 +553,20 @@ export function AdminConsole() {
 
     const copyByStatus = {
       in_transit: {
-        location: "Transit hub",
-        description: "Shipment is moving to the next station."
+        location: "中转中心",
+        description: "包裹正在运往下一站。"
       },
       out_for_delivery: {
-        location: "Local delivery station",
-        description: "Courier is out for delivery."
+        location: "本地配送站",
+        description: "快递员正在派送。"
       },
       delivered: {
-        location: "Customer address",
-        description: "Package signed by customer."
+        location: "收货地址",
+        description: "客户已签收包裹。"
       },
       exception: {
-        location: "Carrier service desk",
-        description: "Delivery exception needs merchant follow-up."
+        location: "承运商服务台",
+        description: "配送异常，需要商家跟进。"
       }
     } satisfies Record<
       "in_transit" | "out_for_delivery" | "delivered" | "exception",
@@ -514,9 +583,9 @@ export function AdminConsole() {
         token
       );
       await loadAdminData(token);
-      setStatus(`${orderNo} tracking updated to ${statusValue}.`);
+      setStatus(`${orderNo} 物流状态已更新为${getStatusLabel(statusValue)}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Shipment event failed");
+      setError(caught instanceof Error ? caught.message : "物流状态更新失败");
     } finally {
       setBusyOrderNo(null);
     }
@@ -532,34 +601,260 @@ export function AdminConsole() {
     try {
       await updateCommunityPostStatus(postNo, statusValue, token);
       await loadAdminData(token);
-      setStatus(`Community post ${statusValue}.`);
+      setStatus(`社区帖子已更新为${getStatusLabel(statusValue)}。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Moderation failed");
+      setError(caught instanceof Error ? caught.message : "社区审核失败");
     } finally {
       setBusyPostNo(null);
     }
   }
 
+  function getCommunityReportFilters() {
+    const status = ["pending_review", "reviewed", "dismissed"].includes(reportFilters.status)
+      ? (reportFilters.status as CommunityReportStatus)
+      : undefined;
+
+    return {
+      status,
+      postNo: reportFilters.postNo,
+      memberPhone: reportFilters.memberPhone
+    };
+  }
+
+  async function refreshCommunityReports() {
+    const nextReports = await listAdminCommunityReports(token, getCommunityReportFilters());
+    setReports(nextReports);
+    return nextReports;
+  }
+
   async function handleReportStatus(
     reportNo: string,
-    statusValue: "reviewed" | "dismissed"
+    statusValue: "reviewed" | "dismissed",
+    options: { hidePostNo?: string } = {}
   ) {
     setBusyReportNo(reportNo);
     setError(null);
+    let postWasHidden = false;
 
     try {
+      if (options.hidePostNo) {
+        const updatedPost = await updateCommunityPostStatus(
+          options.hidePostNo,
+          "hidden",
+          token
+        );
+        postWasHidden = true;
+        setPosts((current) =>
+          current.map((post) =>
+            post.postNo === updatedPost.postNo ? updatedPost : post
+          )
+        );
+      }
       await updateCommunityReportStatus(
         reportNo,
         statusValue,
-        statusValue === "reviewed" ? "Handled by merchant console" : "Dismissed by merchant console",
+        options.hidePostNo
+          ? "商家后台已处理并隐藏关联帖子"
+          : statusValue === "reviewed"
+            ? "商家后台已处理"
+            : "商家后台已驳回",
         token
       );
-      await loadAdminData(token);
-      setStatus(`Community report ${statusValue}.`);
+      await refreshCommunityReports();
+      setStatus(
+        options.hidePostNo
+          ? "社区举报已处理，关联帖子已隐藏。"
+          : "社区举报已更新为" + getStatusLabel(statusValue) + "。"
+      );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Report update failed");
+      setError(
+        postWasHidden
+          ? "关联帖子已隐藏，但举报状态更新失败，请重试处理。"
+          : caught instanceof Error
+            ? caught.message
+            : "举报状态更新失败"
+      );
     } finally {
       setBusyReportNo(null);
+    }
+  }
+
+  async function handleCommunityReportFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!token) {
+      setError("需要后台登录会话");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const nextReports = await refreshCommunityReports();
+      setStatus(`社区举报筛选已应用，共 ${nextReports.length} 条结果。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "社区举报筛选失败");
+    }
+  }
+
+  async function handleResetCommunityReportFilters() {
+    if (!token) {
+      setError("需要后台登录会话");
+      return;
+    }
+
+    setReportFilters({ status: "", postNo: "", memberPhone: "" });
+    setError(null);
+
+    try {
+      const nextReports = await listAdminCommunityReports(token);
+      setReports(nextReports);
+      setStatus("社区举报筛选已清除。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "社区举报筛选重置失败");
+    }
+  }
+
+  async function handleCloudPetFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!token) {
+      setError("需要后台登录会话");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const filteredPets = await listAdminCloudPets(token, {
+        q: cloudPetFilters.q,
+        species: cloudPetFilters.species === "cat" || cloudPetFilters.species === "dog"
+          ? cloudPetFilters.species
+          : undefined,
+        careState:
+          cloudPetFilters.careState === "needs_care" ||
+          cloudPetFilters.careState === "steady" ||
+          cloudPetFilters.careState === "thriving"
+            ? cloudPetFilters.careState
+            : undefined
+      });
+      setPets(filteredPets);
+      setStatus(`云养宠筛选已应用，共 ${filteredPets.length} 条结果。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "云养宠筛选失败");
+    }
+  }
+
+  async function handleResetCloudPetFilters() {
+    if (!token) {
+      setError("需要后台登录会话");
+      return;
+    }
+
+    setCloudPetFilters({ q: "", species: "", careState: "", riskLevel: "", sortBy: "" });
+    setError(null);
+
+    try {
+      const allPets = await listAdminCloudPets(token);
+      setPets(allPets);
+      setStatus("云养宠筛选已清除。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "云养宠筛选重置失败");
+    }
+  }
+  async function handleLoadCloudPetDetail(petNo: string) {
+    setBusyCloudPetNo(petNo);
+    setError(null);
+
+    try {
+      const detail = await getAdminCloudPetDetail(token, petNo);
+      setSelectedCloudPetDetail(detail);
+      setStatus(`${detail.pet.name} 的云养宠运营详情已加载。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "云养宠详情加载失败");
+    } finally {
+      setBusyCloudPetNo(null);
+    }
+  }
+
+  async function handleRemoveCloudPetDiaryNote(petNo: string, noteId: string) {
+    setBusyDiaryNoteId(noteId);
+    setError(null);
+
+    try {
+      await removeAdminCloudPetDiaryNote(token, petNo, noteId);
+      const detail = await getAdminCloudPetDetail(token, petNo);
+      setSelectedCloudPetDetail(detail);
+      await loadAdminData(token);
+      setStatus("主人手记已从公开归档中移除。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "主人手记移除失败");
+    } finally {
+      setBusyDiaryNoteId(null);
+    }
+  }
+  async function handleUpdateGrowthTaskTemplate(
+    event: FormEvent<HTMLFormElement>,
+    taskKey: string
+  ) {
+    event.preventDefault();
+
+    if (!canManageCloudPets) {
+      setError("权限不足，无法执行该操作：cloud_pets:write");
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
+    setBusyGrowthTaskKey(taskKey);
+    setError(null);
+
+    try {
+      const task = await updateAdminCloudPetGrowthTask(token, taskKey, {
+        points: Number(formData.get("points")),
+        rewards: {
+          mood: Number(formData.get("mood")),
+          energy: Number(formData.get("energy")),
+          intimacy: Number(formData.get("intimacy"))
+        }
+      });
+      await loadAdminData(token);
+      setStatus(`成长任务“${getGrowthTaskCopy(task).title}”已更新。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "成长任务更新失败");
+    } finally {
+      setBusyGrowthTaskKey(null);
+    }
+  }
+  async function handleUpdateCareScoreRules(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!canManageCloudPets) {
+      setError("权限不足，无法执行该操作：cloud_pets:write");
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
+    const dailyTaskBonus = Number(formData.get("dailyTaskBonus"));
+    const steadyMinScore = Number(formData.get("steadyMinScore"));
+    const thrivingMinScore = Number(formData.get("thrivingMinScore"));
+
+    setIsUpdatingCareScoreRules(true);
+    setError(null);
+
+    try {
+      const rules = await updateAdminCloudPetCareScoreRules(token, {
+        dailyTaskBonus,
+        steadyMinScore,
+        thrivingMinScore,
+        thrivingRequiresCareToday: formData.get("thrivingRequiresCareToday") === "on"
+      });
+      setCloudPetCareScoreRules(rules);
+      await loadAdminData(token);
+      setStatus("云养宠照护分规则已更新。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "照护分规则更新失败");
+    } finally {
+      setIsUpdatingCareScoreRules(false);
     }
   }
 
@@ -572,11 +867,11 @@ export function AdminConsole() {
       setDailyDiaryGeneration(result);
       await loadAdminData(token);
       setStatus(
-        `Daily diaries generated: ${result.generatedCount}; skipped: ${result.skippedCount}.`
+        `今日云养宠日记已生成 ${result.generatedCount} 条，跳过 ${result.skippedCount} 条。`
       );
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Daily diary generation failed"
+        caught instanceof Error ? caught.message : "今日云养宠日记生成失败"
       );
     } finally {
       setIsGeneratingDailyDiaries(false);
@@ -587,9 +882,9 @@ export function AdminConsole() {
     <div className="admin-console">
       <section className="admin-card admin-card--token">
         <div>
-          <p className="section__kicker">Merchant Console</p>
-          <h2>Operations Control Center</h2>
-          <p>Manage catalog, marketing, fulfillment, after-sales, cloud pets, and community content.</p>
+          <p className="section__kicker">商家后台</p>
+          <h2>运营控制中心</h2>
+          <p>统一管理商品、营销、履约、售后、云养宠和社区内容。</p>
         </div>
         <div className="admin-token-form">
           <button
@@ -597,17 +892,17 @@ export function AdminConsole() {
             onClick={() => void loadAdminData(token)}
             type="button"
           >
-            Refresh data
+            刷新数据
           </button>
           <Link className="admin-button admin-button--ghost" href="/admin/payments">
-            Payments
+            支付流水
           </Link>
           <button
             className="admin-button admin-button--ghost"
             onClick={() => void handleLogout()}
             type="button"
           >
-            Sign out
+            退出登录
           </button>
         </div>
         <p className={error ? "admin-status admin-status--error" : "admin-status"}>
@@ -615,55 +910,79 @@ export function AdminConsole() {
         </p>
       </section>
 
+      <section className="admin-card" data-testid="admin-member-verification-metrics">
+        <p className="section__kicker">会员认证</p>
+        <h2>近 24 小时验证码漏斗</h2>
+        <div className="admin-metrics">
+          {[
+            ["已发送", metrics?.memberVerificationIssuedCount ?? 0],
+            ["验证成功", metrics?.memberVerificationSuccessCount ?? 0],
+            ["等待验证", metrics?.memberVerificationActiveCount ?? 0],
+            ["已过期", metrics?.memberVerificationExpiredCount ?? 0],
+            ["已锁定", metrics?.memberVerificationLockedCount ?? 0],
+            ["错误尝试", metrics?.memberVerificationFailedAttemptCount ?? 0],
+            [
+              "验证成功率",
+              `${Math.round((metrics?.memberVerificationSuccessRate ?? 0) * 100)}%`
+            ]
+          ].map(([label, value]) => (
+            <article className="admin-metric" key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="admin-card">
-        <p className="section__kicker">Staff Access</p>
-        <h2>Current Operator And Permissions</h2>
+        <p className="section__kicker">员工权限</p>
+        <h2>当前员工与权限</h2>
         <div className="admin-row">
           <div>
-            <strong>{currentStaff?.name ?? "Not loaded"}</strong>
+            <strong>{currentStaff ? getAdminStaffNameLabel(currentStaff.name) : "尚未加载"}</strong>
             <span>
               {currentStaff?.staffNo ?? "STAFF_UNKNOWN"} /{" "}
-              {currentStaff?.role ?? "unknown"}
+              {currentStaff ? getAdminRoleLabel(currentStaff.role) : "未知角色"}
             </span>
           </div>
-          <em>{currentStaff?.permissions.length ?? 0} permissions</em>
+          <em>{currentStaff?.permissions.length ?? 0} 项权限</em>
         </div>
         <div className="admin-inventory-alerts">
           {(currentStaff?.permissions ?? []).map((permission) => (
-            <span key={permission}>{permission}</span>
+            <span key={permission} title={permission}>{getPermissionLabel(permission)}</span>
           ))}
-          {!currentStaff ? <span>Load data to inspect staff permissions.</span> : null}
+          {!currentStaff ? <span>刷新数据后可查看当前员工权限。</span> : null}
         </div>
       </section>
 
       <section className="admin-metrics">
         {[
-          ["Active products", metrics?.activeProductCount ?? 0],
-          ["Cloud pets", metrics?.cloudPetCount ?? 0],
-          ["Diary covered", metrics?.dailyDiaryCoveredCount ?? 0],
-          ["Diary missing", metrics?.dailyDiaryMissingCount ?? 0],
+          ["在售商品", metrics?.activeProductCount ?? 0],
+          ["云养宠", metrics?.cloudPetCount ?? 0],
+          ["今日日记已覆盖", metrics?.dailyDiaryCoveredCount ?? 0],
+          ["今日日记缺失", metrics?.dailyDiaryMissingCount ?? 0],
           [
-            "Diary coverage",
+            "今日日记覆盖率",
             `${Math.round((metrics?.dailyDiaryCoverageRate ?? 0) * 100)}%`
           ],
-          ["Community posts", metrics?.communityPostCount ?? 0],
-          ["Low-stock SKUs", metrics?.lowStockVariantCount ?? 0],
-          ["Orders", metrics?.orderCount ?? 0],
-          ["Pending orders", metrics?.pendingOrderCount ?? 0],
-          ["Payment intents", metrics?.paymentIntentCount ?? 0],
-          ["Pending payments", metrics?.pendingPaymentIntentCount ?? 0],
-          ["Failed payments", metrics?.failedPaymentIntentCount ?? 0],
-          ["Overdue payments", metrics?.overduePaymentIntentCount ?? 0],
-          ["Pending refunds", metrics?.pendingRefundCount ?? 0],
-          ["Expedited refunds", metrics?.expeditedRefundCount ?? 0],
-          ["Blocked refunds", metrics?.blockedRefundCount ?? 0],
-          ["Due soon refunds", metrics?.dueSoonRefundCount ?? 0],
-          ["Overdue refunds", metrics?.overdueRefundCount ?? 0],
-          ["Refund liability", formatCents(metrics?.pendingRefundAmountCents ?? 0)],
-          ["Audit logs", metrics?.operationLogCount ?? 0],
-          ["High-risk ops", metrics?.highRiskOperationCount ?? 0],
-          ["Permission denied", metrics?.permissionDeniedCount ?? 0],
-          ["Hidden posts", metrics?.hiddenCommunityPostCount ?? 0]
+          ["社区帖子", metrics?.communityPostCount ?? 0],
+          ["低库存规格", metrics?.lowStockVariantCount ?? 0],
+          ["订单", metrics?.orderCount ?? 0],
+          ["待处理订单", metrics?.pendingOrderCount ?? 0],
+          ["支付单", metrics?.paymentIntentCount ?? 0],
+          ["待支付", metrics?.pendingPaymentIntentCount ?? 0],
+          ["支付失败", metrics?.failedPaymentIntentCount ?? 0],
+          ["支付逾期", metrics?.overduePaymentIntentCount ?? 0],
+          ["待处理退款", metrics?.pendingRefundCount ?? 0],
+          ["加急退款", metrics?.expeditedRefundCount ?? 0],
+          ["受阻退款", metrics?.blockedRefundCount ?? 0],
+          ["即将超时退款", metrics?.dueSoonRefundCount ?? 0],
+          ["超时退款", metrics?.overdueRefundCount ?? 0],
+          ["待退款金额", formatCents(metrics?.pendingRefundAmountCents ?? 0)],
+          ["操作日志", metrics?.operationLogCount ?? 0],
+          ["高风险操作", metrics?.highRiskOperationCount ?? 0],
+          ["权限拒绝", metrics?.permissionDeniedCount ?? 0],
+          ["已隐藏帖子", metrics?.hiddenCommunityPostCount ?? 0]
         ].map(([label, value]) => (
           <article className="admin-metric" key={label}>
             <span>{label}</span>
@@ -673,32 +992,32 @@ export function AdminConsole() {
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Payments</p>
-        <h2>Payment Risk Queue</h2>
+        <p className="section__kicker">支付</p>
+        <h2>支付风险队列</h2>
         <div className="admin-inline-actions">
           <Link className="admin-button admin-button--ghost" href="/admin/payments?status=failed">
-            Failed payments ({metrics?.failedPaymentIntentCount ?? 0})
+            支付失败（{metrics?.failedPaymentIntentCount ?? 0}）
           </Link>
           <Link className="admin-button admin-button--ghost" href="/admin/payments?status=pending&overdue=true">
-            Overdue payments ({metrics?.overduePaymentIntentCount ?? 0})
+            支付逾期（{metrics?.overduePaymentIntentCount ?? 0}）
           </Link>
           <Link className="admin-button admin-button--ghost" href="/admin/payments?status=pending">
-            Pending payments ({metrics?.pendingPaymentIntentCount ?? 0})
+            待支付（{metrics?.pendingPaymentIntentCount ?? 0}）
           </Link>
         </div>
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Merchant Analytics</p>
-        <h2>Revenue, Repeat Purchase, And Retention</h2>
+        <p className="section__kicker">经营分析</p>
+        <h2>营收、复购与留存</h2>
         <div className="admin-metrics">
           {[
-            ["GMV", formatCents(analytics?.revenue.gmvCents ?? 0)],
-            ["Paid orders", analytics?.revenue.paidOrderCount ?? 0],
-            ["Average order", formatCents(analytics?.revenue.averageOrderValueCents ?? 0)],
-            ["Paid order rate", `${analytics?.conversion.paidOrderRate ?? 0}%`],
-            ["Repeat customers", analytics?.customers.repeatCustomerCount ?? 0],
-            ["Repeat rate", `${analytics?.customers.repeatPurchaseRate ?? 0}%`]
+            ["成交总额", formatCents(analytics?.revenue.gmvCents ?? 0)],
+            ["已支付订单", analytics?.revenue.paidOrderCount ?? 0],
+            ["客单价", formatCents(analytics?.revenue.averageOrderValueCents ?? 0)],
+            ["支付转化率", `${analytics?.conversion.paidOrderRate ?? 0}%`],
+            ["复购客户", analytics?.customers.repeatCustomerCount ?? 0],
+            ["复购率", `${analytics?.customers.repeatPurchaseRate ?? 0}%`]
           ].map(([label, value]) => (
             <article className="admin-metric" key={label}>
               <span>{label}</span>
@@ -707,88 +1026,92 @@ export function AdminConsole() {
           ))}
         </div>
         <div className="admin-list">
-          <strong>Top selling SKUs</strong>
+          <strong>热销商品规格</strong>
           {(analytics?.productRankings ?? []).map((item) => (
             <div className="admin-row" key={item.skuCode}>
               <div>
-                <strong>{item.title}</strong>
+                <strong>{getProductTitleLabel(item.title)}</strong>
                 <span>
-                  {item.skuCode} / sold {item.quantitySold} / revenue{" "}
+                  {item.skuCode} / 售出 {item.quantitySold} / 销售额{" "}
                   {formatCents(item.revenueCents)}
                 </span>
               </div>
             </div>
           ))}
           {analytics?.productRankings.length === 0 ? (
-            <p className="admin-muted">No paid order product rankings yet.</p>
+            <p className="admin-muted">暂无已支付订单的商品排行。</p>
           ) : null}
         </div>
         <div className="admin-list">
-          <strong>Conversion funnel</strong>
-          {(analytics?.retentionFunnel ?? []).map((stage) => (
+          <strong>转化漏斗</strong>
+          {(analytics?.retentionFunnel ?? []).map((stage) => {
+            const copy = getRetentionFunnelCopy(stage);
+            return (
             <div className="admin-row" key={stage.key}>
               <div>
                 <strong>
-                  {stage.title} / {stage.count} members
+                  {copy.title} / {stage.count} 位会员
                 </strong>
                 <span>
-                  Conversion: {stage.conversionRate}% / Drop-off:{" "}
+                  转化率：{stage.conversionRate}% / 流失：{" "}
                   {stage.dropOffCount}
                 </span>
-                <span>Action: {stage.actionLabel}</span>
+                <span>建议动作：{copy.actionLabel}</span>
               </div>
             </div>
-          ))}
+            );
+          })}
           {(analytics?.retentionFunnel ?? []).length === 0 ? (
-            <p className="admin-muted">No conversion funnel data available yet.</p>
+            <p className="admin-muted">暂无转化漏斗数据。</p>
           ) : null}
         </div>
         <div className="admin-inventory-alerts">
-          <strong>Retention signals</strong>
-          <span>Cloud pets: {analytics?.retentionSignals.cloudPetCount ?? 0}</span>
-          <span>Homepage visits: {analytics?.retentionSignals.homepageVisitCount ?? 0}</span>
-          <span>Community posts: {analytics?.retentionSignals.communityPostCount ?? 0}</span>
-          <span>Reviews: {analytics?.retentionSignals.reviewCount ?? 0}</span>
-          <span>Pending reviews: {analytics?.retentionSignals.pendingReviewCount ?? 0}</span>
+          <strong>留存信号</strong>
+          <span>云养宠：{analytics?.retentionSignals.cloudPetCount ?? 0}</span>
+          <span>主页访问：{analytics?.retentionSignals.homepageVisitCount ?? 0}</span>
+          <span>社区帖子：{analytics?.retentionSignals.communityPostCount ?? 0}</span>
+          <span>商品评价：{analytics?.retentionSignals.reviewCount ?? 0}</span>
+          <span>待审核评价：{analytics?.retentionSignals.pendingReviewCount ?? 0}</span>
           <span>
-            Pending reports:{" "}
+            待处理举报：{" "}
             {analytics?.retentionSignals.pendingCommunityReportCount ?? 0}
           </span>
         </div>
         <div className="admin-list">
-          <strong>Customer segments</strong>
-          {(analytics?.customerSegments ?? []).map((segment) => (
+          <strong>客户分群</strong>
+          {(analytics?.customerSegments ?? []).map((segment) => {
+            const copy = getCustomerSegmentCopy(segment);
+            return (
             <div className="admin-row" key={segment.key}>
               <div>
                 <strong>
-                  {segment.title} / {segment.memberCount} members
+                  {copy.title} / {segment.memberCount} 位会员
                 </strong>
-                <span>{segment.description}</span>
+                <span>{copy.description}</span>
                 <span>
-                  Action: {segment.actionLabel} / Priority: {segment.priority}
+                  建议动作：{copy.actionLabel} / 优先级：{getPriorityLabel(segment.priority)}
                 </span>
                 <span>
-                  Sample phones:{" "}
-                  {segment.samplePhones.length > 0
-                    ? segment.samplePhones.join(", ")
-                    : "No matching members yet"}
+                  样本手机号：{" "}
+                  {segment.samplePhones.length > 0 ? segment.samplePhones.join(", ")
+                    : "暂无匹配会员"}
                 </span>
               </div>
             </div>
-          ))}
+            );
+          })}
           {(analytics?.customerSegments ?? []).length === 0 ? (
-            <p className="admin-muted">No customer segments available yet.</p>
+            <p className="admin-muted">暂无客户分群数据。</p>
           ) : null}
         </div>
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Customer CRM</p>
-        <h2>Customer Profiles And Follow-Up Actions</h2>
+        <p className="section__kicker">客户管理</p>
+        <h2>客户档案与跟进动作</h2>
         {currentStaff && !canManageCustomers ? (
           <p className="admin-permission-note">
-            Current staff role is read-only for CRM actions. customers:write is
-            required to tag customers or log follow-ups.
+            当前员工只能查看客户数据；标记客户或记录跟进需要客户管理权限。
           </p>
         ) : null}
         <div className="admin-list">
@@ -799,18 +1122,17 @@ export function AdminConsole() {
                   {customer.name} / {customer.phone}
                 </strong>
                 <span>
-                  Paid orders: {customer.paidOrderCount} / Revenue:{" "}
-                  {formatCents(customer.totalPaidCents)} / Pets: {customer.petCount} /
-                  Posts: {customer.communityPostCount}
+                  已支付订单：{customer.paidOrderCount} / 销售额：{" "}
+                  {formatCents(customer.totalPaidCents)} / 宠物：{customer.petCount} /
+                  帖子：{customer.communityPostCount}
                 </span>
                 <span>
-                  Tags:{" "}
-                  {customer.tags.length > 0
-                    ? customer.tags.join(", ")
-                    : "No tags yet"}
+                  标签：{" "}
+                  {customer.tags.length > 0 ? customer.tags.map(getCustomerTagLabel).join("、")
+                    : "暂无标签"}
                 </span>
                 <span>
-                  Next action: {customer.nextBestAction.title} /{" "}
+                  下一步动作：{customer.nextBestAction.title} /{" "}
                   {customer.nextBestAction.ctaLabel}
                 </span>
               </div>
@@ -819,46 +1141,44 @@ export function AdminConsole() {
                   disabled={!canManageCustomers || busyCustomerPhone === customer.phone}
                   onClick={() => void handleMarkCustomerVip(customer)}
                   title={
-                    canManageCustomers
-                      ? undefined
-                      : "Missing customers:write permission"
+                    canManageCustomers ? undefined
+                      : "缺少 customers:write 权限"
                   }
                   type="button"
                 >
-                  Mark VIP
+                  标记 VIP
                 </button>
                 <button
                   disabled={!canManageCustomers || busyCustomerPhone === customer.phone}
                   onClick={() => void handleCustomerFollowUp(customer)}
                   title={
-                    canManageCustomers
-                      ? undefined
-                      : "Missing customers:write permission"
+                    canManageCustomers ? undefined
+                      : "缺少 customers:write 权限"
                   }
                   type="button"
                 >
-                  Log follow-up
+                  记录跟进
                 </button>
               </div>
             </div>
           ))}
           {customers.length === 0 ? (
-            <p className="admin-muted">No customer CRM profiles yet.</p>
+            <p className="admin-muted">暂无客户档案。</p>
           ) : null}
         </div>
       </section>
 
       <section className="admin-grid">
         <article className="admin-card">
-          <p className="section__kicker">Audit Trail</p>
-          <h2>Recent Operation Logs</h2>
+          <p className="section__kicker">审计追踪</p>
+          <h2>近期操作日志</h2>
           <div className="admin-list">
             {operationLogs.map((log) => (
               <div className="admin-row" key={log.logNo}>
                 <div>
-                  <strong>{log.action}</strong>
+                  <strong>{getOperationActionLabel(log.action)}</strong>
                   <span>
-                    {log.staffName} / {log.targetType}:{log.targetId}
+                    {getAdminStaffNameLabel(log.staffName)} / {getOperationTargetLabel(log.targetType)}：{log.targetId}
                   </span>
                 </div>
                 <em>{new Date(log.createdAt).toLocaleString()}</em>
@@ -866,59 +1186,59 @@ export function AdminConsole() {
             ))}
             {operationLogs.length === 0 ? (
               <p className="admin-muted">
-                No readable operation logs for this staff role yet.
+                当前员工角色暂无可查看的操作日志。
               </p>
             ) : null}
           </div>
         </article>
 
         <article className="admin-card">
-          <p className="section__kicker">CMS Automation</p>
-          <h2>Homepage And Campaign Blocks</h2>
+          <p className="section__kicker">内容自动化</p>
+          <h2>首页与活动内容块</h2>
           <form className="admin-create-product" onSubmit={(event) => void handleCreateCmsBlock(event)}>
             <label>
-              Slot key
+              投放位置键
               <input defaultValue="homepage.campaign" name="slotKey" required />
             </label>
             <label>
-              Status
+              状态
               <select defaultValue="published" name="status">
-                <option value="draft">draft</option>
-                <option value="published">published</option>
-                <option value="archived">archived</option>
+                <option value="draft">草稿</option>
+                <option value="published">已发布</option>
+                <option value="archived">已归档</option>
               </select>
             </label>
             <label>
-              Sort order
+              排序值
               <input defaultValue="1" min={0} name="sortOrder" type="number" />
             </label>
             <label className="admin-create-product__wide">
-              Title
-              <input defaultValue="Daily cloud-pet growth campaign" name="title" required />
+              标题
+              <input defaultValue="今日云养宠成长活动" name="title" required />
             </label>
             <label className="admin-create-product__wide">
-              Body
+              正文
               <textarea
-                defaultValue="Publish today's diary, pet growth task, and shop recommendation into one homepage block."
+                defaultValue="把今日日记、成长任务和商城推荐整合成一个首页内容块。"
                 name="body"
                 required
                 rows={3}
               />
             </label>
             <label>
-              CTA label
-              <input defaultValue="Visit shop" name="ctaLabel" />
+              按钮文案
+              <input defaultValue="前往商城" name="ctaLabel" />
             </label>
             <label>
-              Link
+              链接
               <input defaultValue="/shop" name="href" />
             </label>
             <label className="admin-create-product__wide">
-              Image URL
+              图片地址
               <input defaultValue="/brand/naigai-niangao/naigai-standard.png" name="imageUrl" />
             </label>
             <button className="admin-button admin-create-product__wide" disabled={isCreatingCmsBlock} type="submit">
-              {isCreatingCmsBlock ? "Publishing..." : "Create CMS block"}
+              {isCreatingCmsBlock ? "发布中..." : "创建内容块"}
             </button>
           </form>
           <div className="admin-list">
@@ -927,7 +1247,7 @@ export function AdminConsole() {
                 <div>
                   <strong>{block.title}</strong>
                   <span>
-                    {block.slotKey} / {block.status} / order {block.sortOrder}
+                    {block.slotKey} / {getStatusLabel(block.status)} / 排序 {block.sortOrder}
                   </span>
                 </div>
                 <button
@@ -941,27 +1261,26 @@ export function AdminConsole() {
                   }
                   type="button"
                 >
-                  {block.status === "published" ? "Archive" : "Publish"}
+                  {block.status === "published" ? "归档" : "发布"}
                 </button>
               </div>
             ))}
-            {cmsBlocks.length === 0 ? <p className="admin-muted">No CMS blocks yet.</p> : null}
+            {cmsBlocks.length === 0 ? <p className="admin-muted">暂无内容块。</p> : null}
           </div>
         </article>
 
         <article className="admin-card">
-          <p className="section__kicker">Marketing Center</p>
-          <h2>Coupon Campaigns</h2>
+          <p className="section__kicker">营销中心</p>
+          <h2>优惠券活动</h2>
           <div className="admin-list">
             {coupons.map((coupon) => (
               <div className="admin-row" key={coupon.code}>
                 <div>
                   <strong>{coupon.code}</strong>
                   <span>
-                    {coupon.status} 璺?off {formatCents(coupon.discountValueCents)} 璺?min{" "}
-                    {formatCents(coupon.minSpendCents)} 璺?used {coupon.usageCount}
-                    {coupon.usageLimitPerMember
-                      ? ` 璺?${coupon.usageLimitPerMember}/member`
+                    {getStatusLabel(coupon.status)} / 优惠 {formatCents(coupon.discountValueCents)} / 门槛{" "}
+                    {formatCents(coupon.minSpendCents)} / 已使用 {coupon.usageCount}
+                    {coupon.usageLimitPerMember ? ` / 每人限用 ${coupon.usageLimitPerMember} 次`
                       : ""}
                   </span>
                 </div>
@@ -976,44 +1295,44 @@ export function AdminConsole() {
                   }
                   type="button"
                 >
-                  {coupon.status === "active" ? "Pause coupon" : "Activate coupon"}
+                  {coupon.status === "active" ? "暂停优惠券" : "启用优惠券"}
                 </button>
               </div>
             ))}
-            {coupons.length === 0 ? <p className="admin-muted">No coupons yet.</p> : null}
+            {coupons.length === 0 ? <p className="admin-muted">暂无优惠券。</p> : null}
           </div>
         </article>
 
         <article className="admin-card">
-          <p className="section__kicker">After-sales</p>
-          <h2>Refund Requests</h2>
+          <p className="section__kicker">售后</p>
+          <h2>退款申请</h2>
           <div className="admin-list">
             {refunds.map((refund) => (
               <div className="admin-order" key={refund.refundNo}>
                 <div>
                   <strong>{refund.refundNo}</strong>
                   <span>
-                    {refund.status} 璺?{refund.orderNo} 璺?{formatCents(refund.requestedAmountCents)}
+                    {getStatusLabel(refund.status)} / {refund.orderNo} / {formatCents(refund.requestedAmountCents)}
                   </span>
                 </div>
                 <div className="admin-refund-context">
                   <span>
-                    Refundable{" "}
+                    可退款余额{" "}
                     {formatCents(refund.refundableBalanceCents ?? refund.requestedAmountCents)}
                   </span>
                   <span>
-                    After request{" "}
+                    申请后余额{" "}
                     {formatCents(refund.remainingAfterRequestCents ?? 0)}
                   </span>
                   {refund.reviewRisk ? (
                     <strong className={`admin-risk admin-risk--${refund.reviewRisk.level}`}>
-                      Risk {refund.reviewRisk.level} / {refund.reviewRisk.priority}:{" "}
+                      风险 {getRiskLevelLabel(refund.reviewRisk.level)} / 优先级 {getRiskLevelLabel(refund.reviewRisk.priority)}：{" "}
                       {refund.reviewRisk.reason}
                     </strong>
                   ) : null}
                   {refund.reviewSla ? (
                     <strong className={`admin-risk admin-risk--${getSlaRiskLevel(refund.reviewSla.status)}`}>
-                      SLA {refund.reviewSla.status}: {refund.reviewSla.hoursUntilDue}h left / due{" "}
+                      SLA {getStatusLabel(refund.reviewSla.status)}：剩余 {refund.reviewSla.hoursUntilDue} 小时 / 截止{" "}
                       {new Date(refund.reviewSla.dueAt).toLocaleString()}
                     </strong>
                   ) : null}
@@ -1027,7 +1346,7 @@ export function AdminConsole() {
                       onClick={() => void handleRefundStatus(refund.refundNo, "approved")}
                       type="button"
                     >
-                      Approve refund
+                      通过退款
                     </button>
                     <button
                       className="admin-button admin-button--small admin-button--ghost"
@@ -1035,28 +1354,28 @@ export function AdminConsole() {
                       onClick={() => void handleRefundStatus(refund.refundNo, "rejected")}
                       type="button"
                     >
-                      Reject
+                      拒绝
                     </button>
                   </div>
                 ) : (
-                  <em>{refund.note ?? "Resolved"}</em>
+                  <em>{refund.note ?? "已处理"}</em>
                 )}
               </div>
             ))}
-            {refunds.length === 0 ? <p className="admin-muted">No refund requests.</p> : null}
+            {refunds.length === 0 ? <p className="admin-muted">暂无退款申请。</p> : null}
           </div>
         </article>
 
         <article className="admin-card">
-          <p className="section__kicker">Review Moderation</p>
-          <h2>Product Reviews</h2>
+          <p className="section__kicker">评价审核</p>
+          <h2>商品评价</h2>
           <div className="admin-list">
             {reviews.map((review) => (
               <div className="admin-order" key={review.reviewNo}>
                 <div>
                   <strong>{review.reviewNo}</strong>
                   <span>
-                    {review.status} 鐠?{review.productSlug} 鐠?{review.rating} stars
+                    {getStatusLabel(review.status) + " / " + review.productSlug + " / " + review.rating + " 星"}
                   </span>
                 </div>
                 <p>{review.body}</p>
@@ -1067,7 +1386,7 @@ export function AdminConsole() {
                     onClick={() => void handleReviewStatus(review.reviewNo, "visible")}
                     type="button"
                   >
-                    Publish
+                    展示
                   </button>
                   <button
                     className="admin-button admin-button--small admin-button--ghost"
@@ -1075,99 +1394,99 @@ export function AdminConsole() {
                     onClick={() => void handleReviewStatus(review.reviewNo, "hidden")}
                     type="button"
                   >
-                    Hide
+                    隐藏
                   </button>
                 </div>
               </div>
             ))}
-            {reviews.length === 0 ? <p className="admin-muted">No reviews yet.</p> : null}
+            {reviews.length === 0 ? <p className="admin-muted">暂无评价。</p> : null}
           </div>
         </article>
 
         <article className="admin-card">
-          <p className="section__kicker">Catalog Operations</p>
-          <h2>Products And Inventory</h2>
+          <p className="section__kicker">商品运营</p>
+          <h2>商品与库存</h2>
           <form className="admin-create-product" onSubmit={(event) => void handleCreateProduct(event)}>
             <label>
-              Slug
+              商品标识
               <input defaultValue="merchant-training-ball" name="slug" required />
             </label>
             <label>
-              Title
-              <input defaultValue="Merchant training ball" name="title" required />
+              商品名称
+              <input defaultValue="商家训练球" name="title" required />
             </label>
             <label>
-              Pet type
+              适用宠物
               <select defaultValue="dog" name="petType">
-                <option value="dog">dog</option>
-                <option value="cat">cat</option>
-                <option value="both">both</option>
+                <option value="dog">狗</option>
+                <option value="cat">猫</option>
+                <option value="both">猫狗通用</option>
               </select>
             </label>
             <label>
-              Toy type
+              玩具类型
               <input defaultValue="training" name="toyType" required />
             </label>
             <label className="admin-create-product__wide">
-              Description
+              商品描述
               <textarea
-                defaultValue="A merchant-created toy for catalog operations."
+                defaultValue="用于商品运营演示的商家自建玩具。"
                 name="description"
                 required
                 rows={2}
               />
             </label>
             <label>
-              Image URL
+              图片地址
               <input defaultValue="/brand/naigai-niangao/niangao-toy.png" name="imageUrl" required />
             </label>
             <label>
-              SKU
+              商品规格编号
               <input defaultValue={`MTB-${Date.now().toString().slice(-5)}`} name="skuCode" required />
             </label>
             <label>
-              Variant
-              <input defaultValue="Red / Small" name="variantName" required />
+              规格名称
+              <input defaultValue="红色 / 小号" name="variantName" required />
             </label>
             <label>
-              Color
-              <input defaultValue="red" name="color" />
+              颜色
+              <input defaultValue="红色" name="color" />
             </label>
             <label>
-              Size
+              尺寸
               <input defaultValue="S" name="size" />
             </label>
             <label>
-              Material
-              <input defaultValue="rubber" name="material" />
+              材质
+              <input defaultValue="橡胶" name="material" />
             </label>
             <label>
-              Price
+              价格
               <input defaultValue="25.90" min="0.01" name="priceYuan" step="0.01" type="number" />
             </label>
             <label>
-              Stock
+              库存
               <input defaultValue="3" min={0} name="stock" type="number" />
             </label>
             <button className="admin-button admin-create-product__wide" disabled={isCreatingProduct} type="submit">
-              {isCreatingProduct ? "Creating..." : "Create active product"}
+              {isCreatingProduct ? "创建中..." : "创建并上架商品"}
             </button>
           </form>
           <div className="admin-inventory-alerts">
-            <strong>Low-stock alerts</strong>
+            <strong>低库存提醒</strong>
             {lowStock.map((variant) => (
               <span key={`${variant.productSlug}-${variant.skuCode}`}>
                 {variant.skuCode}: {variant.stock}/{variant.threshold}
               </span>
             ))}
-            {lowStock.length === 0 ? <span>No low-stock SKUs.</span> : null}
+            {lowStock.length === 0 ? <span>暂无低库存规格。</span> : null}
           </div>
           <div className="admin-list">
             {products.map((product) => (
               <div className="admin-product" key={product.slug}>
                 <div>
-                  <strong>{product.title}</strong>
-                  <span>{product.slug} 璺?{product.status}</span>
+                  <strong>{getProductTitleLabel(product.title)}</strong>
+                  <span>{product.slug + " / " + getStatusLabel(product.status)}</span>
                 </div>
                 {product.variants.map((variant) => (
                   <form
@@ -1196,7 +1515,7 @@ export function AdminConsole() {
                       disabled={busyProductKey === variant.skuCode}
                       type="submit"
                     >
-                      Update stock
+                      更新库存
                     </button>
                   </form>
                 ))}
@@ -1211,7 +1530,7 @@ export function AdminConsole() {
                   }
                   type="button"
                 >
-                  {product.status === "active" ? "Archive product" : "Publish product"}
+                  {product.status === "active" ? "下架商品" : "上架商品"}
                 </button>
               </div>
             ))}
@@ -1219,25 +1538,25 @@ export function AdminConsole() {
         </article>
 
         <article className="admin-card">
-          <p className="section__kicker">Fulfillment</p>
-          <h2>Order Fulfillment</h2>
+          <p className="section__kicker">履约</p>
+          <h2>订单履约</h2>
           <div className="admin-list">
             {orders.map((order) => (
               <div className="admin-order" key={order.orderNo}>
                 <div>
                   <strong>{order.orderNo}</strong>
-                  <span>{order.status} 璺?{formatCents(order.totalCents)}</span>
+                  <span>{getStatusLabel(order.status)}{" / "}{formatCents(order.totalCents)}</span>
                 </div>
                 <form
                   className="admin-inline-form"
                   onSubmit={(event) => void handleFulfillment(order.orderNo, event)}
                 >
                   <label>
-                    Carrier
-                    <input defaultValue="SF Express" name="carrier" required />
+                    承运商
+                    <input defaultValue="顺丰速运" name="carrier" required />
                   </label>
                   <label>
-                    Tracking number
+                    运单号
                     <input
                       defaultValue={`SF${order.orderNo.slice(-10)}`}
                       name="trackingNumber"
@@ -1251,14 +1570,14 @@ export function AdminConsole() {
                     }
                     type="submit"
                   >
-                    {order.shipment ? "Shipment recorded" : "Record shipment"}
+                    {order.shipment ? "物流已登记" : "登记物流"}
                   </button>
                 </form>
                 {order.shipment ? (
                   <div className="admin-inline-actions">
                     <span>
                       {order.shipment.carrier} / {order.shipment.trackingNumber} /{" "}
-                      {order.shipment.status}
+                      {getStatusLabel(order.shipment.status)}
                     </span>
                     <button
                       className="admin-button admin-button--small admin-button--ghost"
@@ -1266,7 +1585,7 @@ export function AdminConsole() {
                       onClick={() => void handleShipmentEvent(order.orderNo, "out_for_delivery")}
                       type="button"
                     >
-                      Out for delivery
+                      标记派送中
                     </button>
                     <button
                       className="admin-button admin-button--small"
@@ -1276,7 +1595,7 @@ export function AdminConsole() {
                       onClick={() => void handleShipmentEvent(order.orderNo, "delivered")}
                       type="button"
                     >
-                      Mark delivered
+                      标记已签收
                     </button>
                     <button
                       className="admin-button admin-button--small admin-button--ghost"
@@ -1284,19 +1603,19 @@ export function AdminConsole() {
                       onClick={() => void handleShipmentEvent(order.orderNo, "exception")}
                       type="button"
                     >
-                      Exception
+                      标记异常
                     </button>
                   </div>
                 ) : null}
               </div>
             ))}
-            {orders.length === 0 ? <p className="admin-muted">No orders yet.</p> : null}
+            {orders.length === 0 ? <p className="admin-muted">暂无订单。</p> : null}
           </div>
         </article>
 
-        <article className="admin-card">
-          <p className="section__kicker">Cloud Pets</p>
-          <h2>Cloud-pet Profiles</h2>
+        <article className="admin-card" id="admin-cloud-pets">
+          <p className="section__kicker">云养宠</p>
+          <h2>云养宠档案</h2>
           <div className="admin-inline-actions">
             <button
               className="admin-button"
@@ -1304,67 +1623,385 @@ export function AdminConsole() {
               onClick={() => void handleGenerateDailyDiaries()}
               type="button"
             >
-              {isGeneratingDailyDiaries
-                ? "Generating daily diaries..."
-                : "Generate today's diaries"}
+              {isGeneratingDailyDiaries ? "正在生成今日日记..."
+                : "生成今日日记"}
             </button>
             {dailyDiaryGeneration ? (
               <span>
-                {dailyDiaryGeneration.date}: {dailyDiaryGeneration.generatedCount} generated /{" "}
-                {dailyDiaryGeneration.skippedCount} skipped
+                {dailyDiaryGeneration.date}：已生成 {dailyDiaryGeneration.generatedCount} 条 /{" "}
+                跳过 {dailyDiaryGeneration.skippedCount} 条
               </span>
             ) : null}
             <Link
               className="admin-button admin-button--small admin-button--ghost"
               href="/admin/pets/daily-diary-coverage"
             >
-              View gaps
+              查看缺口
             </Link>
           </div>
           {dailyDiaryStatus ? (
             <div className="admin-inventory-alerts">
               <strong>
-                Daily diary coverage{" "}
+                今日日记覆盖率{" "}
                 {Math.round(dailyDiaryStatus.coverageRate * 100)}%
               </strong>
               <span>
                 {dailyDiaryStatus.date}: {dailyDiaryStatus.generatedTodayCount}/
-                {dailyDiaryStatus.totalPetCount} covered
+                {dailyDiaryStatus.totalPetCount} 已覆盖
               </span>
-              <span>{dailyDiaryStatus.missingTodayCount} missing</span>
+              <span>{dailyDiaryStatus.missingTodayCount} 条缺失</span>
               {dailyDiaryStatus.items
                 .filter((item) => item.status === "missing")
                 .slice(0, 3)
                 .map((item) => (
-                  <span key={item.petNo}>Missing: {item.name}</span>
+                  <span key={item.petNo}>缺失：{item.name}</span>
                 ))}
             </div>
           ) : null}
+          {cloudPetRetentionMetrics ? (
+            <div className="admin-inventory-alerts" data-testid="admin-cloud-pet-retention-metrics">
+              <strong>
+                今日照护完成率 {Math.round(cloudPetRetentionMetrics.careCompletionRate * 100)}%
+              </strong>
+              <span>
+                今日已照护 {cloudPetRetentionMetrics.careCompletedTodayCount}/{cloudPetRetentionMetrics.totalPetCount}
+              </span>
+              <span>平均照护分 {cloudPetRetentionMetrics.averageCareScore}</span>
+              <span>最长连续照护 {cloudPetRetentionMetrics.maxCareStreakDays} 天</span>
+              <span>
+                状态：{cloudPetRetentionMetrics.careStateCounts.needsCare} 只需要照护 / {cloudPetRetentionMetrics.careStateCounts.steady} 只稳定 / {cloudPetRetentionMetrics.careStateCounts.thriving} 只状态良好
+              </span>
+              <span>
+                互动：{cloudPetRetentionMetrics.homepageVisitCount} 次访问 / {cloudPetRetentionMetrics.communityPostCount} 条帖子 / {cloudPetRetentionMetrics.pendingCommunityReportCount} 条待处理举报
+              </span>
+            </div>
+          ) : null}
+          {cloudPetGrowthTaskOperations ? (
+            <div className="admin-inventory-alerts" data-testid="admin-cloud-pet-growth-tasks">
+              <strong>成长任务配置</strong>
+              <span>已跟踪 {cloudPetGrowthTaskOperations.totalPetCount} 只云养宠</span>
+              {cloudPetGrowthTaskOperations.items.slice(0, 6).map((task) => (
+                <form
+                  className="admin-inline-form admin-cloud-pet-growth-task-form"
+                  data-testid="admin-cloud-pet-growth-task-form"
+                  key={task.key}
+                  onSubmit={(event) => void handleUpdateGrowthTaskTemplate(event, task.key)}
+                >
+                  <span>
+                    {getGrowthTaskCopy(task).title}：今日完成 {task.completedTodayCount} 次 / {Math.round(task.completionRate * 100)}%
+                  </span>
+                  <label>
+                    成长积分
+                    <input defaultValue={task.points} max="100" min="0" name="points" type="number" />
+                  </label>
+                  <label>
+                    心情
+                    <input defaultValue={task.rewards.mood} max="50" min="0" name="mood" type="number" />
+                  </label>
+                  <label>
+                    精力
+                    <input defaultValue={task.rewards.energy} max="50" min="0" name="energy" type="number" />
+                  </label>
+                  <label>
+                    亲密度
+                    <input defaultValue={task.rewards.intimacy} max="50" min="0" name="intimacy" type="number" />
+                  </label>
+                  <button
+                    className="admin-button"
+                    disabled={!canManageCloudPets || busyGrowthTaskKey === task.key}
+                    type="submit"
+                  >
+                    {busyGrowthTaskKey === task.key ? "保存中..." : "保存配置"}
+                  </button>
+                </form>
+              ))}
+            </div>
+          ) : null}
+          {cloudPetCareScoreRules ? (
+            <form
+              className="admin-inline-form admin-cloud-pet-care-rules"
+              data-testid="admin-cloud-pet-care-score-rules-form"
+              onSubmit={(event) => void handleUpdateCareScoreRules(event)}
+            >
+              <label>
+                每日任务加分
+                <input
+                  defaultValue={cloudPetCareScoreRules.dailyTaskBonus}
+                  min="0"
+                  max="50"
+                  name="dailyTaskBonus"
+                  type="number"
+                />
+              </label>
+              <label>
+                稳定状态分数
+                <input
+                  defaultValue={cloudPetCareScoreRules.steadyMinScore}
+                  min="0"
+                  max="100"
+                  name="steadyMinScore"
+                  type="number"
+                />
+              </label>
+              <label>
+                良好状态分数
+                <input
+                  defaultValue={cloudPetCareScoreRules.thrivingMinScore}
+                  min="0"
+                  max="100"
+                  name="thrivingMinScore"
+                  type="number"
+                />
+              </label>
+              <label className="admin-checkbox-label">
+                <input
+                  defaultChecked={cloudPetCareScoreRules.thrivingRequiresCareToday}
+                  name="thrivingRequiresCareToday"
+                  type="checkbox"
+                />
+                状态良好必须完成今日照护
+              </label>
+              <button
+                className="admin-button"
+                disabled={!canManageCloudPets || isUpdatingCareScoreRules}
+                type="submit"
+              >
+                {isUpdatingCareScoreRules ? "保存中..." : "保存照护分规则"}
+              </button>
+              {!canManageCloudPets ? (
+                <span className="admin-muted">缺少 cloud_pets:write 权限</span>
+              ) : null}
+            </form>
+          ) : null}
+          <form
+            className="admin-inline-form admin-cloud-pet-filters"
+            data-testid="admin-cloud-pet-filter-form"
+            onSubmit={(event) => void handleCloudPetFilters(event)}
+          >
+            <label>
+              搜索
+              <input
+                data-testid="admin-cloud-pet-filter-q"
+                onChange={(event) =>
+                  setCloudPetFilters((current) => ({ ...current, q: event.target.value }))
+                }
+                placeholder="搜索宠物名、编号或会员手机号"
+                value={cloudPetFilters.q}
+              />
+            </label>
+            <label>
+              宠物类型
+              <select
+                data-testid="admin-cloud-pet-filter-species"
+                onChange={(event) =>
+                  setCloudPetFilters((current) => ({ ...current, species: event.target.value }))
+                }
+                value={cloudPetFilters.species}
+              >
+                <option value="">全部</option>
+                <option value="cat">猫</option>
+                <option value="dog">狗</option>
+              </select>
+            </label>
+            <label>
+              照护状态
+              <select
+                data-testid="admin-cloud-pet-filter-care-state"
+                onChange={(event) =>
+                  setCloudPetFilters((current) => ({ ...current, careState: event.target.value }))
+                }
+                value={cloudPetFilters.careState}
+              >
+                <option value="">全部</option>
+                <option value="needs_care">需要照护</option>
+                <option value="steady">稳定</option>
+                <option value="thriving">状态良好</option>
+              </select>
+            </label>
+            <label>
+              风险等级
+              <select
+                data-testid="admin-cloud-pet-filter-risk"
+                onChange={(event) =>
+                  setCloudPetFilters((current) => ({ ...current, riskLevel: event.target.value }))
+                }
+                value={cloudPetFilters.riskLevel}
+              >
+                <option value="">全部</option>
+                <option value="high">高</option>
+                <option value="medium">中</option>
+                <option value="low">低</option>
+              </select>
+            </label>
+            <label>
+              排序
+              <select
+                data-testid="admin-cloud-pet-sort-risk"
+                onChange={(event) =>
+                  setCloudPetFilters((current) => ({ ...current, sortBy: event.target.value }))
+                }
+                value={cloudPetFilters.sortBy}
+              >
+                <option value="">默认排序</option>
+                <option value="risk_desc">风险优先</option>
+              </select>
+            </label>
+
+            <button
+              className="admin-button admin-button--small"
+              data-testid="admin-cloud-pet-filter-apply"
+              type="submit"
+            >
+              应用筛选
+            </button>
+            <button
+              className="admin-button admin-button--small admin-button--ghost"
+              data-testid="admin-cloud-pet-filter-reset"
+              onClick={() => void handleResetCloudPetFilters()}
+              type="button"
+            >
+              重置
+            </button>
+          </form>
+          {selectedCloudPetDetail ? (
+            <div className="admin-inventory-alerts" data-testid="admin-cloud-pet-detail">
+              <strong>
+                {selectedCloudPetDetail.pet.name} / {selectedCloudPetDetail.pet.petNo}
+              </strong>
+              <span>
+                主人：{selectedCloudPetDetail.pet.ownerName} / {selectedCloudPetDetail.pet.ownerPhone}
+              </span>
+              <span>
+                照护：{getStatusLabel(selectedCloudPetDetail.pet.growth.careState)} / 分数 {selectedCloudPetDetail.pet.growth.careScore} / 连续 {selectedCloudPetDetail.pet.growth.careStreakDays} 天
+              </span>
+              <span>
+                日记记录：{selectedCloudPetDetail.diary.entryCount}
+                {selectedCloudPetDetail.diary.latestEntry
+                  ? ` / 最新：${selectedCloudPetDetail.diary.latestEntry.title}`
+                  : ""}
+              </span>
+              {selectedCloudPetDetail.diary.latestOwnerNote?.id ? (
+                <button
+                  className="admin-button admin-button--ghost"
+                  data-testid="admin-cloud-pet-remove-owner-note"
+                  disabled={busyDiaryNoteId === selectedCloudPetDetail.diary.latestOwnerNote.id}
+                  onClick={() =>
+                    void handleRemoveCloudPetDiaryNote(
+                      selectedCloudPetDetail.pet.petNo,
+                      selectedCloudPetDetail.diary.latestOwnerNote!.id!
+                    )
+                  }
+                  type="button"
+                >
+                  {busyDiaryNoteId === selectedCloudPetDetail.diary.latestOwnerNote.id
+                    ? "移除中..."
+                    : "从公开归档中移除主人手记"}
+                </button>
+              ) : null}
+              <span data-testid="admin-cloud-pet-community-signals">
+                社区：{selectedCloudPetDetail.community.postCount} 条帖子 / {selectedCloudPetDetail.community.likeCount} 个赞 / {selectedCloudPetDetail.community.commentCount} 条评论 / {selectedCloudPetDetail.community.reportCount} 条举报 / {selectedCloudPetDetail.community.pendingReportCount} 条待处理
+              </span>
+              <span>
+                主页访问：{selectedCloudPetDetail.archive.engagement.homepageVisitCount}
+              </span>
+              <div className="admin-cloud-pet-risk-list" data-testid="admin-cloud-pet-risk-signals">
+                <strong>运营风险信号</strong>
+                {getCloudPetOperationalSignals(selectedCloudPetDetail).map((signal) => (
+                  <article className={"admin-cloud-pet-risk admin-cloud-pet-risk--" + signal.level} key={signal.key}>
+                    <span>{getRiskLevelLabel(signal.level)}</span>
+                    <strong>{signal.title}</strong>
+                    <p>{signal.description}</p>
+                    {signal.actionHref ? (
+                      <Link className="admin-button admin-button--small admin-button--ghost" href={signal.actionHref}>
+                        {signal.actionLabel}
+                      </Link>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+              <div className="admin-cloud-pet-snippets" data-testid="admin-cloud-pet-recent-diaries">
+                <strong>近期日记</strong>
+                {selectedCloudPetDetail.archive.items
+                  .filter((item) => item.type === "daily_diary" || item.type === "owner_note")
+                  .slice(0, 3)
+                  .map((item) => (
+                    <article key={item.type + "-" + item.createdAt}>
+                      <span>{item.type === "owner_note" ? "主人手记" : "生成日记"}</span>
+                      <strong>{item.title}</strong>
+                      <p>{item.body}</p>
+                    </article>
+                  ))}
+                {selectedCloudPetDetail.archive.items.filter((item) => item.type === "daily_diary" || item.type === "owner_note").length === 0 ? (
+                  <p className="admin-muted">暂无近期日记。</p>
+                ) : null}
+              </div>
+              <div className="admin-cloud-pet-snippets" data-testid="admin-cloud-pet-recent-community-posts">
+                <strong>近期社区动态</strong>
+                {selectedCloudPetDetail.community.posts.slice(0, 3).map((post) => (
+                  <article key={post.postNo}>
+                    <span>{post.authorName} / {post.likeCount} 个赞 / {post.commentCount} 条评论</span>
+                    <strong>{post.postNo}</strong>
+                    <p>{post.body}</p>
+                  </article>
+                ))}
+                {selectedCloudPetDetail.community.posts.length === 0 ? (
+                  <p className="admin-muted">暂无社区动态。</p>
+                ) : null}
+              </div>
+              <Link
+                className="admin-button admin-button--small admin-button--ghost"
+                href={`/cloud-pets/${selectedCloudPetDetail.pet.petNo}`}
+              >
+                打开宠物主页
+              </Link>
+            </div>
+          ) : null}
           <div className="admin-list">
-            {pets.map((pet) => (
-              <div className="admin-row" key={pet.petNo}>
+            {displayedCloudPets.map((pet) => (
+              <div
+                className="admin-pet"
+                data-pet-no={pet.petNo}
+                data-testid="admin-cloud-pet-list-item"
+                key={pet.petNo}
+              >
                 <div>
                   <strong>{pet.name}</strong>
-                  <span>{pet.petNo} 璺?{pet.species}</span>
+                  <span>{pet.petNo + " / " + pet.species}</span>
                 </div>
                 <em>
-                  {pet.communityPostCount} posts 璺?{pet.homepageVisitCount ?? 0} visits
+                  {pet.communityPostCount} 条帖子{" / "}{pet.homepageVisitCount ?? 0} 次访问
                 </em>
+                <div className="admin-cloud-pet-list-risk" data-testid="admin-cloud-pet-list-risk">
+                  <span className={"admin-cloud-pet-list-risk__badge admin-cloud-pet-list-risk__badge--" + getCloudPetListRiskSummary(pet).highestLevel}>
+                    {getRiskLevelLabel(getCloudPetListRiskSummary(pet).highestLevel)}
+                  </span>
+                  <span>{getCloudPetListRiskSummary(pet).count} 个风险信号</span>
+                  <small>{getCloudPetListRiskSummary(pet).summary}</small>
+                </div>
+                <button
+                  className="admin-button admin-button--small admin-button--ghost"
+                  data-testid="admin-cloud-pet-detail-open"
+                  disabled={busyCloudPetNo === pet.petNo}
+                  onClick={() => void handleLoadCloudPetDetail(pet.petNo)}
+                  type="button"
+                >
+                  {busyCloudPetNo === pet.petNo ? "加载中..." : "查看运营详情"}
+                </button>
               </div>
             ))}
-            {pets.length === 0 ? <p className="admin-muted">No cloud pets yet.</p> : null}
+            {displayedCloudPets.length === 0 ? <p className="admin-muted">没有符合当前筛选条件的云养宠。</p> : null}
           </div>
         </article>
 
-        <article className="admin-card">
-          <p className="section__kicker">Community Moderation</p>
-          <h2>Community Posts</h2>
+        <article className="admin-card" id="admin-community-posts">
+          <p className="section__kicker">社区审核</p>
+          <h2>社区帖子</h2>
           <div className="admin-list">
             {posts.map((post) => (
               <div className="admin-post" key={post.postNo}>
                 <div>
                   <strong>{post.petName}</strong>
-                  <span>{post.postNo} 璺?{post.status}</span>
+                  <span>{post.postNo + " / " + post.status}</span>
                 </div>
                 <p>{post.body}</p>
                 <button
@@ -1378,46 +2015,130 @@ export function AdminConsole() {
                   }
                   type="button"
                 >
-                  {post.status === "hidden" ? "Restore" : "Hide"}
+                  {post.status === "hidden" ? "恢复" : "隐藏"}
                 </button>
               </div>
             ))}
-            {posts.length === 0 ? <p className="admin-muted">No community posts.</p> : null}
+            {posts.length === 0 ? <p className="admin-muted">暂无社区帖子。</p> : null}
           </div>
         </article>
 
-        <article className="admin-card">
-          <p className="section__kicker">Community Reports</p>
-          <h2>Report Queue</h2>
+        <article className="admin-card" id="admin-community-reports">
+          <p className="section__kicker">社区举报</p>
+          <h2>举报队列</h2>
+          <form
+            className="admin-inline-form admin-cloud-pet-filters"
+            data-testid="admin-community-report-filter-form"
+            onSubmit={(event) => void handleCommunityReportFilters(event)}
+          >
+            <label>
+              状态
+              <select
+                data-testid="admin-community-report-filter-status"
+                onChange={(event) =>
+                  setReportFilters((current) => ({ ...current, status: event.target.value }))
+                }
+                value={reportFilters.status}
+              >
+                <option value="">全部</option>
+                <option value="pending_review">待审核</option>
+                <option value="reviewed">已处理</option>
+                <option value="dismissed">已驳回</option>
+              </select>
+            </label>
+            <label>
+              帖子编号
+              <input
+                data-testid="admin-community-report-filter-post"
+                onChange={(event) =>
+                  setReportFilters((current) => ({ ...current, postNo: event.target.value }))
+                }
+                placeholder="POST001"
+                value={reportFilters.postNo}
+              />
+            </label>
+            <label>
+              会员手机号
+              <input
+                data-testid="admin-community-report-filter-member"
+                onChange={(event) =>
+                  setReportFilters((current) => ({ ...current, memberPhone: event.target.value }))
+                }
+                placeholder="13800000000"
+                value={reportFilters.memberPhone}
+              />
+            </label>
+            <button className="admin-button admin-button--small" type="submit">
+              应用筛选
+            </button>
+            <button
+              className="admin-button admin-button--small admin-button--ghost"
+              onClick={() => void handleResetCommunityReportFilters()}
+              type="button"
+            >
+              重置
+            </button>
+          </form>
           <div className="admin-list">
             {reports.map((report) => (
-              <div className="admin-post" key={report.reportNo}>
+              <div
+                className="admin-post"
+                data-report-no={report.reportNo}
+                data-testid="admin-community-report-item"
+                key={report.reportNo}
+              >
                 <div>
                   <strong>{report.reportNo}</strong>
-                  <span>{report.status} 鐠?{report.postNo}</span>
+                  <span data-testid="admin-community-report-status">
+                    {getStatusLabel(report.status) + " / " + report.postNo}
+                  </span>
+                  <span>
+                    举报人 {report.reporterName} / {report.memberPhone ?? "未提供手机号"} / {new Date(report.createdAt).toLocaleString()}
+                  </span>
                 </div>
                 <p>{report.reason}</p>
-                <div className="admin-inline-actions">
-                  <button
-                    className="admin-button admin-button--small"
-                    disabled={busyReportNo === report.reportNo}
-                    onClick={() => void handleReportStatus(report.reportNo, "reviewed")}
-                    type="button"
-                  >
-                    Mark reviewed
-                  </button>
-                  <button
-                    className="admin-button admin-button--small admin-button--ghost"
-                    disabled={busyReportNo === report.reportNo}
-                    onClick={() => void handleReportStatus(report.reportNo, "dismissed")}
-                    type="button"
-                  >
-                    Dismiss
-                  </button>
-                </div>
+                {report.note ? <p className="admin-muted">处理备注：{report.note}</p> : null}
+                {report.resolvedAt ? (
+                  <small>处理时间：{new Date(report.resolvedAt).toLocaleString()}</small>
+                ) : null}
+                {report.status === "pending_review" ? (
+                  <div className="admin-inline-actions">
+                    <button
+                      className="admin-button admin-button--small"
+                      data-testid="admin-community-report-resolve-hide"
+                      disabled={busyReportNo === report.reportNo}
+                      onClick={() =>
+                        void handleReportStatus(report.reportNo, "reviewed", {
+                          hidePostNo: report.postNo
+                        })
+                      }
+                      type="button"
+                    >
+                      处理并隐藏帖子
+                    </button>
+                    <button
+                      className="admin-button admin-button--small admin-button--ghost"
+                      data-testid="admin-community-report-resolve"
+                      disabled={busyReportNo === report.reportNo}
+                      onClick={() => void handleReportStatus(report.reportNo, "reviewed")}
+                      type="button"
+                    >
+                      仅标记已处理
+                    </button>
+                    <button
+                      className="admin-button admin-button--small admin-button--ghost"
+                      data-testid="admin-community-report-dismiss"
+                      disabled={busyReportNo === report.reportNo}
+                      onClick={() => void handleReportStatus(report.reportNo, "dismissed")}
+                      type="button"
+                    >
+                      驳回举报
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ))}
-            {reports.length === 0 ? <p className="admin-muted">No community reports.</p> : null}
+            {reports.length === 0 ? <p className="admin-muted">暂无社区举报。</p> : null}
           </div>
         </article>
       </section>
@@ -1437,3 +2158,172 @@ function getSlaRiskLevel(status: "on_track" | "due_soon" | "overdue") {
   return "low";
 }
 
+
+
+type CloudPetOperationalSignal = {
+  key: string;
+  level: "high" | "medium" | "low";
+  title: string;
+  description: string;
+  actionHref?: string;
+  actionLabel?: string;
+};
+
+function getCloudPetOperationalSignals(
+  detail: AdminCloudPetOperationalDetail
+): CloudPetOperationalSignal[] {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const hasTodayDiary = detail.archive.items.some(
+    (item) => item.type === "daily_diary" && item.createdAt.startsWith(todayKey)
+  );
+  const signals: CloudPetOperationalSignal[] = [];
+
+  if (!detail.pet.growth.isCareCompleteToday) {
+    signals.push({
+      key: "care-incomplete",
+      level: "high",
+      title: "今日照护未完成",
+      description: "今日成长任务尚未形成完整照护记录，需要及时跟进。",
+      actionHref: "#admin-cloud-pets",
+      actionLabel: "查看成长任务"
+    });
+  }
+
+  if (!hasTodayDiary) {
+    signals.push({
+      key: "diary-missing",
+      level: "high",
+      title: "今日日记缺失",
+      description: "今日尚未生成云养宠日记，可进入缺口页执行补救。",
+      actionHref: "/admin/pets/daily-diary-coverage",
+      actionLabel: "查看日记缺口"
+    });
+  }
+
+  if (detail.community.pendingReportCount > 0) {
+    signals.push({
+      key: "pending-report",
+      level: "high",
+      title: "社区举报待处理",
+      description: "该宠物关联的社区内容存在待处理举报。",
+      actionHref: "#admin-community-reports",
+      actionLabel: "处理举报"
+    });
+  }
+
+  if (detail.pet.growth.careState === "needs_care") {
+    signals.push({
+      key: "needs-care-state",
+      level: "medium",
+      title: "照护状态需关注",
+      description: "当前照护分处于需要照护区间，建议检查任务完成情况。",
+      actionHref: "#admin-cloud-pets",
+      actionLabel: "查看照护配置"
+    });
+  }
+
+  if (detail.archive.engagement.homepageVisitCount === 0) {
+    signals.push({
+      key: "no-homepage-visits",
+      level: "medium",
+      title: "主页暂无访问",
+      description: "公开主页尚无访问记录，可检查分享入口和主页内容。",
+      actionHref: "/cloud-pets/" + detail.pet.petNo,
+      actionLabel: "打开主页"
+    });
+  }
+
+  if (detail.community.postCount === 0) {
+    signals.push({
+      key: "no-community-posts",
+      level: "low",
+      title: "社区暂无内容",
+      description: "该宠物还没有社区动态，可安排内容运营跟进。",
+      actionHref: "#admin-community-posts",
+      actionLabel: "查看社区"
+    });
+  }
+
+  return signals.length > 0
+    ? signals
+    : [
+        {
+          key: "healthy",
+          level: "low",
+          title: "当前运营状态正常",
+          description: "暂未发现需要立即处理的运营风险信号。"
+        }
+      ];
+}
+
+
+type CloudPetListRiskSummary = {
+  count: number;
+  highestLevel: "high" | "medium" | "low";
+  summary: string;
+};
+
+function getCloudPetListRiskSummary(pet: AdminCloudPet): CloudPetListRiskSummary {
+  const signals: Array<{ level: "high" | "medium" | "low"; label: string }> = [];
+
+  if (!pet.growth.isCareCompleteToday) {
+    signals.push({ level: "high", label: "今日照护未完成" });
+  }
+
+  if (pet.growth.careState === "needs_care") {
+    signals.push({ level: "medium", label: "需要照护" });
+  }
+
+  if ((pet.homepageVisitCount ?? 0) === 0) {
+    signals.push({ level: "medium", label: "主页无访问" });
+  }
+
+  if (pet.communityPostCount === 0) {
+    signals.push({ level: "low", label: "社区无内容" });
+  }
+
+  if (signals.length === 0) {
+    return {
+      count: 0,
+      highestLevel: "low",
+      summary: "正常"
+    };
+  }
+
+  const highestLevel = signals.some((signal) => signal.level === "high")
+    ? "high"
+    : signals.some((signal) => signal.level === "medium")
+      ? "medium"
+      : "low";
+
+  return {
+    count: signals.length,
+    highestLevel,
+    summary: signals.map((signal) => signal.label).join(" / ")
+  };
+}
+
+
+function compareCloudPetRisk(left: AdminCloudPet, right: AdminCloudPet) {
+  const leftRisk = getCloudPetListRiskSummary(left);
+  const rightRisk = getCloudPetListRiskSummary(right);
+  const levelDelta = getCloudPetRiskWeight(rightRisk.highestLevel) - getCloudPetRiskWeight(leftRisk.highestLevel);
+
+  if (levelDelta !== 0) {
+    return levelDelta;
+  }
+
+  return rightRisk.count - leftRisk.count;
+}
+
+function getCloudPetRiskWeight(level: "high" | "medium" | "low") {
+  if (level === "high") {
+    return 3;
+  }
+
+  if (level === "medium") {
+    return 2;
+  }
+
+  return 1;
+}

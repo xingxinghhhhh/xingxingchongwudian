@@ -9,11 +9,10 @@ export default function AdminPaymentsPage() {
 
       <section className="admin-hero">
         <div className="admin-hero__inner">
-          <p className="section__kicker">Payments</p>
-          <h1>Payment Intent Ledger</h1>
+          <p className="section__kicker">支付运营</p>
+          <h1>支付流水</h1>
           <p>
-            Review payment intents, inspect ledger events, and verify paid orders
-            without leaving the admin console.
+            查看支付单、支付事件和订单支付状态，方便后台核对完整支付闭环。
           </p>
         </div>
       </section>

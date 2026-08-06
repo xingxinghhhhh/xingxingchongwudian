@@ -1,3 +1,4 @@
+import { Transform } from "class-transformer";
 import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class UpdateCloudPetHomepageDto {
@@ -6,12 +7,14 @@ export class UpdateCloudPetHomepageDto {
   theme?: "sunny" | "forest" | "midnight";
 
   @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   @MaxLength(80)
   headline?: string;
 
   @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   @MaxLength(240)

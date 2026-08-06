@@ -11,6 +11,7 @@ import {
   getAdminMe,
   getDailyDiaryCoverage
 } from "../../admin-api";
+import { getAdminRoleLabel, getAdminStaffNameLabel, getStatusLabel } from "../../admin-copy";
 
 const defaultToken = "";
 
@@ -20,42 +21,42 @@ function todayIsoDate() {
 
 function reasonLabel(reason: string | undefined) {
   if (reason === "NO_TASK_COMPLETED") {
-    return "No growth task completed today. A presence diary can be restored.";
+    return "今日未完成成长任务，可补一条陪伴型日记。";
   }
 
   if (reason === "NO_DIARY_GENERATED") {
-    return "A diary should have been generated today but was missed.";
+    return "今日应生成日记但未生成。";
   }
 
   if (reason === "ALREADY_HAS_DIARY") {
-    return "Diary already exists for this pet on the selected date.";
+    return "该宠物在所选日期已有日记。";
   }
 
   if (reason === "NOT_MISSING") {
-    return "The selected pet is not currently missing a diary.";
+    return "该宠物在所选日期已有日记。";
   }
 
   if (reason === "PET_NOT_FOUND") {
-    return "The selected pet could not be found.";
+    return "未找到选中的宠物。";
   }
 
   if (reason === "GENERATION_FAILED") {
-    return "Diary generation failed for this pet.";
+    return "该宠物日记生成失败。";
   }
 
-  return reason ?? "No reason provided.";
+  return reason ?? "暂无原因。";
 }
 
 function statusLabel(status: CloudPetDailyDiaryBackfillResult["results"][number]["status"]) {
   if (status === "created") {
-    return "Recovered";
+    return "已补救";
   }
 
   if (status === "skipped") {
-    return "Skipped";
+    return "已跳过";
   }
 
-  return "Failed";
+  return "失败";
 }
 
 export function DailyDiaryCoverageConsole() {
@@ -93,7 +94,7 @@ export function DailyDiaryCoverageConsole() {
 
   async function loadCoverage(nextToken = token, nextDate = date) {
     if (!nextToken) {
-      setError("Admin session required");
+      setError("需要后台登录会话");
       setLoading(false);
       return;
     }
@@ -118,7 +119,7 @@ export function DailyDiaryCoverageConsole() {
       }
 
       setError(
-        caught instanceof Error ? caught.message : "Failed to load diary coverage"
+        caught instanceof Error ? caught.message : "日记覆盖状态加载失败"
       );
     } finally {
       setLoading(false);
@@ -157,7 +158,7 @@ export function DailyDiaryCoverageConsole() {
       await loadCoverage(token, date);
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Daily diary recovery failed"
+        caught instanceof Error ? caught.message : "日记补救失败"
       );
     } finally {
       setBackfillLoading(false);
@@ -169,7 +170,7 @@ export function DailyDiaryCoverageConsole() {
       try {
         await adminLogout(token);
       } catch {
-        // Ignore logout failures and clear the local session anyway.
+        // 无论接口是否成功，前端会话都必须清除。
       }
     }
 
@@ -181,68 +182,72 @@ export function DailyDiaryCoverageConsole() {
     <div className="admin-console">
       <section className="admin-card admin-card--token">
         <div>
-          <p className="section__kicker">Cloud Pet Ops</p>
-          <h2>Daily Diary Coverage Recovery</h2>
-          <p>Review missing pet diaries, recover coverage, and keep retention signals healthy.</p>
+          <p className="section__kicker">云养宠运营</p>
+          <h2>日记缺口补救</h2>
+          <p>查看指定日期的云养宠日记覆盖情况，并对缺失记录执行补救。</p>
         </div>
         <div className="admin-token-form">
           <div>
-            <strong>{currentStaff?.name ?? "Staff session"}</strong>
-            <span>{currentStaff ? currentStaff.role : "validating"}</span>
+            <strong>{currentStaff ? getAdminStaffNameLabel(currentStaff.name) : "员工会话"}</strong>
+            <span>{currentStaff ? getAdminRoleLabel(currentStaff.role) : "校验中"}</span>
           </div>
           <button
             className="admin-button"
             onClick={() => void loadCoverage(token, date)}
             type="button"
           >
-            Refresh coverage
+            刷新覆盖状态
           </button>
           <button
             className="admin-button admin-button--ghost"
             onClick={() => void handleLogout()}
             type="button"
           >
-            Sign out
+            退出登录
           </button>
         </div>
         <div className="admin-inline-actions">
           <Link className="admin-button admin-button--ghost" href="/admin">
-            Back to dashboard
+            返回仪表盘
           </Link>
         </div>
-        <p className={error ? "admin-status admin-status--error" : "admin-status"}>
+        <p
+          className={error ? "admin-status admin-status--error" : "admin-status"}
+          data-testid="admin-diary-coverage-status"
+        >
           {error ??
             (loading
-              ? "Loading diary coverage..."
-              : "Diary coverage and recovery tools are ready.")}
+              ? "正在加载覆盖状态..."
+              : "请选择日期查看缺口。")}
         </p>
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Selected Date</p>
-        <h2>Coverage Snapshot</h2>
+        <p className="section__kicker">日记补救</p>
+        <h2>覆盖状态</h2>
         <form
           className="admin-inline-actions"
           onSubmit={(event) => void handleDateSubmit(event)}
         >
           <label>
-            Date
+              日期
             <input
+              data-testid="admin-diary-coverage-date"
               onChange={(event) => setDate(event.target.value)}
               type="date"
               value={date}
             />
           </label>
           <button className="admin-button" disabled={loading || backfillLoading} type="submit">
-            Load coverage
+            加载覆盖状态
           </button>
         </form>
         <div className="admin-metrics">
           {[
-            ["Covered", coverage?.coveredCount ?? 0],
-            ["Missing", coverage?.missingCount ?? 0],
+            ["已覆盖", coverage?.coveredCount ?? 0],
+            ["缺失", coverage?.missingCount ?? 0],
             [
-              "Coverage rate",
+              "覆盖率",
               `${Math.round((coverage?.coverageRate ?? 0) * 100)}%`
             ]
           ].map(([label, value]) => (
@@ -255,38 +260,48 @@ export function DailyDiaryCoverageConsole() {
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Recovery Actions</p>
-        <h2>Missing Diary Pets</h2>
+        <p className="section__kicker">日期筛选</p>
+        <h2>缺失日记补救</h2>
         <div className="admin-inline-actions">
           <button
             className="admin-button"
+            data-testid="admin-diary-backfill-all"
             disabled={backfillLoading || (coverage?.missingCount ?? 0) === 0}
             onClick={() => void handleBackfill("missingOnly")}
             type="button"
           >
-            {backfillLoading ? "Recovering..." : "Recover all missing diaries"}
+            {backfillLoading ? "补救中..." : "补救全部缺失日记"}
           </button>
           <button
             className="admin-button admin-button--ghost"
+            data-testid="admin-diary-backfill-selected"
             disabled={backfillLoading || selectedPetIds.length === 0}
             onClick={() => void handleBackfill("selected")}
             type="button"
           >
-            Recover selected
+            补救选中日记
           </button>
-          <span>{selectedPetIds.length} selected</span>
+          <span data-testid="admin-diary-selected-count">
+            已选 {selectedPetIds.length} 只
+          </span>
         </div>
 
         {coverage && coverage.missingPets.length === 0 ? (
-          <p className="admin-muted">Daily cloud-pet diaries are fully covered for this date.</p>
+          <p className="admin-muted">当前日期没有缺失日记。</p>
         ) : null}
 
         <div className="admin-list">
           {(coverage?.missingPets ?? []).map((pet) => (
-            <label className="admin-row" key={pet.petId}>
+            <label
+              className="admin-row"
+              data-pet-no={pet.petNo}
+              data-testid="admin-diary-missing-pet"
+              key={pet.petId}
+            >
               <div>
                 <strong>
                   <input
+                    aria-label={`选择 ${pet.petName}`}
                     checked={selectedPetIds.includes(pet.petId)}
                     disabled={backfillLoading}
                     onChange={() => toggleSelectedPet(pet.petId)}
@@ -295,26 +310,26 @@ export function DailyDiaryCoverageConsole() {
                   {pet.petName}
                 </strong>
                 <span>
-                  {pet.petNo} / {pet.memberPhone} / Lv.{pet.growthLevel} / {pet.careState}
+                  {pet.petNo} / {pet.memberPhone} / 等级 {pet.growthLevel} / {getStatusLabel(pet.careState)}
                 </span>
                 <p>{reasonLabel(pet.reason)}</p>
               </div>
-              <em>{pet.lastDiaryDate ? `Last diary: ${pet.lastDiaryDate}` : "No prior diary"}</em>
+              <em>{pet.lastDiaryDate ? `最近日记 ${pet.lastDiaryDate}` : "暂无日记"}</em>
             </label>
           ))}
         </div>
       </section>
 
       {backfillResult ? (
-        <section className="admin-card">
-          <p className="section__kicker">Backfill Result</p>
-          <h2>Latest Recovery Run</h2>
+        <section className="admin-card" data-testid="admin-diary-backfill-result">
+          <p className="section__kicker">补救结果</p>
+          <h2>补救结果</h2>
           <div className="admin-metrics">
             {[
-              ["Attempted", backfillResult.attemptedCount],
-              ["Recovered", backfillResult.successCount],
-              ["Skipped", backfillResult.skippedCount],
-              ["Failed", backfillResult.failedCount]
+              ["尝试", backfillResult.attemptedCount],
+              ["成功", backfillResult.successCount],
+              ["跳过", backfillResult.skippedCount],
+              ["失败", backfillResult.failedCount]
             ].map(([label, value]) => (
               <article className="admin-metric" key={label}>
                 <span>{label}</span>
@@ -332,7 +347,7 @@ export function DailyDiaryCoverageConsole() {
                   <span>{item.petNo ?? item.petId}</span>
                   <p>{reasonLabel(item.reason)}</p>
                 </div>
-                <em>{item.diaryId ?? "No diary id returned"}</em>
+                <em>{item.diaryId ?? "暂无日记 ID"}</em>
               </div>
             ))}
           </div>

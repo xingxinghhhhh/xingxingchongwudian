@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Headers,
+  Param,
+  Post,
+  UseGuards
+} from "@nestjs/common";
+import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
+import { AuthService } from "../auth/auth.service";
+import { CloudPetsService } from "../cloud-pets/cloud-pets.service";
 import { CommunityService } from "./community.service";
 import { CreateCommunityCommentDto } from "./dto/create-community-comment.dto";
 import { CreateCommunityFollowDto } from "./dto/create-community-follow.dto";
@@ -8,7 +21,11 @@ import { CreateCommunityReportDto } from "./dto/create-community-report.dto";
 
 @Controller("community")
 export class CommunityController {
-  constructor(private readonly communityService: CommunityService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly cloudPetsService: CloudPetsService,
+    private readonly communityService: CommunityService
+  ) {}
 
   @Get("posts")
   async listPosts() {
@@ -17,40 +34,130 @@ export class CommunityController {
     };
   }
 
+  @Get("posts/following")
+  async listFollowingPosts(@Headers("x-member-token") sessionToken?: string) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return {
+      items: await this.communityService.listFollowedPostsByMemberPhone(
+        session.phone
+      )
+    };
+  }
+
   @Post("posts")
-  createPost(@Body() dto: CreateCommunityPostDto) {
-    return this.communityService.createPost(dto);
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async createPost(
+    @Body() dto: CreateCommunityPostDto,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    const [session, pet] = await Promise.all([
+      this.authService.getSession(sessionToken),
+      this.cloudPetsService.getPet(dto.petNo)
+    ]);
+
+    if (pet.ownerPhone !== session.phone) {
+      throw new ForbiddenException("Pet does not belong to current member");
+    }
+
+    const body = dto.body.trim();
+
+    if (!body) {
+      throw new BadRequestException("Community post body cannot be blank");
+    }
+
+    return this.communityService.createPost({
+      ...dto,
+      authorName: session.name,
+      body
+    });
   }
 
   @Post("posts/:postNo/likes")
-  likePost(
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async likePost(
     @Param("postNo") postNo: string,
-    @Body() dto: CreateCommunityLikeDto
+    @Body() dto: CreateCommunityLikeDto,
+    @Headers("x-member-token") sessionToken?: string
   ) {
-    return this.communityService.likePost(postNo, dto);
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.communityService.likePost(postNo, {
+      ...dto,
+      memberPhone: session.phone,
+      authorName: session.name
+    });
+  }
+
+  @Get("posts/:postNo/comments")
+  async listComments(@Param("postNo") postNo: string) {
+    return {
+      items: await this.communityService.listComments(postNo)
+    };
   }
 
   @Post("posts/:postNo/comments")
-  commentOnPost(
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async commentOnPost(
     @Param("postNo") postNo: string,
-    @Body() dto: CreateCommunityCommentDto
+    @Body() dto: CreateCommunityCommentDto,
+    @Headers("x-member-token") sessionToken?: string
   ) {
-    return this.communityService.commentOnPost(postNo, dto);
+    const session = await this.authService.getSession(sessionToken);
+    const body = dto.body.trim();
+
+    if (!body) {
+      throw new BadRequestException("Community comment body cannot be blank");
+    }
+
+    return this.communityService.commentOnPost(postNo, {
+      ...dto,
+      body,
+      memberPhone: session.phone,
+      authorName: session.name
+    });
   }
 
   @Post("posts/:postNo/reports")
-  reportPost(
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async reportPost(
     @Param("postNo") postNo: string,
-    @Body() dto: CreateCommunityReportDto
+    @Body() dto: CreateCommunityReportDto,
+    @Headers("x-member-token") sessionToken?: string
   ) {
-    return this.communityService.reportPost(postNo, dto);
+    const session = await this.authService.getSession(sessionToken);
+    const reason = dto.reason.trim();
+
+    if (!reason) {
+      throw new BadRequestException("Community report reason cannot be blank");
+    }
+
+    return this.communityService.reportPost(postNo, {
+      ...dto,
+      reason,
+      memberPhone: session.phone,
+      reporterName: session.name
+    });
   }
 
   @Post("pets/:petNo/follows")
-  followPet(
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async followPet(
     @Param("petNo") petNo: string,
-    @Body() dto: CreateCommunityFollowDto
+    @Body() dto: CreateCommunityFollowDto,
+    @Headers("x-member-token") sessionToken?: string
   ) {
-    return this.communityService.followPet(petNo, dto);
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.communityService.followPet(petNo, {
+      ...dto,
+      followerPhone: session.phone,
+      followerName: session.name
+    });
   }
 }

@@ -25,7 +25,7 @@ export function SiteHeader() {
           <span>{brandName}</span>
         </Link>
 
-        <nav className="site-nav" aria-label="Primary">
+        <nav className="site-nav" aria-label="主导航">
           {navItems.map((item) => (
             <Link href={item.href} key={item.href}>
               {item.label}

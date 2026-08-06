@@ -216,16 +216,57 @@ model VirtualPetTaskCompletion {
 }
 
 model VirtualPetHomepageVisit {
-  id        String     @id @default(cuid())
-  petId     String
-  pet       VirtualPet @relation(fields: [petId], references: [id])
-  petNo     String
-  source    String     @default("direct")
-  createdAt DateTime   @default(now())
+  id         String     @id @default(cuid())
+  petId      String
+  pet        VirtualPet @relation(fields: [petId], references: [id])
+  petNo      String
+  source     String     @default("direct")
+  visitorKey String
+  visitDate  String
+  createdAt  DateTime   @default(now())
 
   @@index([petId])
   @@index([petNo])
   @@index([createdAt])
+  @@unique([petNo, source, visitorKey, visitDate])
+}
+
+model CloudPetGrowthTaskTemplate {
+  key            String   @id
+  title          String
+  description    String
+  points         Int
+  rewardMood     Int
+  rewardEnergy   Int
+  rewardIntimacy Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model CloudPetCareScoreConfig {
+  id                        String   @id
+  dailyTaskBonus            Int
+  steadyMinScore            Int
+  thrivingMinScore          Int
+  thrivingRequiresCareToday Boolean
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+model MemberAuthChallenge {
+  id         String    @id
+  phone      String
+  name       String
+  codeHash   String
+  provider   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([phone, createdAt])
+  @@index([expiresAt])
 }
 
 model MemberSession {
@@ -233,11 +274,14 @@ model MemberSession {
   token      String   @unique
   phone      String
   name       String
+  expiresAt  DateTime?
+  revokedAt  DateTime?
   lastSeenAt DateTime @default(now())
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([phone])
+  @@index([expiresAt])
 }
 
 model CommunityPost {
@@ -559,6 +603,37 @@ model OperationLog {
   @@index([staffNo])
   @@index([action])
   @@index([targetType, targetId])
+}
+
+model AdminStaffAccount {
+  id           String              @id @default(cuid())
+  staffNo      String              @unique
+  name         String
+  email        String              @unique
+  passwordHash String
+  role         String
+  permissions  Json
+  status       String              @default("active")
+  lastLoginAt  DateTime?
+  sessions     AdminStaffSession[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([role, status])
+}
+
+model AdminStaffSession {
+  id         String            @id @default(cuid())
+  token      String            @unique
+  staffId    String
+  staff      AdminStaffAccount @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime          @default(now())
+  createdAt  DateTime          @default(now())
+
+  @@index([staffId, revokedAt])
+  @@index([expiresAt])
 }
 
 model CmsBlock {

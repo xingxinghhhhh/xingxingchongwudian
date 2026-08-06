@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsOptional, IsString } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class CreateCommunityReportDto {
   @IsString()
@@ -6,10 +7,12 @@ export class CreateCommunityReportDto {
   memberPhone?: string;
 
   @IsString()
-  @IsNotEmpty()
-  reporterName!: string;
+  @IsOptional()
+  reporterName?: string;
 
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
+  @MaxLength(160)
   reason!: string;
 }

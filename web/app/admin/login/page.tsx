@@ -8,11 +8,11 @@ export default function AdminLoginPage() {
 
       <section className="admin-hero">
         <div className="admin-hero__inner">
-          <p className="section__kicker">Admin Auth</p>
-          <h1>Merchant Console Sign-In</h1>
+          <p className="section__kicker">后台登录</p>
+          <h1>员工登录</h1>
           <p>
-            Sign in with a staff session before managing catalog, after-sales,
-            CRM, and cloud-pet operations.
+            使用员工账号登录后，再管理商品、售后、客户和云养宠运营。
+
           </p>
         </div>
       </section>

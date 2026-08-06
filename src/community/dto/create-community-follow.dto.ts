@@ -1,11 +1,11 @@
-import { IsNotEmpty, IsString } from "class-validator";
+import { IsOptional, IsString } from "class-validator";
 
 export class CreateCommunityFollowDto {
   @IsString()
-  @IsNotEmpty()
-  followerPhone!: string;
+  @IsOptional()
+  followerPhone?: string;
 
   @IsString()
-  @IsNotEmpty()
-  followerName!: string;
+  @IsOptional()
+  followerName?: string;
 }

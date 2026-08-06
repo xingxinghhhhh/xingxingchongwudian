@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -12,11 +13,19 @@ import {
 import { AfterSalesService } from "../after-sales/after-sales.service";
 import { UpdateRefundStatusDto } from "../after-sales/dto/update-refund-status.dto";
 import { AnalyticsService } from "../analytics/analytics.service";
-import { CloudPetsService } from "../cloud-pets/cloud-pets.service";
+import { AuthService } from "../auth/auth.service";
+import {
+  CloudPetsService,
+  UpdateCloudPetCareScoreRulesInput,
+  UpdateGrowthTaskTemplateInput
+} from "../cloud-pets/cloud-pets.service";
 import { CmsService } from "../cms/cms.service";
 import { CreateCmsBlockDto } from "../cms/dto/create-cms-block.dto";
 import { UpdateCmsBlockStatusDto } from "../cms/dto/update-cms-block-status.dto";
-import { CommunityService } from "../community/community.service";
+import {
+  CommunityReportStatus,
+  CommunityService
+} from "../community/community.service";
 import { CustomersService } from "../customers/customers.service";
 import { CreateCustomerFollowUpDto } from "../customers/dto/create-customer-follow-up.dto";
 import { UpdateCustomerCrmDto } from "../customers/dto/update-customer-crm.dto";
@@ -57,6 +66,7 @@ export class AdminController {
     private readonly paymentsService: PaymentsService,
     private readonly reviewsService: ReviewsService,
     private readonly analyticsService: AnalyticsService,
+    private readonly authService: AuthService,
     private readonly staffService: StaffService,
     private readonly cmsService: CmsService,
     private readonly customersService: CustomersService
@@ -73,7 +83,8 @@ export class AdminController {
       communityMetrics,
       refunds,
       operationAuditMetrics,
-      payments
+      payments,
+      memberVerificationMetrics
     ] = await Promise.all([
       this.productsService.listActiveProducts(),
       this.productsService.listLowStockVariants(),
@@ -83,7 +94,8 @@ export class AdminController {
       this.communityService.getMetrics(),
       this.afterSalesService.listRefundRequests(),
       this.staffService.getOperationAuditMetrics(),
-      this.paymentsService.listAdminPayments()
+      this.paymentsService.listAdminPayments(),
+      this.authService.getVerificationMetrics()
     ]);
     const pendingRefunds = refunds.filter(
       (refund) => refund.status === "pending_review"
@@ -128,6 +140,14 @@ export class AdminController {
       dailyDiaryCoveredCount: dailyDiaryStatus.generatedTodayCount,
       dailyDiaryMissingCount: dailyDiaryStatus.missingTodayCount,
       dailyDiaryCoverageRate: dailyDiaryStatus.coverageRate,
+      memberVerificationIssuedCount: memberVerificationMetrics.issuedCount,
+      memberVerificationSuccessCount: memberVerificationMetrics.successCount,
+      memberVerificationActiveCount: memberVerificationMetrics.activeCount,
+      memberVerificationExpiredCount: memberVerificationMetrics.expiredCount,
+      memberVerificationLockedCount: memberVerificationMetrics.lockedCount,
+      memberVerificationFailedAttemptCount:
+        memberVerificationMetrics.failedAttemptCount,
+      memberVerificationSuccessRate: memberVerificationMetrics.successRate,
       ...operationAuditMetrics,
       ...cloudPetMetrics,
       ...communityMetrics
@@ -473,19 +493,219 @@ export class AdminController {
     return this.paymentsService.getAdminPayment(paymentIntentId);
   }
 
+  @Get("cloud-pets/retention-metrics")
+  async getCloudPetRetentionMetrics() {
+    const [pets, dailyDiaryStatus, communityMetrics] = await Promise.all([
+      this.cloudPetsService.listAdminPets(),
+      this.cloudPetsService.getDailyDiaryStatusForToday(),
+      this.communityService.getMetrics()
+    ]);
+    const totalPetCount = pets.length;
+    const careCompletedTodayCount = pets.filter(
+      (pet) => pet.growth.isCareCompleteToday
+    ).length;
+    const careScoreTotal = pets.reduce(
+      (total, pet) => total + pet.growth.careScore,
+      0
+    );
+    const homepageVisitCount = pets.reduce(
+      (total, pet) => total + (pet.homepageVisitCount ?? 0),
+      0
+    );
+
+    return {
+      date: dailyDiaryStatus.date,
+      totalPetCount,
+      careCompletedTodayCount,
+      careCompletionRate: totalPetCount > 0 ? careCompletedTodayCount / totalPetCount : 0,
+      averageCareScore: totalPetCount > 0 ? Math.round(careScoreTotal / totalPetCount) : 0,
+      maxCareStreakDays: pets.reduce(
+        (max, pet) => Math.max(max, pet.growth.careStreakDays),
+        0
+      ),
+      careStateCounts: {
+        needsCare: pets.filter((pet) => pet.growth.careState === "needs_care").length,
+        steady: pets.filter((pet) => pet.growth.careState === "steady").length,
+        thriving: pets.filter((pet) => pet.growth.careState === "thriving").length
+      },
+      dailyDiaryCoveredCount: dailyDiaryStatus.generatedTodayCount,
+      dailyDiaryMissingCount: dailyDiaryStatus.missingTodayCount,
+      dailyDiaryCoverageRate: dailyDiaryStatus.coverageRate,
+      homepageVisitCount,
+      communityPostCount: communityMetrics.communityPostCount,
+      pendingCommunityReportCount: communityMetrics.pendingCommunityReportCount
+    };
+  }
+
+  @Get("cloud-pets/growth-tasks")
+  async getCloudPetGrowthTaskOperations() {
+    const [tasks, pets] = await Promise.all([
+      this.cloudPetsService.listGrowthTasks(),
+      this.cloudPetsService.listAdminPets()
+    ]);
+    const totalPetCount = pets.length;
+
+    return {
+      totalPetCount,
+      items: tasks.map((task) => {
+        const completedTodayCount = pets.filter((pet) =>
+          pet.growth.todayCompletedTaskKeys.includes(task.key)
+        ).length;
+
+        return {
+          ...task,
+          completedTodayCount,
+          completionRate: totalPetCount > 0 ? completedTodayCount / totalPetCount : 0
+        };
+      })
+    };
+  }
+
+  @Patch("cloud-pets/growth-tasks/:taskKey")
+  async updateCloudPetGrowthTaskTemplate(
+    @Param("taskKey") taskKey: string,
+    @Body() dto: UpdateGrowthTaskTemplateInput,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "cloud_pets:write");
+    const task = await this.cloudPetsService.updateGrowthTaskTemplate(taskKey, dto);
+    await this.recordOperation(staff, {
+      action: "cloud_pets.growth_task_template.update",
+      targetType: "cloud_pet_growth_task",
+      targetId: task.key,
+      summary:
+        "Updated cloud-pet growth task template " +
+        task.key +
+        ": points=" +
+        task.points +
+        ", rewards=" +
+        task.rewards.mood +
+        "/" +
+        task.rewards.energy +
+        "/" +
+        task.rewards.intimacy
+    });
+
+    return task;
+  }
+
+  @Get("cloud-pets/care-score-rules")
+  getCloudPetCareScoreRules() {
+    return this.cloudPetsService.getCareScoreRules();
+  }
+
+  @Patch("cloud-pets/care-score-rules")
+  async updateCloudPetCareScoreRules(
+    @Body() dto: UpdateCloudPetCareScoreRulesInput,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "cloud_pets:write");
+    const rules = await this.cloudPetsService.updateCareScoreRules(dto);
+    await this.recordOperation(staff, {
+      action: "cloud_pets.care_score_rules.update",
+      targetType: "cloud_pet_care_score_rules",
+      targetId: "active",
+      summary:
+        "Updated cloud-pet care score rules: dailyTaskBonus=" +
+        rules.dailyTaskBonus +
+        ", steadyMinScore=" +
+        rules.steadyMinScore +
+        ", thrivingMinScore=" +
+        rules.thrivingMinScore
+    });
+
+    return rules;
+  }
+
   @Get("cloud-pets")
-  async listCloudPets() {
+  async listCloudPets(
+    @Query("q") q?: string,
+    @Query("species") species?: "cat" | "dog",
+    @Query("careState") careState?: "needs_care" | "steady" | "thriving"
+  ) {
     const [pets, posts] = await Promise.all([
       this.cloudPetsService.listAdminPets(),
       this.communityService.listAdminPosts()
     ]);
+    const keyword = q?.trim().toLowerCase();
+    const filteredPets = pets.filter((pet) => {
+      const matchesKeyword = keyword
+        ? [pet.petNo, pet.name, pet.ownerName, pet.ownerPhone].some((value) =>
+            value.toLowerCase().includes(keyword)
+          )
+        : true;
+      const matchesSpecies = species ? pet.species === species : true;
+      const matchesCareState = careState ? pet.growth.careState === careState : true;
+
+      return matchesKeyword && matchesSpecies && matchesCareState;
+    });
 
     return {
-      items: pets.map((pet) => ({
+      filters: {
+        q: q?.trim() || undefined,
+        species,
+        careState
+      },
+      totalCount: pets.length,
+      filteredCount: filteredPets.length,
+      items: filteredPets.map((pet) => ({
         ...pet,
-        communityPostCount: posts.filter((post) => post.petNo === pet.petNo)
-          .length
-      }))
+        communityPostCount: posts.filter((post) => post.petNo === pet.petNo).length,
+      })),
+    };
+  }
+  @Delete("cloud-pets/:petNo/diary-notes/:noteId")
+  async removeCloudPetDiaryNote(
+    @Param("petNo") petNo: string,
+    @Param("noteId") noteId: string,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "community:moderate");
+    const pet = await this.cloudPetsService.deleteDiaryNote(petNo, noteId);
+    await this.recordOperation(staff, {
+      action: "cloud_pets.diary_note.remove",
+      targetType: "cloud_pet_diary_note",
+      targetId: noteId,
+      summary: "Removed owner diary note " + noteId + " from cloud pet " + petNo
+    });
+
+    return pet;
+  }
+
+  @Get("cloud-pets/:petNo/detail")
+  async getCloudPetOperationalDetail(@Param("petNo") petNo: string) {
+    const [pet, archive, posts, reports] = await Promise.all([
+      this.cloudPetsService.getPet(petNo),
+      this.cloudPetsService.getHomepageArchive(petNo),
+      this.communityService.listAdminPosts(),
+      this.communityService.listReports()
+    ]);
+    const petPosts = posts.filter((post) => post.petNo === pet.petNo);
+    const petPostNos = new Set(petPosts.map((post) => post.postNo));
+    const petReports = reports.filter((report) => petPostNos.has(report.postNo));
+    const diaryEntries = archive.items.filter((item) =>
+      ["daily_diary", "owner_note"].includes(item.type)
+    );
+    const ownerNoteEntries = archive.items.filter((item) => item.type === "owner_note");
+
+    return {
+      pet,
+      archive,
+      community: {
+        posts: petPosts,
+        postCount: petPosts.length,
+        likeCount: petPosts.reduce((total, post) => total + post.likeCount, 0),
+        commentCount: petPosts.reduce((total, post) => total + post.commentCount, 0),
+        reportCount: petReports.length,
+        pendingReportCount: petReports.filter(
+          (report) => report.status === "pending_review"
+        ).length
+      },
+      diary: {
+        entryCount: diaryEntries.length,
+        latestEntry: diaryEntries[0],
+        latestOwnerNote: ownerNoteEntries[0]
+      }
     };
   }
 
@@ -541,9 +761,17 @@ export class AdminController {
   }
 
   @Get("community/reports")
-  async listCommunityReports() {
+  async listCommunityReports(
+    @Query("status") status?: CommunityReportStatus,
+    @Query("postNo") postNo?: string,
+    @Query("memberPhone") memberPhone?: string
+  ) {
     return {
-      items: await this.communityService.listReports()
+      items: await this.communityService.listReports({
+        status,
+        postNo: postNo?.trim() || undefined,
+        memberPhone: memberPhone?.trim() || undefined
+      })
     };
   }
 

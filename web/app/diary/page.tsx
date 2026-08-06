@@ -40,7 +40,7 @@ export default async function DiaryPage({ searchParams }: DiaryPageProps) {
 
       <section className="page-hero">
         <div className="page-hero__inner">
-          <p className="eyebrow">Diary archive</p>
+          <p className="eyebrow">日记归档</p>
           <h1>这里收着奶盖和年糕慢慢长大的时间线。</h1>
           <p className="page-hero__copy">
             每一篇日记都不算惊天动地，但连在一起，就会慢慢看见陪伴是怎么发生的。你可以一起看，也可以只跟着奶盖或年糕往下翻。
@@ -49,7 +49,7 @@ export default async function DiaryPage({ searchParams }: DiaryPageProps) {
       </section>
 
       <section className="section archive-shell">
-        <div className="archive-filter" role="tablist" aria-label="Diary filters">
+        <div className="archive-filter" role="tablist" aria-label="日记筛选">
           {filterItems.map((item) => (
             <Link
               className={

@@ -16,6 +16,11 @@ export interface CloudPetGrowthProfile {
   careState: CloudPetCareState;
   careScore: number;
   todayCompletedTaskCount: number;
+  todayCompletedTaskKeys: string[];
+  isCareCompleteToday: boolean;
+  careStreakDays: number;
+  lastCareDate?: string;
+  nextCarePrompt: string;
 }
 
 export interface CloudPetHomepageProfile {
@@ -57,6 +62,7 @@ export interface CloudPetHomepageArchive {
 }
 
 export interface CloudPetEvent {
+  id?: string;
   type: string;
   title: string;
   body: string;
@@ -78,6 +84,11 @@ export interface CloudPetProfile {
   timeline: CloudPetEvent[];
 }
 
+export type CloudPetPublicProfile = Omit<
+  CloudPetProfile,
+  "ownerName" | "ownerPhone"
+>;
+
 export interface CreateCloudPetInput {
   ownerName: string;
   ownerPhone: string;
@@ -94,7 +105,13 @@ export interface UpdateCloudPetHomepageInput {
   showMallRecommendations?: boolean;
 }
 
+export interface CreateCloudPetDiaryNoteInput {
+  title?: string;
+  body: string;
+}
+
 export interface RecordCloudPetHomepageVisitInput {
+  visitorId: string;
   source?: string;
 }
 
@@ -155,6 +172,7 @@ export interface CommunityReport {
   note?: string;
   createdAt: string;
   resolvedAt?: string;
+  created?: boolean;
 }
 
 export interface CloudPetRecommendation {
@@ -176,31 +194,70 @@ const API_BASE_URL =
 
 export function createCloudPet(
   input: CreateCloudPetInput,
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<CloudPetProfile>(
     "/cloud-pets",
-    {
-      body: JSON.stringify(input),
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    },
+    jsonRequest(input, sessionToken),
     fetcher
   );
 }
 
 export function getCloudPet(petNo: string, fetcher: Fetcher = fetch) {
-  return requestJson<CloudPetProfile>(
+  return requestJson<CloudPetPublicProfile>(
     `/cloud-pets/${encodeURIComponent(petNo)}`,
     { cache: "no-store" },
     fetcher
   );
 }
 
+export function createCloudPetDiaryNote(
+  petNo: string,
+  input: CreateCloudPetDiaryNoteInput,
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CloudPetProfile>(
+    `/cloud-pets/${encodeURIComponent(petNo)}/diary-notes`,
+    jsonRequest(input, sessionToken),
+    fetcher
+  );
+}
+export function updateCloudPetDiaryNote(
+  petNo: string,
+  noteId: string,
+  input: CreateCloudPetDiaryNoteInput,
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CloudPetProfile>(
+    `/cloud-pets/${encodeURIComponent(petNo)}/diary-notes/${encodeURIComponent(noteId)}`,
+    { ...jsonRequest(input, sessionToken), method: "PATCH" },
+    fetcher
+  );
+}
+
+export function deleteCloudPetDiaryNote(
+  petNo: string,
+  noteId: string,
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CloudPetProfile>(
+    `/cloud-pets/${encodeURIComponent(petNo)}/diary-notes/${encodeURIComponent(noteId)}`,
+    {
+      cache: "no-store",
+      headers: { "X-Member-Token": sessionToken },
+      method: "DELETE"
+    },
+    fetcher
+  );
+}
 export function updateCloudPetHomepage(
   petNo: string,
   input: UpdateCloudPetHomepageInput,
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<CloudPetProfile>(
@@ -208,13 +265,15 @@ export function updateCloudPetHomepage(
     {
       body: JSON.stringify(input),
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Member-Token": sessionToken
+      },
       method: "PATCH"
     },
     fetcher
   );
 }
-
 export function getCloudPetHomepageArchive(
   petNo: string,
   input: { eventType?: string } = {},
@@ -239,7 +298,7 @@ export function getCloudPetHomepageArchive(
 
 export function recordCloudPetHomepageVisit(
   petNo: string,
-  input: RecordCloudPetHomepageVisitInput = {},
+  input: RecordCloudPetHomepageVisitInput,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<CloudPetHomepageVisitRecord>(
@@ -264,75 +323,101 @@ export async function listCommunityPosts(fetcher: Fetcher = fetch) {
   return response.items;
 }
 
+export async function listFollowedCommunityPosts(
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  const response = await requestJson<{ items: CommunityPost[] }>(
+    "/community/posts/following",
+    memberRequest(sessionToken),
+    fetcher
+  );
+
+  return response.items;
+}
+
 export function createCommunityPost(
   input: CreateCommunityPostInput,
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<CommunityPost>(
     "/community/posts",
-    {
-      body: JSON.stringify(input),
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      method: "POST"
-    },
+    jsonRequest(input, sessionToken),
     fetcher
   );
 }
 
 export function likeCommunityPost(
   postNo: string,
-  input: { memberPhone: string; authorName?: string },
+  input: { memberPhone?: string; authorName?: string },
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<{ postNo: string; liked: true; likeCount: number }>(
     `/community/posts/${encodeURIComponent(postNo)}/likes`,
-    jsonRequest(input),
+    jsonRequest(input, sessionToken),
     fetcher
   );
 }
 
+export async function listCommunityComments(
+  postNo: string,
+  fetcher: Fetcher = fetch
+) {
+  const response = await requestJson<{ items: CommunityComment[] }>(
+    `/community/posts/${encodeURIComponent(postNo)}/comments`,
+    { cache: "no-store" },
+    fetcher
+  );
+
+  return response.items;
+}
+
 export function commentOnCommunityPost(
   postNo: string,
-  input: { memberPhone?: string; authorName: string; body: string },
+  input: { memberPhone?: string; authorName?: string; body: string },
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<CommunityComment>(
     `/community/posts/${encodeURIComponent(postNo)}/comments`,
-    jsonRequest(input),
+    jsonRequest(input, sessionToken),
     fetcher
   );
 }
 
 export function followCloudPet(
   petNo: string,
-  input: { followerPhone: string; followerName: string },
+  input: { followerPhone?: string; followerName?: string },
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<{
     petNo: string;
     followerPhone: string;
     following: true;
+    created: boolean;
     followerCount: number;
   }>(
     `/community/pets/${encodeURIComponent(petNo)}/follows`,
-    jsonRequest(input),
+    jsonRequest(input, sessionToken),
     fetcher
   );
 }
 
 export function reportCommunityPost(
   postNo: string,
-  input: { memberPhone?: string; reporterName: string; reason: string },
+  input: { memberPhone?: string; reporterName?: string; reason: string },
+  sessionToken: string,
   fetcher: Fetcher = fetch
 ) {
   return requestJson<CommunityReport>(
     `/community/posts/${encodeURIComponent(postNo)}/reports`,
-    jsonRequest(input),
+    jsonRequest(input, sessionToken),
     fetcher
   );
 }
-
 export async function getCloudPetRecommendations(
   petNo: string,
   fetcher: Fetcher = fetch
@@ -361,15 +446,23 @@ async function requestJson<T>(
   return payload as T;
 }
 
-function jsonRequest(body: unknown): RequestInit {
+function memberRequest(sessionToken: string): RequestInit {
   return {
-    body: JSON.stringify(body),
     cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    method: "POST"
+    headers: { "X-Member-Token": sessionToken }
   };
 }
 
+function jsonRequest(body: unknown, sessionToken?: string): RequestInit {
+  return {
+    body: JSON.stringify(body),
+    cache: "no-store",
+    headers: sessionToken
+      ? { "Content-Type": "application/json", "X-Member-Token": sessionToken }
+      : { "Content-Type": "application/json" },
+    method: "POST"
+  };
+}
 function getErrorMessage(payload: unknown) {
   if (
     payload &&
@@ -380,5 +473,5 @@ function getErrorMessage(payload: unknown) {
     return payload.message;
   }
 
-  return "Request failed";
+  return "请求失败";
 }

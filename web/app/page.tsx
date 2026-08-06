@@ -59,7 +59,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <div className="hero__notes" aria-label="Site notes">
+          <div className="hero__notes" aria-label="云养宠运营记录">
             {siteNotes.map((note) => (
               <div className="hero__note" key={note}>
                 <Sparkles size={16} />
@@ -72,7 +72,7 @@ export default function Home() {
 
       <section className="section section--profiles" id="profiles">
         <div className="section__header">
-          <p className="section__kicker">Main cast</p>
+          <p className="section__kicker">核心闭环</p>
           <h2>先认识它们，再开始追更它们的小情绪。</h2>
           <p className="section__copy">
             奶盖负责把“表面嫌弃、实际依赖”演得很满，年糕负责把“主动靠近、永远开心”做得很真。
@@ -138,7 +138,7 @@ export default function Home() {
       <section className="section" id="stories">
         <div className="section__header section__header--tight">
           <div>
-            <p className="section__kicker">Story structure</p>
+            <p className="section__kicker">留存体验</p>
             <h2>这一阶段，我们先把它们从“同住”写到“同频”。</h2>
           </div>
           <p className="section__copy">
@@ -161,7 +161,7 @@ export default function Home() {
       <section className="section section--diary" id="diary">
         <div className="section__header section__header--tight">
           <div>
-            <p className="section__kicker">Recent diary</p>
+            <p className="section__kicker">商城转化</p>
             <h2>每天一点点变化，就足够让人想继续看下去。</h2>
           </div>
           <Link className="text-link" href="/diary">
@@ -212,7 +212,7 @@ export default function Home() {
 
       <section className="section section--favorites">
         <div className="section__header">
-          <p className="section__kicker">Favorite moments</p>
+          <p className="section__kicker">运营后台</p>
           <h2>它们最动人的，不一定是大事件，而是那些会重复发生的小习惯。</h2>
           <p className="section__copy">
             后面这里可以自然接到“最爱的玩具”和“同款东西”，但现在先让喜欢本身成为内容，让人先爱上这两个角色。
@@ -240,7 +240,7 @@ export default function Home() {
 
       <section className="section section--future" id="future">
         <div className="section__header">
-          <p className="section__kicker">Future roadmap</p>
+          <p className="section__kicker">上线节奏</p>
           <h2>等奶盖和年糕的世界站稳了，我们再把“云养宠”真正做成产品。</h2>
           <p className="section__copy">
             这一步不会急着上很重的功能。我们会先保留清晰的升级路径，让内容、会员、社区和以后的小商店都是顺着这个世界观长出来的。
@@ -250,7 +250,7 @@ export default function Home() {
         <div className="roadmap-grid">
           {futurePlans.map((plan) => (
             <article className="roadmap-card" key={plan.title}>
-              <span className="roadmap-card__badge">Next</span>
+              <span className="roadmap-card__badge">进行中</span>
               <h3>{plan.title}</h3>
               <p>{plan.detail}</p>
             </article>

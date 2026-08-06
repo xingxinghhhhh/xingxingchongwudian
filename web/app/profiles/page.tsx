@@ -10,7 +10,7 @@ export default function ProfilesPage() {
 
       <section className="page-hero">
         <div className="page-hero__inner">
-          <p className="eyebrow">Profiles</p>
+          <p className="eyebrow">宠物档案</p>
           <h1>奶盖和年糕的档案，不只是介绍，更是理解它们的入口。</h1>
           <p className="page-hero__copy">
             一个会偷偷在意，一个永远主动靠近。先把它们各自的脾气、偏好和依赖方式看清楚，后面的每篇日记才会更好看。

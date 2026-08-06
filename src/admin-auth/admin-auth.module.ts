@@ -1,11 +1,12 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { DatabaseModule } from "../database/database.module";
 import { StaffModule } from "../staff/staff.module";
 import { AdminAuthController } from "./admin-auth.controller";
 import { AdminAuthService } from "./admin-auth.service";
 
 @Module({
-  imports: [ConfigModule, StaffModule],
+  imports: [ConfigModule, DatabaseModule, StaffModule],
   controllers: [AdminAuthController],
   providers: [AdminAuthService],
   exports: [AdminAuthService]

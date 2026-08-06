@@ -47,13 +47,13 @@ export default function AboutPage() {
 
       <section className="section split-grid">
         <article className="detail-panel detail-panel--story">
-          <p className="section__kicker">World</p>
+          <p className="section__kicker">世界观</p>
           <h2 className="detail-panel__title">这个账号先是一个家里的故事，后来才慢慢长成一个项目。</h2>
           <p className="detail-panel__copy">{worldSummary}</p>
         </article>
 
         <article className="detail-panel detail-panel--story">
-          <p className="section__kicker">Account idea</p>
+          <p className="section__kicker">账号构想</p>
           <div className="stack-list">
             {creatorNotes.map((note, index) => (
               <div className="stack-item" key={note.title}>
@@ -72,7 +72,7 @@ export default function AboutPage() {
 
       <section className="section">
         <div className="section__header">
-          <p className="section__kicker">Story chapters</p>
+          <p className="section__kicker">故事章节</p>
           <h2>网站里的“关于”，和社交平台上的一句简介，应该说的是同一个故事。</h2>
           <p className="section__copy">
             前台可以短一点，网站可以深一点，但语气、人物关系和世界观要始终一致。这样用户从抖音、小红书走进来，才会觉得这真的是同一个地方。
@@ -92,7 +92,7 @@ export default function AboutPage() {
 
       <section className="section">
         <div className="section__header">
-          <p className="section__kicker">Profile bios</p>
+          <p className="section__kicker">主页简介</p>
           <h2>这是可以直接沿用到平台主页的统一简介口径。</h2>
           <p className="section__copy">
             抖音更利落，小红书更生活化，微博更像一句人设摘要，但核心都围绕奶盖、年糕和“陪伴慢慢发生”。

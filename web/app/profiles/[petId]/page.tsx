@@ -35,7 +35,7 @@ export default async function PetDetailPage({ params }: PetDetailPageProps) {
             <ArrowLeft size={16} />
             返回全部档案
           </Link>
-          <p className="eyebrow">{pet.type === "cat" ? "Cat profile" : "Dog profile"}</p>
+          <p className="eyebrow">{pet.type === "cat" ? "猫咪档案" : "狗狗档案"}</p>
           <h1>{pet.name} 的完整档案</h1>
           <p className="page-hero__copy">{pet.summary}</p>
         </div>
@@ -87,7 +87,7 @@ export default async function PetDetailPage({ params }: PetDetailPageProps) {
 
       <section className="section split-grid">
         <article className="detail-panel">
-          <p className="section__kicker">Relationship</p>
+          <p className="section__kicker">相处关系</p>
           <h2 className="detail-panel__title">
             {counterpart ? `${pet.name} 和 ${counterpart.name}` : `${pet.name} 的相处记录`}
           </h2>
@@ -99,7 +99,7 @@ export default async function PetDetailPage({ params }: PetDetailPageProps) {
         </article>
 
         <article className="detail-panel">
-          <p className="section__kicker">Recent moments</p>
+          <p className="section__kicker">近期日常</p>
           <div className="stack-list">
             {diaryEntries.map((entry) => (
               <Link className="stack-item" href={`/diary/${entry.id}`} key={entry.id}>

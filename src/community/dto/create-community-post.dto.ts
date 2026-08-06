@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsString, MaxLength } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class CreateCommunityPostDto {
   @IsString()
@@ -6,10 +7,11 @@ export class CreateCommunityPostDto {
   petNo: string;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @MaxLength(40)
-  authorName: string;
+  authorName?: string;
 
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   @MaxLength(280)

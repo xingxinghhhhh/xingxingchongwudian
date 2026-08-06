@@ -1,6 +1,7 @@
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import * as request from "supertest";
+import { AuthService } from "../src/auth/auth.service";
 
 describe("Pet toy shop API", () => {
   let app: INestApplication;
@@ -26,15 +27,14 @@ describe("Pet toy shop API", () => {
   }
 
   async function loginAsMember(phone: string, name = "Member Session") {
-    const response = await request(app.getHttpServer())
-      .post("/api/auth/login")
-      .send({
-        name,
-        phone
-      })
-      .expect(201);
+    const authService = app.get(AuthService);
+    const challenge = await authService.requestVerification({ name, phone });
+    const login = await authService.login({
+      challengeId: challenge.challengeId,
+      code: challenge.developmentCode!
+    });
 
-    return response.body.sessionToken as string;
+    return login.sessionToken;
   }
 
   beforeAll(async () => {
@@ -65,15 +65,50 @@ describe("Pet toy shop API", () => {
   it("returns service health", async () => {
     await request(app.getHttpServer())
       .get("/api/health")
+      .set("X-Request-Id", "health-check-20260723")
       .expect(200)
+      .expect("X-Request-Id", "health-check-20260723")
       .expect(({ body }) => {
         expect(body).toEqual({
           status: "ok",
           service: "pet-toy-shop-api",
           database: {
             orm: "prisma",
-            provider: "mysql",
+            provider: "sqlite",
+            mode: "memory",
             configured: false
+          }
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/health")
+      .set("X-Request-Id", "unsafe request id")
+      .expect(200)
+      .expect(({ headers }) => {
+        expect(headers["x-request-id"]).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/health/live")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe("ok");
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/health/ready")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "ready",
+          database: {
+            provider: "sqlite",
+            mode: "memory",
+            configured: false,
+            connected: null
           }
         });
       });
@@ -898,7 +933,10 @@ describe("Pet toy shop API", () => {
               staffNo: "STAFF_OWNER",
               action: "security.admin_login",
               targetType: "admin_session",
-              targetId: loginResponse.body.sessionToken
+              targetId: expect.stringMatching(/^[0-9a-f]{16}$/),
+              summary: expect.not.stringContaining(
+                loginResponse.body.sessionToken
+              )
             })
           ])
         );
@@ -920,7 +958,10 @@ describe("Pet toy shop API", () => {
               staffNo: "STAFF_OWNER",
               action: "security.admin_logout",
               targetType: "admin_session",
-              targetId: loginResponse.body.sessionToken
+              targetId: expect.stringMatching(/^[0-9a-f]{16}$/),
+              summary: expect.not.stringContaining(
+                loginResponse.body.sessionToken
+              )
             })
           ])
         );
@@ -948,6 +989,7 @@ describe("Pet toy shop API", () => {
       });
 
     const operatorSession = await loginAsAdmin("operator");
+    const ownerAdminSession = await loginAsAdmin("owner");
 
     await request(app.getHttpServer())
       .patch("/api/admin/products/durable-bite-rope/status")
@@ -1208,6 +1250,7 @@ describe("Pet toy shop API", () => {
   it("returns admin dashboard metrics for merchant operations", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138000", "Dashboard Owner"))
       .send({
         ownerName: "Dashboard Owner",
         ownerPhone: "13800138000",
@@ -1217,8 +1260,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const dashboardCommunitySession = await loginAsMember("13800138000", "Dashboard Owner");
+
     await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", dashboardCommunitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Dashboard Owner",
@@ -1307,6 +1353,13 @@ describe("Pet toy shop API", () => {
           pendingPaymentIntentCount: expect.any(Number),
           failedPaymentIntentCount: expect.any(Number),
           overduePaymentIntentCount: expect.any(Number),
+          memberVerificationIssuedCount: expect.any(Number),
+          memberVerificationSuccessCount: expect.any(Number),
+          memberVerificationActiveCount: expect.any(Number),
+          memberVerificationExpiredCount: expect.any(Number),
+          memberVerificationLockedCount: expect.any(Number),
+          memberVerificationFailedAttemptCount: expect.any(Number),
+          memberVerificationSuccessRate: expect.any(Number),
           hiddenCommunityPostCount: 0
         });
         expect(body.cloudPetCount).toBeGreaterThanOrEqual(1);
@@ -1318,6 +1371,8 @@ describe("Pet toy shop API", () => {
         expect(body.paymentIntentCount).toBeGreaterThanOrEqual(2);
         expect(body.pendingPaymentIntentCount).toBeGreaterThanOrEqual(1);
         expect(body.failedPaymentIntentCount).toBeGreaterThanOrEqual(1);
+        expect(body.memberVerificationIssuedCount).toBeGreaterThanOrEqual(3);
+        expect(body.memberVerificationSuccessCount).toBeGreaterThanOrEqual(3);
       });
   });
 
@@ -1368,6 +1423,7 @@ describe("Pet toy shop API", () => {
 
     const analyticsPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(phone, "Analytics Pet Owner"))
       .send({
         ownerName: "Analytics Pet Owner",
         ownerPhone: phone,
@@ -1379,11 +1435,15 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${analyticsPetResponse.body.petNo}/homepage/visits`)
-      .send({ source: "analytics_test" })
+      .send({
+        source: "analytics_test",
+        visitorId: "analytics_visitor_20260723"
+      })
       .expect(201);
 
     await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13600136989", "Activation Pet Owner"))
       .send({
         ownerName: "Activation Pet Owner",
         ownerPhone: "13600136989",
@@ -1525,6 +1585,7 @@ describe("Pet toy shop API", () => {
 
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(phone, "CRM Customer"))
       .send({
         ownerName: "CRM Customer",
         ownerPhone: phone,
@@ -1534,8 +1595,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const crmCommunitySession = await loginAsMember(phone, "CRM Customer");
+
     await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", crmCommunitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "CRM Customer",
@@ -1657,6 +1721,7 @@ describe("Pet toy shop API", () => {
   it("lets an authenticated admin list cloud pets and hide community posts", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138000", "Moderation Owner"))
       .send({
         ownerName: "Moderation Owner",
         ownerPhone: "13800138000",
@@ -1666,8 +1731,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const moderationCommunitySession = await loginAsMember("13800138000", "Moderation Owner");
+
     const postResponse = await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", moderationCommunitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Moderation Owner",
@@ -1692,6 +1760,23 @@ describe("Pet toy shop API", () => {
       });
 
     await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets?q=Moderation&species=dog")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          filters: { q: "Moderation", species: "dog" },
+          filteredCount: expect.any(Number),
+          totalCount: expect.any(Number)
+        });
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            petNo: petResponse.body.petNo,
+            species: "dog"
+          })
+        ]);
+      });
+    await request(app.getHttpServer())
       .patch(`/api/admin/community/posts/${postResponse.body.postNo}/status`)
       .set("X-Admin-Token", "dev-admin-key")
       .send({ status: "hidden" })
@@ -1713,6 +1798,464 @@ describe("Pet toy shop API", () => {
               postNo: postResponse.body.postNo
             })
           ])
+        );
+      });
+  });
+
+  it("returns cloud-pet retention metrics for admin operations", async () => {
+    const caredPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138234", "Retention Owner"))
+      .send({
+        ownerName: "Retention Owner",
+        ownerPhone: "13800138234",
+        name: "Retention Pet",
+        species: "dog",
+        personality: "likes daily care loops"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138235", "Retention Missing Owner"))
+      .send({
+        ownerName: "Retention Missing Owner",
+        ownerPhone: "13800138235",
+        name: "Retention Missing Pet",
+        species: "cat",
+        personality: "waits for the first care action"
+      })
+      .expect(201);
+
+    const ownerSession = await loginAsMember("13800138234", "Retention Owner");
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${caredPetResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", ownerSession)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${caredPetResponse.body.petNo}/homepage/visits`)
+      .send({
+        source: "retention-metrics-test",
+        visitorId: "retention_visitor_20260723"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets/retention-metrics")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.totalPetCount).toBeGreaterThanOrEqual(2);
+        expect(body.careCompletedTodayCount).toBeGreaterThanOrEqual(1);
+        expect(body.careCompletionRate).toBeGreaterThan(0);
+        expect(body.averageCareScore).toBeGreaterThanOrEqual(0);
+        expect(body.maxCareStreakDays).toBeGreaterThanOrEqual(1);
+        expect(body.careStateCounts).toEqual(
+          expect.objectContaining({
+            needsCare: expect.any(Number),
+            steady: expect.any(Number),
+            thriving: expect.any(Number)
+          })
+        );
+        expect(body.dailyDiaryCoverageRate).toBeGreaterThanOrEqual(0);
+        expect(body.homepageVisitCount).toBeGreaterThanOrEqual(1);
+      });
+  });
+
+  it("returns cloud-pet growth task operations for admin review", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138345", "Task Ops Owner"))
+      .send({
+        ownerName: "Task Ops Owner",
+        ownerPhone: "13800138345",
+        name: "Task Ops Pet",
+        species: "dog",
+        personality: "keeps task operations visible"
+      })
+      .expect(201);
+
+    const ownerSession = await loginAsMember("13800138345", "Task Ops Owner");
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", ownerSession)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/feed-care/complete`)
+      .set("X-Member-Token", ownerSession)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets/growth-tasks")
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.totalPetCount).toBeGreaterThanOrEqual(1);
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              key: "daily-care",
+              completedTodayCount: expect.any(Number),
+              completionRate: expect.any(Number)
+            }),
+            expect.objectContaining({
+              key: "feed-care",
+              completedTodayCount: expect.any(Number),
+              completionRate: expect.any(Number)
+            })
+          ])
+        );
+        const dailyCare = body.items.find((item: { key: string }) => item.key === "daily-care");
+        const feedCare = body.items.find((item: { key: string }) => item.key === "feed-care");
+        expect(dailyCare.completedTodayCount).toBeGreaterThanOrEqual(1);
+        expect(feedCare.completedTodayCount).toBeGreaterThanOrEqual(1);
+      });
+  });
+
+  it("updates cloud-pet growth task templates for admin operations", async () => {
+    const ownerSession = await loginAsAdmin("owner");
+    const operatorSession = await loginAsAdmin("operator");
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/cloud-pets/growth-tasks/daily-care")
+      .set("X-Admin-Session", operatorSession)
+      .send({ points: 26 })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: cloud_pets:write");
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .patch("/api/admin/cloud-pets/growth-tasks/daily-care")
+        .set("X-Admin-Session", ownerSession)
+        .send({
+          points: 26,
+          rewards: { mood: 1, energy: 1, intimacy: 1 }
+        })
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            key: "daily-care",
+            points: 26,
+            rewards: { mood: 1, energy: 1, intimacy: 1 }
+          });
+        });
+
+      await request(app.getHttpServer())
+        .get("/api/admin/cloud-pets/growth-tasks")
+        .set("X-Admin-Session", ownerSession)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                key: "daily-care",
+                points: 26,
+                rewards: { mood: 1, energy: 1, intimacy: 1 }
+              })
+            ])
+          );
+        });
+
+      const petResponse = await request(app.getHttpServer())
+        .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138347", "Task Template Owner"))
+        .send({
+          ownerName: "Task Template Owner",
+          ownerPhone: "13800138347",
+          name: "Task Template Pet",
+          species: "cat",
+          personality: "reflects growth task template changes"
+        })
+        .expect(201);
+      const memberSession = await loginAsMember("13800138347", "Task Template Owner");
+
+      await request(app.getHttpServer())
+        .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+        .set("X-Member-Token", memberSession)
+        .expect(201)
+        .expect(({ body }) => {
+          expect(body.completedTask).toMatchObject({ key: "daily-care", points: 26 });
+          expect(body.pet.stats).toMatchObject({ mood: 73, energy: 69, intimacy: 16 });
+        });
+
+      await request(app.getHttpServer())
+        .get("/api/admin/operation-logs")
+        .set("X-Admin-Session", ownerSession)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                action: "cloud_pets.growth_task_template.update",
+                targetId: "daily-care",
+                staffNo: "STAFF_OWNER"
+              })
+            ])
+          );
+        });
+    } finally {
+      await request(app.getHttpServer())
+        .patch("/api/admin/cloud-pets/growth-tasks/daily-care")
+        .set("X-Admin-Session", ownerSession)
+        .send({
+          points: 20,
+          rewards: { mood: 8, energy: 4, intimacy: 10 }
+        });
+    }
+  });
+  it("updates cloud-pet care score rules for admin operations", async () => {
+    const ownerSession = await loginAsAdmin("owner");
+    const operatorSession = await loginAsAdmin("operator");
+
+    await request(app.getHttpServer())
+      .get("/api/admin/cloud-pets/care-score-rules")
+      .set("X-Admin-Session", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          dailyTaskBonus: 12,
+          steadyMinScore: 60,
+          thrivingMinScore: 70,
+          thrivingRequiresCareToday: true
+        });
+      });
+
+    await request(app.getHttpServer())
+      .patch("/api/admin/cloud-pets/care-score-rules")
+      .set("X-Admin-Session", operatorSession)
+      .send({ dailyTaskBonus: 0 })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Missing admin permission: cloud_pets:write");
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .patch("/api/admin/cloud-pets/care-score-rules")
+        .set("X-Admin-Session", ownerSession)
+        .send({
+          dailyTaskBonus: 0,
+          steadyMinScore: 60,
+          thrivingMinScore: 95,
+          thrivingRequiresCareToday: true
+        })
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            dailyTaskBonus: 0,
+            steadyMinScore: 60,
+            thrivingMinScore: 95,
+            thrivingRequiresCareToday: true
+          });
+          expect(body.updatedAt).toEqual(expect.any(String));
+        });
+
+      const petResponse = await request(app.getHttpServer())
+        .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138346", "Care Rules Owner"))
+        .send({
+          ownerName: "Care Rules Owner",
+          ownerPhone: "13800138346",
+          name: "Care Rules Pet",
+          species: "dog",
+          personality: "reflects care score rule changes"
+        })
+        .expect(201);
+      const memberSession = await loginAsMember("13800138346", "Care Rules Owner");
+
+      await request(app.getHttpServer())
+        .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+        .set("X-Member-Token", memberSession)
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .get(`/api/cloud-pets/${petResponse.body.petNo}`)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.growth.careScore).toBeLessThan(60);
+          expect(body.growth.careState).toBe("needs_care");
+        });
+
+      await request(app.getHttpServer())
+        .get("/api/admin/operation-logs")
+        .set("X-Admin-Session", ownerSession)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                action: "cloud_pets.care_score_rules.update",
+                staffNo: "STAFF_OWNER",
+                staffName: "Owner Admin"
+              })
+            ])
+          );
+        });
+    } finally {
+      await request(app.getHttpServer())
+        .patch("/api/admin/cloud-pets/care-score-rules")
+        .set("X-Admin-Session", ownerSession)
+        .send({
+          dailyTaskBonus: 12,
+          steadyMinScore: 60,
+          thrivingMinScore: 70,
+          thrivingRequiresCareToday: true
+        });
+    }
+  });
+  it("lets an authenticated admin remove a public owner diary note", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138348", "Admin Diary Owner"))
+      .send({
+        ownerName: "Admin Diary Owner",
+        ownerPhone: "13800138348",
+        name: "Admin Diary Pet",
+        species: "cat",
+        personality: "needs admin diary moderation"
+      })
+      .expect(201);
+    const memberSession = await loginAsMember("13800138348", "Admin Diary Owner");
+    const operatorSession = await loginAsAdmin("operator");
+    const ownerAdminSession = await loginAsAdmin("owner");
+
+    const noteResponse = await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", memberSession)
+      .send({
+        title: "Public owner note",
+        body: "This public owner note should be removable by admin moderation."
+      })
+      .expect(201);
+    const noteId = noteResponse.body.timeline[0].id;
+
+    await request(app.getHttpServer())
+      .get(`/api/admin/cloud-pets/${petResponse.body.petNo}/detail`)
+      .set("X-Admin-Session", operatorSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.diary.latestOwnerNote).toMatchObject({
+          id: noteId,
+          type: "owner_note"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/admin/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Admin-Session", operatorSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.timeline).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: noteId })])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=owner_note`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toHaveLength(0);
+        expect(body.filters).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ key: "owner_note" })])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Session", ownerAdminSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              action: "cloud_pets.diary_note.remove",
+              targetId: noteId,
+              staffNo: "STAFF_OPS"
+            })
+          ])
+        );
+      });
+
+  });
+  it("returns a cloud-pet operational detail for admin review", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138123", "Detail Owner"))
+      .send({
+        ownerName: "Detail Owner",
+        ownerPhone: "13800138123",
+        name: "Detail Pet",
+        species: "cat",
+        personality: "keeps a tidy operating record"
+      })
+      .expect(201);
+
+    const ownerSession = await loginAsMember("13800138123", "Detail Owner");
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Detail Owner",
+        body: "A detail page should show this community context."
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", ownerSession)
+      .send({
+        reporterName: "Detail Owner",
+        reason: "Needs merchant review"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", ownerSession)
+      .send({
+        title: "Owner field note",
+        body: "This owner note should appear in the operational archive."
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({
+        source: "admin-detail-test",
+        visitorId: "admin_detail_visitor_20260723"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/admin/cloud-pets/${petResponse.body.petNo}/detail`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.pet).toMatchObject({
+          petNo: petResponse.body.petNo,
+          name: "Detail Pet",
+          ownerPhone: "13800138123"
+        });
+        expect(body.archive.engagement.homepageVisitCount).toBeGreaterThanOrEqual(1);
+        expect(body.community).toMatchObject({
+          postCount: 1,
+          reportCount: 1,
+          pendingReportCount: 1
+        });
+        expect(body.community.posts).toEqual([
+          expect.objectContaining({ postNo: postResponse.body.postNo })
+        ]);
+        expect(body.diary.entryCount).toBeGreaterThanOrEqual(1);
+        expect(body.diary.latestEntry).toEqual(
+          expect.objectContaining({ title: "Owner field note" })
         );
       });
   });
@@ -2254,6 +2797,7 @@ describe("Pet toy shop API", () => {
     const memberPhone = "13600136588";
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(memberPhone, "Notification Owner"))
       .send({
         ownerName: "Notification Owner",
         ownerPhone: memberPhone,
@@ -2263,8 +2807,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const notificationMemberSession = await loginAsMember(memberPhone, "Notification Owner");
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", notificationMemberSession)
       .expect(201);
 
     const orderResponse = await request(app.getHttpServer())
@@ -2311,6 +2858,7 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .get(`/api/members/${memberPhone}`)
+      .set("X-Member-Token", notificationMemberSession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.notifications).toEqual(
@@ -2716,14 +3264,41 @@ describe("Pet toy shop API", () => {
   });
 
   it("creates a custom cloud pet and returns its dedicated homepage profile", async () => {
-    const createResponse = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138000", "Validation Owner"))
+      .send({
+        ownerName: "   ",
+        ownerPhone: "13800138000",
+        name: "Blank Guard Pet",
+        species: "cat",
+        personality: "valid personality"
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138000", "Demo Owner"))
       .send({
         ownerName: "Demo Owner",
         ownerPhone: "13800138000",
-        name: "Dashboard Pet",
+        name: "   ",
         species: "cat",
-        personality: "spots dashboard signals quickly"
+        personality: "valid personality"
+      })
+      .expect(400);
+
+    const maxPersonality = "p".repeat(80);
+
+    const createResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("  13800138000  ", "  Demo Owner  "))
+      .send({
+        ownerName: "  Demo Owner  ",
+        ownerPhone: "  13800138000  ",
+        name: "  Dashboard Pet  ",
+        species: "cat",
+        personality: `  ${maxPersonality}  `
       })
       .expect(201);
 
@@ -2732,7 +3307,7 @@ describe("Pet toy shop API", () => {
       ownerPhone: "13800138000",
       name: "Dashboard Pet",
         species: "cat",
-        personality: "spots dashboard signals quickly",
+        personality: maxPersonality,
       stats: {
         mood: 72,
         energy: 68,
@@ -2741,7 +3316,7 @@ describe("Pet toy shop API", () => {
       timeline: [
         expect.objectContaining({
           type: "adoption",
-          title: "Dashboard Pet arrived at the cloud-pet home",
+          title: "Dashboard Pet来到云养宠之家",
         })
       ]
     });
@@ -2749,19 +3324,24 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .get(`/api/cloud-pets/${createResponse.body.petNo}`)
-      .expect(200)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({
-          petNo: createResponse.body.petNo,
-          name: "Dashboard Pet",
-          species: "cat"
-        });
-      });
-  });
+       .expect(200)
+       .expect(({ body }) => {
+         expect(body).toMatchObject({
+           petNo: createResponse.body.petNo,
+           name: "Dashboard Pet",
+           species: "cat",
+           bio: "Dashboard Pet是一只性格" + maxPersonality + "的云养猫咪。"
+         });
+         expect(body).not.toHaveProperty("ownerName");
+         expect(body).not.toHaveProperty("ownerPhone");
+         expect(body.bio).not.toContain("Demo Owner");
+       });
+   });
 
   it("returns pet-aware product recommendations for a cloud pet", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138000", "Demo Owner"))
       .send({
         ownerName: "Demo Owner",
         ownerPhone: "13800138000",
@@ -2779,7 +3359,7 @@ describe("Pet toy shop API", () => {
           expect.objectContaining({
             slug: "cat-teaser-wand",
             petType: "cat",
-            reason: expect.stringContaining("cat interaction needs")
+            reason: expect.stringContaining("猫咪互动需求")
           })
         ]);
       });
@@ -2790,6 +3370,7 @@ describe("Pet toy shop API", () => {
 
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(memberPhone, "Member Owner"))
       .send({
         ownerName: "Member Owner",
         ownerPhone: memberPhone,
@@ -2799,8 +3380,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const memberProfileCommunitySession = await loginAsMember(memberPhone, "Member Owner");
+
     await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", memberProfileCommunitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Member Owner",
@@ -2836,6 +3420,7 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .get(`/api/members/${memberPhone}`)
+      .set("X-Member-Token", memberProfileCommunitySession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.member).toMatchObject({
@@ -2917,9 +3502,11 @@ describe("Pet toy shop API", () => {
 
   it("lets a member save a default address and returns it in the profile", async () => {
     const phone = "13600137955";
+    const memberSession = await loginAsMember(phone, "Address Member");
 
     await request(app.getHttpServer())
-      .post(`/api/members/${phone}/addresses`)
+      .post("/api/members/me/addresses")
+      .set("X-Member-Token", memberSession)
       .send({
         receiverName: "Address Member",
         phone,
@@ -2940,7 +3527,8 @@ describe("Pet toy shop API", () => {
       });
 
     await request(app.getHttpServer())
-      .get(`/api/members/${phone}`)
+      .get("/api/members/me")
+      .set("X-Member-Token", memberSession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.addresses).toEqual([
@@ -2960,9 +3548,11 @@ describe("Pet toy shop API", () => {
 
   it("lets a member redeem points for a checkout coupon", async () => {
     const memberPhone = "13900139777";
+    const memberSession = await loginAsMember(memberPhone, "Points Owner");
 
     await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(memberPhone, "Points Owner"))
       .send({
         ownerName: "Points Owner",
         ownerPhone: memberPhone,
@@ -2997,7 +3587,8 @@ describe("Pet toy shop API", () => {
       .expect(201);
 
     const beforeProfile = await request(app.getHttpServer())
-      .get(`/api/members/${memberPhone}`)
+      .get("/api/members/me")
+      .set("X-Member-Token", memberSession)
       .expect(200);
 
     expect(beforeProfile.body.loyalty.redemptionRewards).toEqual(
@@ -3014,7 +3605,8 @@ describe("Pet toy shop API", () => {
     );
 
     await request(app.getHttpServer())
-      .post(`/api/members/${memberPhone}/points/redemptions`)
+      .post("/api/members/me/points/redemptions")
+      .set("X-Member-Token", memberSession)
       .send({ rewardKey: "points-coupon-8" })
       .expect(201)
       .expect(({ body }) => {
@@ -3032,7 +3624,8 @@ describe("Pet toy shop API", () => {
       });
 
     await request(app.getHttpServer())
-      .get(`/api/members/${memberPhone}`)
+      .get("/api/members/me")
+      .set("X-Member-Token", memberSession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.loyalty.summary.availablePoints).toBe(
@@ -3154,7 +3747,7 @@ describe("Pet toy shop API", () => {
         title: "Daily care task and mall bundle",
         body: "Recommend matching tasks and products from today's Naigai and Niangao growth rhythm.",
         href: "/shop",
-        ctaLabel: "Shop recommended toy",
+        ctaLabel: "选购推荐玩具",
         status: "published",
         sortOrder: 1
       })
@@ -3162,6 +3755,7 @@ describe("Pet toy shop API", () => {
 
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(memberPhone, "Personalized Owner"))
       .send({
         ownerName: "Personalized Owner",
         ownerPhone: memberPhone,
@@ -3171,8 +3765,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const personalizedCommunitySession = await loginAsMember(memberPhone, "Personalized Owner");
+
     await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", personalizedCommunitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Personalized Owner",
@@ -3204,17 +3801,24 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const personalizedMemberSession = await loginAsMember(memberPhone, "Personalized Owner");
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", personalizedMemberSession)
       .expect(201);
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
-      .send({ source: "member_personalization" })
+      .send({
+        source: "member_personalization",
+        visitorId: "member_personalization_20260723"
+      })
       .expect(201);
 
     await request(app.getHttpServer())
       .get(`/api/members/${memberPhone}`)
+      .set("X-Member-Token", personalizedMemberSession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.personalizedRecommendations).toEqual(
@@ -3263,9 +3867,92 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("requires an active member session and binds cloud-pet ownership to it", async () => {
+    const memberSession = await loginAsMember("13600136009", "Session Bound Owner");
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .send({
+        ownerName: "Anonymous Owner",
+        ownerPhone: "13600136008",
+        name: "Anonymous Pet",
+        species: "cat",
+        personality: "Must not be created without a member session"
+      })
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", memberSession)
+      .send({
+        ownerName: "Forged Owner",
+        ownerPhone: "13600136010",
+        name: "Session Bound Pet",
+        species: "cat",
+        personality: "Belongs to the authenticated member session"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          ownerName: "Session Bound Owner",
+          ownerPhone: "13600136009",
+          name: "Session Bound Pet"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", "member_invalid")
+      .send({
+        ownerName: "Invalid Owner",
+        ownerPhone: "13600136011",
+        name: "Invalid Session Pet",
+        species: "dog",
+        personality: "Should not be created with an invalid session"
+      })
+      .expect(401);
+  });
+
+  it("rate limits cloud-pet creation per member session", async () => {
+    const sessionToken = await loginAsMember(
+      "13600136031",
+      "Creation Limit Member"
+    );
+
+    for (let index = 1; index <= 5; index += 1) {
+      await request(app.getHttpServer())
+        .post("/api/cloud-pets")
+        .set("X-Member-Token", sessionToken)
+        .send({
+          ownerName: "Creation Limit Member",
+          ownerPhone: "13600136031",
+          name: `Limit Pet ${index}`,
+          species: index % 2 === 0 ? "dog" : "cat",
+          personality: "Verifies the authenticated creation allowance"
+        })
+        .expect(201);
+    }
+
+    await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", sessionToken)
+      .send({
+        ownerName: "Creation Limit Member",
+        ownerPhone: "13600136031",
+        name: "Limit Pet 6",
+        species: "cat",
+        personality: "Must be blocked after the creation allowance"
+      })
+      .expect(429)
+      .expect(({ body }) => {
+        expect(body.message).toBe("操作过于频繁，请稍后再试。");
+      });
+  });
+
   it("logs in a member and returns the current member profile from the session", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13600136000", "Session Owner"))
       .send({
         ownerName: "Session Owner",
         ownerPhone: "13600136000",
@@ -3275,21 +3962,77 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    await request(app.getHttpServer())
+      .post("/api/auth/verification-codes")
+      .send({
+        name: "   ",
+        phone: "13600136000"
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Member name cannot be blank");
+      });
+
+    const maxMemberName = "m".repeat(40);
+
+    const challengeResponse = await request(app.getHttpServer())
+      .post("/api/auth/verification-codes")
+      .send({
+        name: `  ${maxMemberName}  `,
+        phone: "  13600136000  "
+      })
+      .expect(201);
+
+    expect(challengeResponse.body).toMatchObject({
+      challengeId: expect.stringMatching(/^verify_/),
+      developmentCode: expect.stringMatching(/^\d{6}$/)
+    });
+
+    await request(app.getHttpServer())
+      .post("/api/auth/verification-codes")
+      .send({
+        name: maxMemberName,
+        phone: "13600136000"
+      })
+      .expect(429)
+      .expect(({ body }) => {
+        expect(body.message).toBe("验证码发送过于频繁，请稍后再试。");
+      });
+
+    await request(app.getHttpServer())
+      .post("/api/auth/login")
+      .send({
+        challengeId: challengeResponse.body.challengeId,
+        code:
+          challengeResponse.body.developmentCode === "000000"
+            ? "000001"
+            : "000000"
+      })
+      .expect(401);
+
     const loginResponse = await request(app.getHttpServer())
       .post("/api/auth/login")
       .send({
-        name: "Session Owner",
-        phone: "13600136000"
+        challengeId: challengeResponse.body.challengeId,
+        code: challengeResponse.body.developmentCode
       })
       .expect(201);
 
     expect(loginResponse.body).toMatchObject({
       member: {
-        name: "Session Owner",
+        name: maxMemberName,
         phone: "13600136000"
       }
     });
     expect(loginResponse.body.sessionToken).toMatch(/^member_/);
+
+    await request(app.getHttpServer())
+      .post("/api/auth/login")
+      .send({
+        challengeId: challengeResponse.body.challengeId,
+        code: challengeResponse.body.developmentCode
+      })
+      .expect(401);
 
     await request(app.getHttpServer()).get("/api/members/me").expect(401);
 
@@ -3311,11 +4054,79 @@ describe("Pet toy shop API", () => {
           ])
         );
       });
+
+    await request(app.getHttpServer())
+      .post("/api/auth/logout")
+      .set("X-Member-Token", loginResponse.body.sessionToken)
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toEqual({ success: true });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", loginResponse.body.sessionToken)
+      .expect(401);
+  });
+
+  it("protects member profile, address, and point routes by session ownership", async () => {
+    const ownerPhone = "13600136021";
+    const ownerSession = await loginAsMember(ownerPhone, "Protected Member");
+    const otherSession = await loginAsMember(
+      "13600136022",
+      "Other Protected Member"
+    );
+    const address = {
+      receiverName: "Protected Member",
+      phone: ownerPhone,
+      province: "Guangdong",
+      city: "Shenzhen",
+      district: "Nanshan",
+      detail: "Session Road 21",
+      isDefault: true
+    };
+
+    await request(app.getHttpServer())
+      .get(`/api/members/${ownerPhone}`)
+      .expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/members/${ownerPhone}`)
+      .set("X-Member-Token", otherSession)
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/members/${ownerPhone}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/members/${ownerPhone}/addresses`)
+      .send(address)
+      .expect(401);
+    await request(app.getHttpServer())
+      .post(`/api/members/${ownerPhone}/addresses`)
+      .set("X-Member-Token", otherSession)
+      .send(address)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post("/api/members/me/addresses")
+      .send(address)
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .post(`/api/members/${ownerPhone}/points/redemptions`)
+      .set("X-Member-Token", otherSession)
+      .send({ rewardKey: "points-coupon-8" })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post("/api/members/me/points/redemptions")
+      .send({ rewardKey: "points-coupon-8" })
+      .expect(401);
   });
 
   it("completes a cloud pet growth task and updates member retention signals", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139000", "Task Owner"))
       .send({
         ownerName: "Task Owner",
         ownerPhone: "13900139000",
@@ -3325,8 +4136,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const taskMemberSession = await loginAsMember("13900139000", "Task Owner");
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", taskMemberSession)
       .expect(201)
       .expect(({ body }) => {
         expect(body.completedTask).toMatchObject({
@@ -3358,7 +4172,7 @@ describe("Pet toy shop API", () => {
           expect.arrayContaining([
             expect.objectContaining({
               type: "daily_diary",
-              title: expect.stringContaining("Daily diary"),
+              title: expect.stringContaining("成长日记"),
               body: expect.stringContaining("WELCOME20")
             })
           ])
@@ -3367,7 +4181,7 @@ describe("Pet toy shop API", () => {
           expect.arrayContaining([
             expect.objectContaining({
               type: "growth_task",
-              title: "Completed Daily care"
+              title: "完成“日常照护”"
             })
           ])
         );
@@ -3375,6 +4189,7 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .get("/api/members/13900139000")
+      .set("X-Member-Token", taskMemberSession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.member.points).toBeGreaterThanOrEqual(25);
@@ -3382,7 +4197,7 @@ describe("Pet toy shop API", () => {
           expect.arrayContaining([
             expect.objectContaining({
               key: "daily-care",
-              title: "Daily care"
+              title: "日常照护"
             })
           ])
         );
@@ -3401,15 +4216,60 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", taskMemberSession)
       .expect(409)
       .expect(({ body }) => {
         expect(body.message).toBe("Growth task already completed today");
       });
   });
 
+  it("requires member auth before completing a cloud pet growth task", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139221", "Auth Guard"))
+      .send({
+        ownerName: "Auth Guard",
+        ownerPhone: "13900139221",
+        name: "Auth Buddy",
+        species: "cat",
+        personality: "Only grows with a valid member session"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+  });
+  it("rejects member-token growth task completion for another member's cloud pet", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139222", "Owner Guard"))
+      .send({
+        ownerName: "Owner Guard",
+        ownerPhone: "13900139222",
+        name: "Guard Buddy",
+        species: "cat",
+        personality: "Needs owner-bound daily care"
+      })
+      .expect(201);
+
+    const otherMemberSession = await loginAsMember("13900139223", "Other Member");
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", otherMemberSession)
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Pet does not belong to current member");
+      });
+  });
   it("returns cloud-pet growth level, progress, and care state", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139111", "Growth Owner"))
       .send({
         ownerName: "Growth Owner",
         ownerPhone: "13900139111",
@@ -3432,8 +4292,11 @@ describe("Pet toy shop API", () => {
         });
       });
 
+    const growthMemberSession = await loginAsMember("13900139111", "Growth Owner");
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", growthMemberSession)
       .expect(201)
       .expect(({ body }) => {
         expect(body.pet.growth).toMatchObject({
@@ -3448,6 +4311,7 @@ describe("Pet toy shop API", () => {
   it("updates a cloud-pet dedicated homepage builder profile", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139991", "Homepage Owner"))
       .send({
         ownerName: "Homepage Owner",
         ownerPhone: "13900139991",
@@ -3457,12 +4321,30 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const homepageMemberSession = await loginAsMember("13900139991", "Homepage Owner");
+
+    const maxHomepageHeadline = "h".repeat(80);
+    const maxHomepageStory = "s".repeat(240);
+
     await request(app.getHttpServer())
       .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .set("X-Member-Token", homepageMemberSession)
+      .send({ headline: "   " })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .set("X-Member-Token", homepageMemberSession)
+      .send({ ownerStory: "   " })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .set("X-Member-Token", homepageMemberSession)
       .send({
         theme: "forest",
-        headline: "Builder Pet's warm little homepage",
-        ownerStory: "Every visit should feel like a fresh growth archive.",
+        headline: `  ${maxHomepageHeadline}  `,
+        ownerStory: `  ${maxHomepageStory}  `,
         showGrowthArchive: false,
         showMallRecommendations: true
       })
@@ -3470,8 +4352,8 @@ describe("Pet toy shop API", () => {
       .expect(({ body }) => {
         expect(body.homepage).toMatchObject({
           theme: "forest",
-          headline: "Builder Pet's warm little homepage",
-          ownerStory: "Every visit should feel like a fresh growth archive.",
+          headline: maxHomepageHeadline,
+          ownerStory: maxHomepageStory,
           showGrowthArchive: false,
           showMallRecommendations: true
         });
@@ -3483,17 +4365,192 @@ describe("Pet toy shop API", () => {
       .expect(({ body }) => {
         expect(body.homepage).toMatchObject({
           theme: "forest",
-          headline: "Builder Pet's warm little homepage",
-          ownerStory: "Every visit should feel like a fresh growth archive.",
+          headline: maxHomepageHeadline,
+          ownerStory: maxHomepageStory,
           showGrowthArchive: false,
           showMallRecommendations: true
         });
       });
   });
 
+  it("requires the owning member session before updating a cloud-pet homepage", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139990", "Homepage Guard"))
+      .send({
+        ownerName: "Homepage Guard",
+        ownerPhone: "13900139990",
+        name: "Guard Homepage Pet",
+        species: "cat",
+        personality: "Only the owner may edit the homepage"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .send({ headline: "Unauthorized edit" })
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+
+    const otherMemberSession = await loginAsMember("13900139989", "Other Homepage Member");
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .set("X-Member-Token", otherMemberSession)
+      .send({ headline: "Wrong owner edit" })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Pet does not belong to current member");
+      });
+  });
+  it("limits owner diary notes per pet each day", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139995", "Diary Limit Owner"))
+      .send({
+        ownerName: "Diary Limit Owner",
+        ownerPhone: "13900139995",
+        name: "Diary Limit Pet",
+        species: "dog",
+        personality: "needs owner note rate limiting"
+      })
+      .expect(201);
+
+    const ownerSession = await loginAsMember("13900139995", "Diary Limit Owner");
+
+    for (let index = 1; index <= 5; index += 1) {
+      await request(app.getHttpServer())
+        .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+        .set("X-Member-Token", ownerSession)
+        .send({ body: `Owner note ${index} for daily limit verification.` })
+        .expect(201);
+    }
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Owner note 6 should be blocked by the daily limit." })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Daily owner diary note limit reached");
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=owner_note`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toHaveLength(5);
+        expect(body.filters).toEqual(
+          expect.arrayContaining([expect.objectContaining({ key: "owner_note", count: 5 })])
+        );
+      });
+
+  });
+  it("lets the owning member update and delete cloud-pet diary notes", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139994", "Diary Note Owner"))
+      .send({
+        ownerName: "Diary Note Owner",
+        ownerPhone: "13900139994",
+        name: "Note Pet",
+        species: "cat",
+        personality: "keeps editable owner notes"
+      })
+      .expect(201);
+
+    const ownerSession = await loginAsMember("13900139994", "Diary Note Owner");
+    const otherSession = await loginAsMember("13900139995", "Other Diary Member");
+    const maxDiaryNoteTitle = "t".repeat(80);
+    const maxDiaryNoteBody = "b".repeat(500);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "   " })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Diary note body is required");
+      });
+
+    const noteResponse = await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", ownerSession)
+      .send({ title: `  ${maxDiaryNoteTitle}  `, body: `  ${maxDiaryNoteBody}  ` })
+      .expect(201);
+    const noteId = noteResponse.body.timeline[0].id;
+
+    expect(noteId).toEqual(expect.any(String));
+    expect(noteResponse.body.timeline[0]).toMatchObject({
+      id: noteId,
+      type: "owner_note",
+      title: maxDiaryNoteTitle,
+      body: maxDiaryNoteBody
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Member-Token", otherSession)
+      .send({ body: "Wrong owner edit." })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "   " })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Diary note body is required");
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "  Owner note after editing.  " })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.timeline[0]).toMatchObject({
+          id: noteId,
+          type: "owner_note",
+          body: "Owner note after editing."
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=owner_note`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({ id: noteId, body: "Owner note after editing." })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Member-Token", otherSession)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.timeline).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: noteId })])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes/${noteId}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(404);
+  });
   it("returns a shareable cloud-pet homepage archive with filters", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139992", "Archive Owner"))
       .send({
         ownerName: "Archive Owner",
         ownerPhone: "13900139992",
@@ -3503,8 +4560,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const archiveMemberSession = await loginAsMember("13900139992", "Archive Owner");
+
     await request(app.getHttpServer())
       .patch(`/api/cloud-pets/${petResponse.body.petNo}/homepage`)
+      .set("X-Member-Token", archiveMemberSession)
       .send({
         theme: "midnight",
         headline: "Archive Pet's growth archive",
@@ -3516,7 +4576,32 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", archiveMemberSession)
       .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .send({ body: "Unauthorized diary note" })
+      .expect(401);
+
+    const otherArchiveSession = await loginAsMember("13900139993", "Other Archive Member");
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", otherArchiveSession)
+      .send({ body: "Wrong owner diary note" })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
+      .set("X-Member-Token", archiveMemberSession)
+      .send({ body: "Owner noticed a calmer care rhythm today." })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.timeline[0]).toMatchObject({
+          type: "owner_note",
+          body: "Owner noticed a calmer care rhythm today."
+        });
+      });
 
     await request(app.getHttpServer())
       .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=growth_task`)
@@ -3526,7 +4611,7 @@ describe("Pet toy shop API", () => {
           petNo: petResponse.body.petNo,
           share: {
             title: "Archive Pet's growth archive",
-            ctaLabel: "Open pet homepage"
+            ctaLabel: "打开宠物主页"
           },
           commerceReward: {
             status: "unlocked",
@@ -3539,9 +4624,10 @@ describe("Pet toy shop API", () => {
         expect(body.share.url).toBe(`/cloud-pets/${petResponse.body.petNo}`);
         expect(body.filters).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ key: "all", count: 3 }),
+            expect.objectContaining({ key: "all", count: 4 }),
             expect.objectContaining({ key: "growth_task", count: 1 }),
-            expect.objectContaining({ key: "daily_diary", count: 1 })
+            expect.objectContaining({ key: "daily_diary", count: 1 }),
+            expect.objectContaining({ key: "owner_note", count: 1 })
           ])
         );
         expect(body.items).toEqual([
@@ -3559,8 +4645,20 @@ describe("Pet toy shop API", () => {
         expect(body.items).toEqual([
           expect.objectContaining({
             type: "daily_diary",
-            title: expect.stringContaining("Daily diary"),
+            title: expect.stringContaining("成长日记"),
             body: expect.stringContaining("WELCOME20")
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive?eventType=owner_note`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            type: "owner_note",
+            body: "Owner noticed a calmer care rhythm today."
           })
         ]);
       });
@@ -3569,6 +4667,7 @@ describe("Pet toy shop API", () => {
   it("records cloud-pet homepage visits back into archive and admin metrics", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139993", "Visit Owner"))
       .send({
         ownerName: "Visit Owner",
         ownerPhone: "13900139993",
@@ -3580,7 +4679,10 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
-      .send({ source: "share_link" })
+      .send({
+        source: "  share_link  ",
+        visitorId: "visitor_202607230001"
+      })
       .expect(201)
       .expect(({ body }) => {
         expect(body).toMatchObject({
@@ -3592,18 +4694,59 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
-      .send({ source: "homepage_refresh" })
+      .send({
+        source: "share_link",
+        visitorId: "visitor_202607230001"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          source: "share_link",
+          visitCount: 1
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({
+        source: "share_link",
+        visitorId: "visitor_202607230002"
+      })
       .expect(201)
       .expect(({ body }) => {
         expect(body.visitCount).toBe(2);
       });
 
     await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({
+        source: "homepage_refresh",
+        visitorId: "visitor_202607230001"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.visitCount).toBe(3);
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({
+        source: "invalid source should be rejected",
+        visitorId: "visitor_202607230001"
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
+      .send({ source: "share_link" })
+      .expect(400);
+
+    await request(app.getHttpServer())
       .get(`/api/cloud-pets/${petResponse.body.petNo}/homepage/archive`)
       .expect(200)
       .expect(({ body }) => {
         expect(body.engagement).toMatchObject({
-          homepageVisitCount: 2
+          homepageVisitCount: 3
         });
       });
 
@@ -3616,7 +4759,7 @@ describe("Pet toy shop API", () => {
           expect.arrayContaining([
             expect.objectContaining({
               petNo: petResponse.body.petNo,
-              homepageVisitCount: 2
+              homepageVisitCount: 3
             })
           ])
         );
@@ -3626,6 +4769,7 @@ describe("Pet toy shop API", () => {
   it("lets admin generate missing daily cloud-pet diaries idempotently", async () => {
     const caredPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139994", "Diary Owner A"))
       .send({
         ownerName: "Diary Owner A",
         ownerPhone: "13900139994",
@@ -3637,6 +4781,7 @@ describe("Pet toy shop API", () => {
 
     const missingPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139995", "Diary Owner B"))
       .send({
         ownerName: "Diary Owner B",
         ownerPhone: "13900139995",
@@ -3646,8 +4791,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const caredMemberSession = await loginAsMember("13900139994", "Diary Owner A");
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${caredPetResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", caredMemberSession)
       .expect(201);
 
     await request(app.getHttpServer())
@@ -3711,7 +4859,7 @@ describe("Pet toy shop API", () => {
               status: "generated",
               event: expect.objectContaining({
                 type: "daily_diary",
-                title: expect.stringContaining("Daily diary")
+                title: expect.stringContaining("成长日记")
               })
             })
           ])
@@ -3781,6 +4929,7 @@ describe("Pet toy shop API", () => {
   it("backfills missing daily cloud-pet diaries with selected and missing-only modes", async () => {
     const selectedPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139984", "Backfill Owner A"))
       .send({
         ownerName: "Backfill Owner A",
         ownerPhone: "13900139984",
@@ -3792,6 +4941,7 @@ describe("Pet toy shop API", () => {
 
     const remainingPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139985", "Backfill Owner B"))
       .send({
         ownerName: "Backfill Owner B",
         ownerPhone: "13900139985",
@@ -3803,6 +4953,7 @@ describe("Pet toy shop API", () => {
 
     const coveredPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900139986", "Backfill Owner C"))
       .send({
         ownerName: "Backfill Owner C",
         ownerPhone: "13900139986",
@@ -3812,8 +4963,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const coveredMemberSession = await loginAsMember("13900139986", "Backfill Owner C");
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${coveredPetResponse.body.petNo}/growth-tasks/daily-care/complete`)
+      .set("X-Member-Token", coveredMemberSession)
       .expect(201);
 
     const ownerSession = await loginAsAdmin("owner");
@@ -3944,9 +5098,105 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("requires the owning member session before creating a community post", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900136770", "Community Guard"))
+      .send({
+        ownerName: "Community Guard",
+        ownerPhone: "13900136770",
+        name: "Guard Community Pet",
+        species: "cat",
+        personality: "Only the owner can post in its voice"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "Anonymous post should fail."
+      })
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+
+    const otherMemberSession = await loginAsMember("13900136771", "Other Community Member");
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", otherMemberSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "Wrong owner post should fail."
+      })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Pet does not belong to current member");
+      });
+  });
+  it("requires member auth before community interactions", async () => {
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13900136772", "Community Auth Owner"))
+      .send({
+        ownerName: "Community Auth Owner",
+        ownerPhone: "13900136772",
+        name: "Community Auth Pet",
+        species: "dog",
+        personality: "keeps interaction permissions honest"
+      })
+      .expect(201);
+
+    const communitySession = await loginAsMember("13900136772", "Community Auth Owner");
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", communitySession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "This post exists so anonymous interactions can be rejected."
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/likes`)
+      .send({})
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .send({ body: "Anonymous comment should fail." })
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/pets/${petResponse.body.petNo}/follows`)
+      .send({})
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .send({ reason: "Anonymous report should fail." })
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Invalid member session");
+      });
+  });
+
   it("creates and lists community posts from a cloud pet", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember("13800138000", "Demo Owner"))
       .send({
         ownerName: "Demo Owner",
         ownerPhone: "13800138000",
@@ -3956,8 +5206,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const demoCommunitySession = await loginAsMember("13800138000", "Demo Owner");
+
     await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", demoCommunitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Demo Owner",
@@ -3973,7 +5226,7 @@ describe("Pet toy shop API", () => {
         });
         expect(body.commerceBridge).toMatchObject({
           ctaHref: "/shop",
-          ctaLabel: "Shop recommended toy",
+          ctaLabel: "选购推荐玩具",
           recommendedProduct: expect.objectContaining({
             slug: "durable-bite-rope",
             petType: "dog"
@@ -4003,7 +5256,7 @@ describe("Pet toy shop API", () => {
               petNo: petResponse.body.petNo,
               commerceBridge: expect.objectContaining({
                 ctaHref: "/shop",
-                ctaLabel: "Shop recommended toy",
+                ctaLabel: "选购推荐玩具",
                 recommendedProduct: expect.objectContaining({
                   slug: "durable-bite-rope",
                   petType: "dog"
@@ -4015,10 +5268,155 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("rejects oversized community comments and report reasons", async () => {
+    const memberPhone = "13600136789";
+    const maxCommunityPostBody = "p".repeat(280);
+    const maxCommunityCommentBody = "c".repeat(280);
+    const maxCommunityReportReason = "r".repeat(160);
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(memberPhone, "Community Limit Owner"))
+      .send({
+        ownerName: "Community Limit Owner",
+        ownerPhone: memberPhone,
+        name: "Community Limit Pet",
+        species: "dog",
+        personality: "keeps community input bounded"
+      })
+      .expect(201);
+
+    const communitySession = await loginAsMember(memberPhone, "Community Limit Owner");
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", communitySession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "p".repeat(281)
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", communitySession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "   "
+      })
+      .expect(400);
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", communitySession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: `  ${maxCommunityPostBody}  `
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.body).toBe(maxCommunityPostBody);
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", communitySession)
+      .send({ body: "c".repeat(281) })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", communitySession)
+      .send({ body: "   " })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", communitySession)
+      .send({ body: `  ${maxCommunityCommentBody}  ` })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.body).toBe(maxCommunityCommentBody);
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", communitySession)
+      .send({ reason: "r".repeat(161) })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", communitySession)
+      .send({ reason: "   " })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", communitySession)
+      .send({ reason: `  ${maxCommunityReportReason}  ` })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.reason).toBe(maxCommunityReportReason);
+      });
+  });
+
+  it("rate limits community writes per member session", async () => {
+    const ownerPhone = "13600136786";
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(ownerPhone, "Rate Limit Owner"))
+      .send({
+        ownerName: "Rate Limit Owner",
+        ownerPhone,
+        name: "Rate Limit Pet",
+        species: "cat",
+        personality: "keeps community traffic within a healthy rhythm"
+      })
+      .expect(201);
+
+    const ownerSession = await loginAsMember(ownerPhone, "Rate Limit Owner");
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A dedicated post for verifying community write limits."
+      })
+      .expect(201);
+
+    for (let index = 0; index < 10; index += 1) {
+      await request(app.getHttpServer())
+        .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+        .set("X-Member-Token", ownerSession)
+        .send({ reason: `Rate limit verification ${index + 1}` })
+        .expect(201);
+    }
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", ownerSession)
+      .send({ reason: "This request should be rate limited" })
+      .expect(429)
+      .expect("Retry-After", /\d+/)
+      .expect(({ body }) => {
+        expect(body.message).toBe("操作过于频繁，请稍后再试。");
+      });
+
+    const otherSession = await loginAsMember("13600136785", "Other Rate Limit Member");
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", otherSession)
+      .send({ reason: "A separate member still has an independent allowance" })
+      .expect(201);
+  });
+
   it("supports community likes, comments, follows, reports, and admin report handling", async () => {
     const memberPhone = "13600136788";
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
+      .set("X-Member-Token", await loginAsMember(memberPhone, "Community Owner"))
       .send({
         ownerName: "Community Owner",
         ownerPhone: memberPhone,
@@ -4028,8 +5426,11 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const communitySession = await loginAsMember(memberPhone, "Community Owner");
+
     const postResponse = await request(app.getHttpServer())
       .post("/api/community/posts")
+      .set("X-Member-Token", communitySession)
       .send({
         petNo: petResponse.body.petNo,
         authorName: "Community Owner",
@@ -4039,6 +5440,22 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/community/posts/${postResponse.body.postNo}/likes`)
+      .set("X-Member-Token", communitySession)
+      .send({
+        memberPhone,
+        authorName: "Community Owner"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          liked: true,
+          likeCount: 1
+        });
+      });
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/likes`)
+      .set("X-Member-Token", communitySession)
       .send({
         memberPhone,
         authorName: "Community Owner"
@@ -4054,6 +5471,7 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", communitySession)
       .send({
         authorName: "Community Owner",
         memberPhone,
@@ -4070,7 +5488,21 @@ describe("Pet toy shop API", () => {
       });
 
     await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            postNo: postResponse.body.postNo,
+            authorName: "Community Owner",
+            body: "This update can settle into real community engagement."
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
       .post(`/api/community/pets/${petResponse.body.petNo}/follows`)
+      .set("X-Member-Token", communitySession)
       .send({
         followerPhone: memberPhone,
         followerName: "Community Owner"
@@ -4081,22 +5513,75 @@ describe("Pet toy shop API", () => {
           petNo: petResponse.body.petNo,
           followerPhone: memberPhone,
           following: true,
+          created: true,
+          followerCount: 1
+        });
+      });
+    await request(app.getHttpServer())
+      .post(`/api/community/pets/${petResponse.body.petNo}/follows`)
+      .set("X-Member-Token", communitySession)
+      .send({
+        followerPhone: memberPhone,
+        followerName: "Community Owner"
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          petNo: petResponse.body.petNo,
+          followerPhone: memberPhone,
+          following: true,
+          created: false,
           followerCount: 1
         });
       });
 
+    await request(app.getHttpServer())
+      .get("/api/community/posts/following")
+      .set("X-Member-Token", communitySession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            postNo: postResponse.body.postNo,
+            petNo: petResponse.body.petNo
+          })
+        ]);
+      });
+
+    const reportReason = "Selected report reason for merchant review.";
+
     const reportResponse = await request(app.getHttpServer())
       .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", communitySession)
       .send({
         reporterName: "Community Owner",
         memberPhone,
-        reason: "婵炴潙顑堥惁顖涚▔閻愵剙袚閺夆晜绋戦崣鍡涘触鎼粹€抽叡濠㈣泛瀚幃濠偯规担琛℃煠"
+        reason: reportReason
       })
       .expect(201);
 
     expect(reportResponse.body).toMatchObject({
       postNo: postResponse.body.postNo,
-      status: "pending_review"
+      status: "pending_review",
+      reason: reportReason,
+      created: true
+    });
+
+    const duplicateReportResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/reports`)
+      .set("X-Member-Token", communitySession)
+      .send({
+        reporterName: "Community Owner",
+        memberPhone,
+        reason: "Repeated report should reuse the pending report."
+      })
+      .expect(201);
+
+    expect(duplicateReportResponse.body).toMatchObject({
+      reportNo: reportResponse.body.reportNo,
+      postNo: postResponse.body.postNo,
+      status: "pending_review",
+      created: false
     });
 
     await request(app.getHttpServer())
@@ -4108,7 +5593,8 @@ describe("Pet toy shop API", () => {
             expect.objectContaining({
               postNo: postResponse.body.postNo,
               likeCount: 1,
-              commentCount: 1
+              commentCount: 1,
+              reportCount: 1
             })
           ])
         );
@@ -4123,10 +5609,33 @@ describe("Pet toy shop API", () => {
           expect.arrayContaining([
             expect.objectContaining({
               reportNo: reportResponse.body.reportNo,
-              status: "pending_review"
+              status: "pending_review",
+              reporterName: "Community Owner",
+              memberPhone,
+              reason: reportReason
             })
           ])
         );
+        const reportsForPost = body.items.filter(
+          (item: { postNo: string }) => item.postNo === postResponse.body.postNo
+        );
+        expect(reportsForPost).toHaveLength(1);
+      });
+
+    await request(app.getHttpServer())
+      .get(
+        `/api/admin/community/reports?status=pending_review&postNo=${postResponse.body.postNo}&memberPhone=${memberPhone}`
+      )
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toHaveLength(1);
+        expect(body.items[0]).toMatchObject({
+          reportNo: reportResponse.body.reportNo,
+          postNo: postResponse.body.postNo,
+          memberPhone,
+          status: "pending_review"
+        });
       });
 
     await request(app.getHttpServer())
@@ -4147,6 +5656,7 @@ describe("Pet toy shop API", () => {
 
     await request(app.getHttpServer())
       .get(`/api/members/${memberPhone}`)
+      .set("X-Member-Token", communitySession)
       .expect(200)
       .expect(({ body }) => {
         expect(body.communityEngagement).toMatchObject({

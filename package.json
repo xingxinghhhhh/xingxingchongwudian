@@ -4,7 +4,7 @@
   "private": true,
   "description": "NestJS backend for a domestic pet toy independent shop.",
   "scripts": {
-    "build": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\tsc.cmd -p tsconfig.build.json",
+    "build": "node scripts/clean-build.mjs && set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\tsc.cmd -p tsconfig.build.json",
     "start": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node dist/main.js",
     "start:dev": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd src/main.ts",
     "api:dev": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd src/main.ts",
@@ -15,16 +15,26 @@
     "prisma:generate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd generate",
     "prisma:validate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd validate",
     "prisma:migrate": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd migrate dev",
-    "prisma:seed": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd prisma/seed.ts"
+    "prisma:migrate:deploy": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\prisma.cmd migrate deploy",
+    "prisma:seed": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd prisma/seed.ts",
+    "smoke:production": "npm run build && npm run web:build && node scripts/production-smoke.mjs",
+    "db:backup:sqlite": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd scripts/sqlite-backup.ts",
+    "db:restore:drill": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd scripts/sqlite-restore-drill.ts",
+    "smoke:sqlite-recovery": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd scripts/sqlite-recovery-smoke.ts",
+    "test:ui": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\playwright.cmd test",
+    "test:ui:headed": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\playwright.cmd test --headed",
+    "api:dev:memory": "set NODE_ENV=test&& set KZT_USE_MEMORY_STORE=true&& set DATABASE_URL=&& set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd src/main.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.19",
     "@nestjs/platform-express": "^11.1.19",
+    "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^6.19.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "helmet": "^8.3.0",
     "lucide-react": "^1.14.0",
     "next": "^16.2.6",
     "prisma": "^6.19.0",
@@ -35,6 +45,7 @@
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.19",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^29.5.14",
@@ -49,6 +60,7 @@
     "typescript": "^5.6.3"
   },
   "overrides": {
-    "postcss": "^8.5.10"
+    "postcss": "^8.5.10",
+    "sharp": "0.35.3"
   }
 }

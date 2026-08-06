@@ -339,7 +339,10 @@ export class ProductsService {
   }
 
   private isDatabaseConfigured() {
-    return Boolean(this.configService.get<string>("DATABASE_URL"));
+    return (
+      this.configService.get<string>("KZT_USE_MEMORY_STORE") !== "true" &&
+      Boolean(this.configService.get<string>("DATABASE_URL"))
+    );
   }
 
   private productInclude() {
@@ -354,14 +357,31 @@ export class ProductsService {
       return starterProducts.filter((product) => product.status === "active");
     }
 
-    const products = await this.prisma.product.findMany({
-      where: { status: "active" },
-      include: this.productInclude(),
-      orderBy: { createdAt: "asc" }
-    });
+    try {
+      const products = await this.prisma.product.findMany({
+        where: { status: "active" },
+        include: this.productInclude(),
+        orderBy: { createdAt: "asc" }
+      });
 
-    return products.map((product) =>
-      mapProductRecordToDetail(product as ProductRecord)
+      return products.map((product) =>
+        mapProductRecordToDetail(product as ProductRecord)
+      );
+    } catch (error) {
+      if (this.isMissingProductTableError(error)) {
+        return starterProducts.filter((product) => product.status === "active");
+      }
+
+      throw error;
+    }
+  }
+
+  private isMissingProductTableError(error: unknown) {
+    return (
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "P2021"
     );
   }
 

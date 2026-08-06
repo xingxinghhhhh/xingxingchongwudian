@@ -1,14 +1,19 @@
 import {
   commentOnCommunityPost,
   createCloudPet,
+  createCloudPetDiaryNote,
+  deleteCloudPetDiaryNote,
   createCommunityPost,
   followCloudPet,
   getCloudPet,
   getCloudPetHomepageArchive,
   getCloudPetRecommendations,
   likeCommunityPost,
+  listCommunityComments,
   listCommunityPosts,
+  listFollowedCommunityPosts,
   reportCommunityPost,
+  updateCloudPetDiaryNote,
   recordCloudPetHomepageVisit,
   updateCloudPetHomepage
 } from "./cloud-pets-api";
@@ -34,6 +39,7 @@ describe("cloud pets api client", () => {
           species: "cat",
           personality: "嘴硬但会偷偷靠近"
         },
+        "member_202607140001",
         fetcher
       )
     ).resolves.toMatchObject({
@@ -51,7 +57,52 @@ describe("cloud pets api client", () => {
           personality: "嘴硬但会偷偷靠近"
         }),
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_202607140001"
+        },
+        method: "POST"
+      }
+    );
+  });
+
+  it("sends the member token when creating a cloud pet from a synced workspace", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        petNo: "VP202605250830000009",
+        ownerName: "Session Owner",
+        ownerPhone: "13800138009"
+      })
+    });
+
+    await createCloudPet(
+      {
+        ownerName: "Session Owner",
+        ownerPhone: "13800138009",
+        name: "Session Pet",
+        species: "dog",
+        personality: "Created from a synced workspace"
+      },
+      "member_202607140009",
+      fetcher
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/cloud-pets",
+      {
+        body: JSON.stringify({
+          ownerName: "Session Owner",
+          ownerPhone: "13800138009",
+          name: "Session Pet",
+          species: "dog",
+          personality: "Created from a synced workspace"
+        }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_202607140009"
+        },
         method: "POST"
       }
     );
@@ -104,6 +155,7 @@ describe("cloud pets api client", () => {
           showGrowthArchive: false,
           showMallRecommendations: true
         },
+        "member_202607140002",
         fetcher
       )
     ).resolves.toMatchObject({
@@ -123,8 +175,111 @@ describe("cloud pets api client", () => {
           showMallRecommendations: true
         }),
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_202607140002"
+        },
         method: "PATCH"
+      }
+    );
+  });
+
+
+  it("saves an owner diary note", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        petNo: "VP202605250830000001",
+        timeline: [
+          {
+            type: "owner_note",
+            title: "Owner note for Archive Pet",
+            body: "Owner noticed a calmer care rhythm today.",
+            createdAt: "2026-06-03T08:00:00.000Z"
+          }
+        ]
+      })
+    });
+
+    await expect(
+      createCloudPetDiaryNote(
+        "VP202605250830000001",
+        { body: "Owner noticed a calmer care rhythm today." },
+        "member_202607140002",
+        fetcher
+      )
+    ).resolves.toMatchObject({
+      timeline: [expect.objectContaining({ type: "owner_note" })]
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/cloud-pets/VP202605250830000001/diary-notes",
+      {
+        body: JSON.stringify({ body: "Owner noticed a calmer care rhythm today." }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_202607140002"
+        },
+        method: "POST"
+      }
+    );
+  });
+
+
+  it("updates and deletes owner diary notes", async () => {
+    const updateFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        petNo: "VP202605250830000001",
+        timeline: [{ id: "note_001", type: "owner_note", body: "Edited note" }]
+      })
+    });
+    const deleteFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        petNo: "VP202605250830000001",
+        timeline: []
+      })
+    });
+
+    await expect(
+      updateCloudPetDiaryNote(
+        "VP202605250830000001",
+        "note_001",
+        { body: "Edited note" },
+        "member_202607140002",
+        updateFetcher
+      )
+    ).resolves.toMatchObject({
+      timeline: [expect.objectContaining({ body: "Edited note" })]
+    });
+    expect(updateFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/cloud-pets/VP202605250830000001/diary-notes/note_001",
+      {
+        body: JSON.stringify({ body: "Edited note" }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_202607140002"
+        },
+        method: "PATCH"
+      }
+    );
+
+    await expect(
+      deleteCloudPetDiaryNote(
+        "VP202605250830000001",
+        "note_001",
+        "member_202607140002",
+        deleteFetcher
+      )
+    ).resolves.toMatchObject({ timeline: [] });
+    expect(deleteFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/cloud-pets/VP202605250830000001/diary-notes/note_001",
+      {
+        cache: "no-store",
+        headers: { "X-Member-Token": "member_202607140002" },
+        method: "DELETE"
       }
     );
   });
@@ -197,7 +352,10 @@ describe("cloud pets api client", () => {
     await expect(
       recordCloudPetHomepageVisit(
         "VP202605250830000001",
-        { source: "share_link" },
+        {
+          source: "share_link",
+          visitorId: "visitor_202607230001"
+        },
         fetcher
       )
     ).resolves.toMatchObject({
@@ -207,7 +365,10 @@ describe("cloud pets api client", () => {
     expect(fetcher).toHaveBeenCalledWith(
       "http://localhost:3000/api/cloud-pets/VP202605250830000001/homepage/visits",
       {
-        body: JSON.stringify({ source: "share_link" }),
+        body: JSON.stringify({
+          source: "share_link",
+          visitorId: "visitor_202607230001"
+        }),
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
         method: "POST"
@@ -244,6 +405,7 @@ describe("cloud pets api client", () => {
           authorName: "Demo Owner",
           body: "今天主动分享玩具。"
         },
+        "member_community_001",
         createFetcher
       )
     ).resolves.toMatchObject({ petName: "年糕糕" });
@@ -256,7 +418,10 @@ describe("cloud pets api client", () => {
           body: "今天主动分享玩具。"
         }),
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_community_001"
+        },
         method: "POST"
       }
     );
@@ -270,6 +435,28 @@ describe("cloud pets api client", () => {
     );
   });
 
+  it("loads followed community posts with member auth", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [{ postNo: "POST_FOLLOWED", petNo: "VP001", body: "Followed post" }]
+      })
+    });
+
+    await expect(
+      listFollowedCommunityPosts("member_following_001", fetcher)
+    ).resolves.toEqual([
+      expect.objectContaining({ postNo: "POST_FOLLOWED" })
+    ]);
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/posts/following",
+      {
+        cache: "no-store",
+        headers: { "X-Member-Token": "member_following_001" }
+      }
+    );
+  });
+
   it("runs community engagement actions", async () => {
     const likeFetcher = jest.fn().mockResolvedValue({
       ok: true,
@@ -279,9 +466,22 @@ describe("cloud pets api client", () => {
       ok: true,
       json: async () => ({ commentNo: "CMT001", status: "visible" })
     });
+    const listCommentsFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          { commentNo: "CMT001", authorName: "Community Owner", body: "Nice post" }
+        ]
+      })
+    });
     const followFetcher = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ petNo: "VP001", following: true, followerCount: 1 })
+      json: async () => ({
+        petNo: "VP001",
+        following: true,
+        created: true,
+        followerCount: 1
+      })
     });
     const reportFetcher = jest.fn().mockResolvedValue({
       ok: true,
@@ -292,12 +492,19 @@ describe("cloud pets api client", () => {
       likeCommunityPost(
         "POST001",
         { memberPhone: "13600136788", authorName: "Community Owner" },
+        "member_community_002",
         likeFetcher
       )
     ).resolves.toMatchObject({ liked: true, likeCount: 1 });
     expect(likeFetcher).toHaveBeenCalledWith(
       "http://localhost:3000/api/community/posts/POST001/likes",
-      expect.objectContaining({ method: "POST" })
+      expect.objectContaining({
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_community_002"
+        },
+        method: "POST"
+      })
     );
 
     await expect(
@@ -308,16 +515,28 @@ describe("cloud pets api client", () => {
           authorName: "Community Owner",
           body: "Nice post"
         },
+        "member_community_003",
         commentFetcher
       )
     ).resolves.toMatchObject({ status: "visible" });
     await expect(
+      listCommunityComments("POST001", listCommentsFetcher)
+    ).resolves.toEqual([
+      expect.objectContaining({ commentNo: "CMT001", body: "Nice post" })
+    ]);
+    expect(listCommentsFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/posts/POST001/comments",
+      { cache: "no-store" }
+    );
+
+    await expect(
       followCloudPet(
         "VP001",
         { followerPhone: "13600136788", followerName: "Community Owner" },
+        "member_community_004",
         followFetcher
       )
-    ).resolves.toMatchObject({ following: true });
+    ).resolves.toMatchObject({ following: true, created: true });
     await expect(
       reportCommunityPost(
         "POST001",
@@ -326,11 +545,11 @@ describe("cloud pets api client", () => {
           reporterName: "Community Owner",
           reason: "Report reason"
         },
+        "member_community_005",
         reportFetcher
       )
     ).resolves.toMatchObject({ status: "pending_review" });
   });
-
   it("loads product recommendations for a cloud pet", async () => {
     const fetcher = jest.fn().mockResolvedValue({
       ok: true,

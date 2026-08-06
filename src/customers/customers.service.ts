@@ -348,39 +348,39 @@ export class CustomersService {
     if (summary.pendingOrderCount > 0 && summary.paidOrderCount === 0) {
       return {
         key: "payment_recovery",
-        title: "Recover pending payment",
-        ctaLabel: "Send payment reminder"
+        title: "挽回待支付订单",
+        ctaLabel: "发送支付提醒"
       };
     }
 
     if (summary.petCount === 0) {
       return {
         key: "create_pet",
-        title: "Invite cloud-pet setup",
-        ctaLabel: "Create cloud pet"
+        title: "邀请创建云养宠",
+        ctaLabel: "创建云养宠"
       };
     }
 
     if (summary.paidOrderCount === 0) {
       return {
         key: "first_order_coupon",
-        title: "Activate first order",
-        ctaLabel: "Push first-order coupon"
+        title: "激活首笔订单",
+        ctaLabel: "推送首单优惠券"
       };
     }
 
     if (summary.homepageVisitCount + summary.communityPostCount === 0) {
       return {
         key: "share_homepage",
-        title: "Build retention touchpoints",
-        ctaLabel: "Promote pet homepage"
+        title: "建立留存触点",
+        ctaLabel: "推广宠物主页"
       };
     }
 
     return {
       key: "vip_bundle",
-      title: "Grow repeat purchase",
-      ctaLabel: "Offer VIP bundle"
+      title: "促进复购",
+      ctaLabel: "提供会员组合权益"
     };
   }
 

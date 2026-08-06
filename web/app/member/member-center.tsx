@@ -9,10 +9,23 @@ import {
   completeGrowthTask,
   createMemberAddress,
   getCurrentMemberProfile,
-  getMemberProfile,
   loginMember,
+  logoutMember,
+  requestMemberVerification,
   redeemMemberPoints
 } from "./member-api";
+import {
+  getLoyaltyRuleCopy,
+  getMemberTierLabel,
+  getOrderStatusLabel,
+  getRecommendationCopy,
+  getRecommendationReasonLabel,
+  getRecommendationTypeLabel,
+  getRedemptionRewardCopy,
+  getReviewStatusLabel
+} from "./member-copy";
+import { getGrowthTaskCopy } from "../cloud-pets/cloud-pet-copy";
+import { getProductTitleLabel } from "../shop/shop-copy";
 
 const defaultPhone = "13800138000";
 
@@ -21,7 +34,9 @@ export function MemberCenter() {
   const [phone, setPhone] = useState(defaultPhone);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [profile, setProfile] = useState<MemberProfile | null>(null);
-  const [status, setStatus] = useState("输入手机号查看会员、宠物、订单和成长任务。");
+  const [status, setStatus] = useState(
+    "登录后查看自己的会员、宠物、订单和成长任务。"
+  );
   const [error, setError] = useState<string | null>(null);
   const [busyTaskKey, setBusyTaskKey] = useState<string | null>(null);
   const [busyRewardKey, setBusyRewardKey] = useState<string | null>(null);
@@ -29,6 +44,11 @@ export function MemberCenter() {
     GrowthTaskCompletion["nextActions"]
   >([]);
   const [isSavingAddress, setIsSavingAddress] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [isRequestingCode, setIsRequestingCode] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
     const queryPhone = new URLSearchParams(window.location.search).get("phone");
@@ -40,54 +60,103 @@ export function MemberCenter() {
     setName(storedName);
     setPhone(storedPhone);
 
-    if (storedSession && !queryPhone) {
+    if (storedSession) {
       setSessionToken(storedSession);
       void loadCurrentProfile(storedSession);
-      return;
     }
-
-    void loadProfile(storedPhone);
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
 
+    if (!challengeId || !verificationCode.trim()) {
+      setError("请先获取并填写短信验证码");
+      return;
+    }
+
+    setIsLoggingIn(true);
+
     try {
-      const login = await loginMember({ name, phone });
+      const login = await loginMember({
+        challengeId,
+        code: verificationCode.trim()
+      });
       setSessionToken(login.sessionToken);
       localStorage.setItem("kzt_member_session", login.sessionToken);
       localStorage.setItem("kzt_member_name", login.member.name);
       localStorage.setItem("kzt_member_phone", login.member.phone);
       await loadCurrentProfile(login.sessionToken);
+      setChallengeId(null);
+      setVerificationCode("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "会员登录失败");
+    } finally {
+      setIsLoggingIn(false);
     }
   }
 
-  async function handleLegacyLookup() {
-    setSessionToken(null);
-    localStorage.removeItem("kzt_member_session");
-    localStorage.setItem("kzt_member_phone", phone);
-    await loadProfile(phone);
-  }
+  async function handleRequestVerification() {
+    const trimmedName = name.trim();
+    const trimmedPhone = phone.trim();
 
-  async function loadProfile(nextPhone = phone) {
+    if (!trimmedName || !/^1[3-9]\d{9}$/.test(trimmedPhone)) {
+      setError("请填写有效的会员称呼和手机号");
+      return;
+    }
+
+    setIsRequestingCode(true);
     setError(null);
 
     try {
-      const nextProfile = await getMemberProfile(nextPhone);
-      setProfile(nextProfile);
-      setName(nextProfile.member.name);
-      setStatus(`${nextProfile.member.name} 的会员闭环已加载。`);
+      const challenge = await requestMemberVerification({
+        name: trimmedName,
+        phone: trimmedPhone
+      });
+      setChallengeId(challenge.challengeId);
+      setVerificationCode(challenge.developmentCode ?? "");
+      setStatus(
+        challenge.developmentCode
+          ? "开发验证码已自动填入，请完成登录。"
+          : "验证码已发送，请在 5 分钟内完成登录。"
+      );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "会员资料加载失败");
+      setChallengeId(null);
+      setError(caught instanceof Error ? caught.message : "验证码发送失败");
+    } finally {
+      setIsRequestingCode(false);
+    }
+  }
+
+  async function handleLogout() {
+    if (!sessionToken || isLoggingOut) {
+      return;
+    }
+
+    setIsLoggingOut(true);
+    setError(null);
+
+    try {
+      await logoutMember(sessionToken);
+      setStatus("已安全退出会员中心。");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? `服务器退出失败，本机会话已清除：${caught.message}`
+          : "服务器退出失败，本机会话已清除"
+      );
+    } finally {
+      setSessionToken(null);
+      setProfile(null);
+      localStorage.removeItem("kzt_member_session");
+      setIsLoggingOut(false);
     }
   }
 
   async function loadCurrentProfile(nextSessionToken = sessionToken) {
     if (!nextSessionToken) {
-      await loadProfile(phone);
+      setProfile(null);
+      setStatus("请先登录会员中心。");
       return;
     }
 
@@ -107,17 +176,18 @@ export function MemberCenter() {
   }
 
   async function handleCompleteTask(petNo: string, taskKey: string) {
+    if (!sessionToken) {
+      setError("请先登录会员后再完成成长任务");
+      return;
+    }
+
     setBusyTaskKey(taskKey);
     setError(null);
 
     try {
-      const result = await completeGrowthTask(petNo, taskKey);
+      const result = await completeGrowthTask(petNo, taskKey, sessionToken);
       setTaskNextActions(result.nextActions ?? []);
-      if (sessionToken) {
-        await loadCurrentProfile(sessionToken);
-      } else {
-        await loadProfile(phone);
-      }
+      await loadCurrentProfile(sessionToken);
       setStatus(
         `${result.pet.name} 完成「${result.completedTask.title}」，亲密度提升到 ${result.pet.stats.intimacy}。`
       );
@@ -127,9 +197,13 @@ export function MemberCenter() {
       setBusyTaskKey(null);
     }
   }
-
   async function handleAddressSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!sessionToken) {
+      setError("请先登录会员后再保存地址");
+      return;
+    }
+
     const formData = new FormData(event.currentTarget);
     const memberPhone = profile?.member.phone ?? phone;
 
@@ -137,7 +211,7 @@ export function MemberCenter() {
     setError(null);
 
     try {
-      await createMemberAddress(memberPhone, {
+      await createMemberAddress(sessionToken, {
         receiverName: String(formData.get("receiverName") ?? ""),
         phone: String(formData.get("phone") ?? memberPhone),
         province: String(formData.get("province") ?? ""),
@@ -147,33 +221,27 @@ export function MemberCenter() {
         isDefault: true
       });
       event.currentTarget.reset();
-      if (sessionToken) {
-        await loadCurrentProfile(sessionToken);
-      } else {
-        await loadProfile(memberPhone);
-      }
-      setStatus("Default shipping address saved for future checkout.");
+      await loadCurrentProfile(sessionToken);
+      setStatus("默认收货地址已保存，后续结算可直接使用。");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Address save failed");
+      setError(caught instanceof Error ? caught.message : "地址保存失败");
     } finally {
       setIsSavingAddress(false);
     }
   }
 
   async function handleRedeemPoints(rewardKey: string) {
-    const memberPhone = profile?.member.phone ?? phone;
+    if (!sessionToken) {
+      setError("请先登录会员后再兑换积分");
+      return;
+    }
 
     setBusyRewardKey(rewardKey);
     setError(null);
 
     try {
-      const redemption = await redeemMemberPoints(memberPhone, { rewardKey });
-
-      if (sessionToken) {
-        await loadCurrentProfile(sessionToken);
-      } else {
-        await loadProfile(memberPhone);
-      }
+      const redemption = await redeemMemberPoints(sessionToken, { rewardKey });
+      await loadCurrentProfile(sessionToken);
 
       setStatus(
         `积分兑换成功：${redemption.couponCode} 已发放，可在商城结算时使用，剩余 ${redemption.remainingPoints} 积分。`
@@ -191,7 +259,7 @@ export function MemberCenter() {
     <div className="member-center">
       <section className="member-card member-card--lookup">
         <div>
-          <p className="section__kicker">Member Retention</p>
+          <p className="section__kicker">会员留存</p>
           <h2>会员长期留存中心</h2>
           <p>用手机号把用户、云养宠、订单、社区动态和推荐商品串成一个可持续运营的档案。</p>
         </div>
@@ -199,7 +267,12 @@ export function MemberCenter() {
           <label>
             会员昵称
             <input
-              onChange={(event) => setName(event.target.value)}
+              data-testid="member-login-name"
+              maxLength={40}
+              onChange={(event) => {
+                setName(event.target.value);
+                setChallengeId(null);
+              }}
               required
               value={name}
             />
@@ -207,25 +280,62 @@ export function MemberCenter() {
           <label>
             会员手机号
             <input
+              data-testid="member-login-phone"
               inputMode="tel"
-              onChange={(event) => setPhone(event.target.value)}
+              maxLength={11}
+              onChange={(event) => {
+                setPhone(event.target.value);
+                setChallengeId(null);
+              }}
+              pattern="1[3-9][0-9]{9}"
               required
               value={phone}
             />
           </label>
-          <button className="member-button" type="submit">
-            登录会员中心
-          </button>
+          <label>
+            短信验证码
+            <input
+              autoComplete="one-time-code"
+              data-testid="member-login-code"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(event) => setVerificationCode(event.target.value)}
+              pattern="[0-9]{6}"
+              required
+              value={verificationCode}
+            />
+          </label>
           <button
-            className="member-button member-button--ghost"
-            onClick={() => void handleLegacyLookup()}
+            className="member-button member-button--secondary"
+            data-testid="member-request-code"
+            disabled={isRequestingCode || !name.trim() || !phone.trim()}
+            onClick={() => void handleRequestVerification()}
             type="button"
           >
-            按手机号查询
+            {isRequestingCode ? "发送中" : "获取验证码"}
+          </button>
+          <button
+            className="member-button"
+            data-testid="member-login-submit"
+            disabled={isLoggingIn || !challengeId || !verificationCode.trim()}
+            type="submit"
+          >
+            {isLoggingIn ? "登录中" : "登录会员中心"}
           </button>
         </form>
         {sessionToken ? (
-          <p className="member-session">当前已登录：{profile?.member.name ?? name}</p>
+          <div className="member-session" data-testid="member-session-status">
+            <span>当前已登录：{profile?.member.name ?? name}</span>
+            <button
+              className="member-button member-button--ghost member-button--small"
+              data-testid="member-logout"
+              disabled={isLoggingOut}
+              onClick={() => void handleLogout()}
+              type="button"
+            >
+              {isLoggingOut ? "退出中..." : "退出登录"}
+            </button>
+          </div>
         ) : null}
         <p className={error ? "member-status member-status--error" : "member-status"}>
           {error ?? status}
@@ -237,7 +347,7 @@ export function MemberCenter() {
           <section className="member-metrics">
             <article>
               <span>会员等级</span>
-              <strong>{profile.member.tier}</strong>
+              <strong>{getMemberTierLabel(profile.member.tier)}</strong>
             </article>
             <article>
               <span>成长积分</span>
@@ -263,8 +373,8 @@ export function MemberCenter() {
 
           <section className="member-card member-card--wide">
             <div>
-              <p className="section__kicker">Address Book</p>
-              <h2>Default Shipping Address</h2>
+              <p className="section__kicker">地址簿</p>
+              <h2>默认收货地址</h2>
               {profile.defaultAddress ? (
                 <p>
                   {profile.defaultAddress.receiverName} /{" "}
@@ -274,63 +384,67 @@ export function MemberCenter() {
                 </p>
               ) : (
                 <p className="member-muted">
-                  No saved address yet. Add one so checkout can reuse member data.
+                  暂无已保存地址。添加后，商城结算可直接复用会员资料。
                 </p>
               )}
             </div>
             <form className="member-lookup" onSubmit={(event) => void handleAddressSubmit(event)}>
               <label>
-                Receiver
+                收货人
                 <input defaultValue={profile.member.name} name="receiverName" required />
               </label>
               <label>
-                Phone
+                手机号
                 <input defaultValue={profile.member.phone} inputMode="tel" name="phone" required />
               </label>
               <label>
-                Province
-                <input defaultValue="Guangdong" name="province" required />
+                省份
+                <input defaultValue="广东省" name="province" required />
               </label>
               <label>
-                City
-                <input defaultValue="Shenzhen" name="city" required />
+                城市
+                <input defaultValue="深圳市" name="city" required />
               </label>
               <label>
-                District
-                <input defaultValue="Nanshan" name="district" required />
+                区县
+                <input defaultValue="南山区" name="district" required />
               </label>
               <label>
-                Detail
-                <input defaultValue="Cloud Pet Avenue 9" name="detail" required />
+                详细地址
+                <input defaultValue="云养宠大道 9 号" name="detail" required />
               </label>
               <button className="member-button" disabled={isSavingAddress} type="submit">
-                {isSavingAddress ? "Saving address" : "Save default address"}
+                {isSavingAddress ? "保存中..." : "保存默认地址"}
               </button>
             </form>
           </section>
 
           <section className="member-card member-card--wide member-loyalty">
             <div>
-              <p className="section__kicker">Points Ledger</p>
+              <p className="section__kicker">积分账本</p>
               <h2>积分与等级账本</h2>
               <p>
                 当前可用 {profile.loyalty.summary.availablePoints} 积分，累计{" "}
                 {profile.loyalty.summary.lifetimePoints} 积分。
                 {profile.loyalty.summary.nextTier
-                  ? `距离 ${profile.loyalty.summary.nextTier} 还差 ${profile.loyalty.summary.pointsToNextTier} 积分。`
+                  ? `距离 ${getMemberTierLabel(profile.loyalty.summary.nextTier)} 还差 ${profile.loyalty.summary.pointsToNextTier} 积分。`
                   : "已经达到最高等级。"}
               </p>
             </div>
             <div className="member-loyalty__rules">
-              {profile.loyalty.rules.map((rule) => (
-                <article key={rule.eventType}>
-                  <strong>{rule.title}</strong>
-                  <span>{rule.description}</span>
-                </article>
-              ))}
+              {profile.loyalty.rules.map((rule) => {
+                const copy = getLoyaltyRuleCopy(rule.eventType);
+                return (
+                  <article key={rule.eventType}>
+                    <strong>{copy.title}</strong>
+                    <span>{copy.description}</span>
+                  </article>
+                );
+              })}
             </div>
             <div className="member-redemptions">
               {profile.loyalty.redemptionRewards.map((reward) => {
+                const copy = getRedemptionRewardCopy(reward);
                 const canRedeem =
                   profile.loyalty.summary.availablePoints >= reward.pointsCost;
                 const isBusy = busyRewardKey === reward.key;
@@ -338,11 +452,11 @@ export function MemberCenter() {
                 return (
                   <article className="member-redemption" key={reward.key}>
                     <div>
-                      <strong>{reward.title}</strong>
-                      <span>{reward.description}</span>
+                      <strong>{copy.title}</strong>
+                      <span>{copy.description}</span>
                       <code className="member-coupon-code">
-                        {reward.couponCode} · {reward.pointsCost} points ·{" "}
-                        {formatCents(reward.discountCents)} off
+                        {reward.couponCode} · {reward.pointsCost} 积分 ·{" "}
+                        优惠 {formatCents(reward.discountCents)}
                       </code>
                     </div>
                     <button
@@ -388,7 +502,7 @@ export function MemberCenter() {
 
           <section className="member-card member-card--wide member-activity">
             <div>
-              <p className="section__kicker">Retention Calendar</p>
+              <p className="section__kicker">留存日历</p>
               <h2>成长任务连续记录</h2>
               <p>
                 连续 {profile.taskActivity.currentStreakDays} 天活跃，距离{" "}
@@ -430,12 +544,12 @@ export function MemberCenter() {
 
           <section className="member-card member-card--wide member-commerce">
             <div>
-              <p className="section__kicker">Member Commerce</p>
+              <p className="section__kicker">会员消费</p>
               <h2>会员权益与复购计划</h2>
               <p>
-                当前 {profile.commercePlan.tierProgress.currentTier} 等级，
+                当前 {getMemberTierLabel(profile.commercePlan.tierProgress.currentTier)}，
                 {profile.commercePlan.tierProgress.nextTier
-                  ? `距离 ${profile.commercePlan.tierProgress.nextTier} 还差 ${profile.commercePlan.tierProgress.pointsToNextTier} 积分。`
+                  ? `距离 ${getMemberTierLabel(profile.commercePlan.tierProgress.nextTier)} 还差 ${profile.commercePlan.tierProgress.pointsToNextTier} 积分。`
                   : "已经达到最高等级。"}
               </p>
             </div>
@@ -483,25 +597,27 @@ export function MemberCenter() {
 
           <section className="member-card member-card--wide member-commerce">
             <div>
-              <p className="section__kicker">Personalization</p>
+              <p className="section__kicker">个性化推荐</p>
               <h2>千宠千面推荐</h2>
               <p>
                 已综合 {profile.personalizationSummary.petCount} 只云养宠、{" "}
                 {profile.personalizationSummary.orderCount} 笔订单、{" "}
                 {profile.personalizationSummary.communitySignalCount} 个社区信号和{" "}
-                {profile.personalizationSummary.cmsSignalCount} 个 CMS 活动生成推荐。
+                {profile.personalizationSummary.cmsSignalCount} 个内容活动生成推荐。
               </p>
             </div>
             <div className="member-commerce__grid">
-              {profile.personalizedRecommendations.map((recommendation) => (
+              {profile.personalizedRecommendations.map((recommendation) => {
+                const copy = getRecommendationCopy(recommendation, profile.growthTasks);
+                return (
                 <article className="member-benefit member-benefit--unlocked" key={`${recommendation.type}-${recommendation.targetId}`}>
-                  <span>{recommendation.type} / score {recommendation.score}</span>
-                  <strong>{recommendation.title}</strong>
-                  <p>{recommendation.description}</p>
+                  <span>{getRecommendationTypeLabel(recommendation.type)} / 评分 {recommendation.score}</span>
+                  <strong>{copy.title}</strong>
+                  <p>{copy.description}</p>
                   <div className="tag-row">
                     {recommendation.reasonCodes.map((reasonCode) => (
                       <span className="tag" key={reasonCode}>
-                        {reasonCode}
+                        {getRecommendationReasonLabel(reasonCode)}
                       </span>
                     ))}
                   </div>
@@ -509,13 +625,14 @@ export function MemberCenter() {
                     {recommendation.ctaLabel}
                   </Link>
                 </article>
-              ))}
+                );
+              })}
             </div>
           </section>
 
           <section className="member-card member-card--wide">
             <div>
-              <p className="section__kicker">Notification Center</p>
+              <p className="section__kicker">提醒中心</p>
               <h2>会员提醒中心</h2>
               <p>订单、物流、成长任务、优惠券和评价邀请会沉淀在这里，方便商家做复访运营。</p>
             </div>
@@ -538,7 +655,7 @@ export function MemberCenter() {
 
           <section className="member-grid">
             <article className="member-card">
-              <p className="section__kicker">Pets</p>
+              <p className="section__kicker">宠物</p>
               <h2>宠物成长档案</h2>
               <div className="member-list">
                 {profile.pets.map((pet) => (
@@ -560,14 +677,16 @@ export function MemberCenter() {
             </article>
 
             <article className="member-card">
-              <p className="section__kicker">Growth Tasks</p>
+              <p className="section__kicker">成长任务</p>
               <h2>云养宠成长任务</h2>
               <div className="member-list">
-                {profile.growthTasks.map((task) => (
+                {profile.growthTasks.map((task) => {
+                  const copy = getGrowthTaskCopy(task);
+                  return (
                   <div className="member-task" key={task.key}>
                     <div>
-                      <strong>{task.title}</strong>
-                      <p>{task.description}</p>
+                      <strong>{copy.title}</strong>
+                      <p>{copy.description}</p>
                       <span>+{task.points} 积分 · 亲密 +{task.rewards.intimacy}</span>
                     </div>
                     <button
@@ -583,7 +702,8 @@ export function MemberCenter() {
                       {busyTaskKey === task.key ? "完成中" : "完成任务"}
                     </button>
                   </div>
-                ))}
+                  );
+                })}
                 {taskNextActions.length > 0 ? (
                   <div className="member-next-actions">
                     {taskNextActions.map((action) => (
@@ -597,13 +717,13 @@ export function MemberCenter() {
             </article>
 
             <article className="member-card">
-              <p className="section__kicker">Orders</p>
+              <p className="section__kicker">订单</p>
               <h2>订单与消费</h2>
               <div className="member-list">
                 {profile.orders.map((order) => (
                   <div className="member-row" key={order.orderNo}>
                     <strong>{order.orderNo}</strong>
-                    <span>{order.status} · {formatCents(order.totalCents)}</span>
+                    <span>{getOrderStatusLabel(order.status)} · {formatCents(order.totalCents)}</span>
                   </div>
                 ))}
                 {profile.orders.length === 0 ? (
@@ -615,13 +735,13 @@ export function MemberCenter() {
             </article>
 
             <article className="member-card">
-              <p className="section__kicker">Reviews</p>
+              <p className="section__kicker">评价</p>
               <h2>评价记录</h2>
               <div className="member-list">
                 {profile.reviews.map((review) => (
                   <div className="member-row" key={review.reviewNo}>
                     <strong>{review.rating} 星 / {review.productSlug}</strong>
-                    <span>{review.status} · {review.body}</span>
+                    <span>{getReviewStatusLabel(review.status)} · {review.body}</span>
                   </div>
                 ))}
                 {profile.reviews.length === 0 ? (
@@ -633,12 +753,12 @@ export function MemberCenter() {
             </article>
 
             <article className="member-card">
-              <p className="section__kicker">Recommendations</p>
+              <p className="section__kicker">推荐</p>
               <h2>个性化商城推荐</h2>
               <div className="member-list">
                 {profile.recommendations.map((product) => (
                   <Link className="member-row" href="/shop" key={product.slug}>
-                    <strong>{product.title}</strong>
+                    <strong>{getProductTitleLabel(product.title)}</strong>
                     <span>{product.reason}</span>
                   </Link>
                 ))}
@@ -649,7 +769,7 @@ export function MemberCenter() {
             </article>
 
             <article className="member-card member-card--wide">
-              <p className="section__kicker">Community</p>
+              <p className="section__kicker">社区</p>
               <h2>社区互动记录</h2>
               <div className="member-list">
                 {profile.communityPosts.map((post) => (

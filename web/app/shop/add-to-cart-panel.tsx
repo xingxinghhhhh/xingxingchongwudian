@@ -2,7 +2,6 @@
 
 import { ShoppingCart } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { loginMember } from "../member/member-api";
 import {
   cancelOrder,
   CartResponse,
@@ -10,7 +9,6 @@ import {
   MemberCancelReason,
   OrderPaymentAttemptResponse,
   OrderResponse,
-  PaymentFailureCode,
   PaymentIntentResponse,
   PaymentProvider,
   ProductReviewsResponse,
@@ -26,6 +24,18 @@ import {
   getPaymentIntent,
   listProductReviews
 } from "./shop-api";
+import {
+  getPaymentProviderLabel,
+  getPaymentStatusLabel,
+  getMemberCancelReasonLabel,
+  getPaymentFailureLabel,
+  getPetTypeLabel,
+  getProductDescriptionLabel,
+  getProductTagLabel,
+  getProductTitleLabel,
+  getToyTypeLabel,
+  listMemberCancelReasonLabels
+} from "./shop-copy";
 interface AddToCartPanelProps {
   products: ShopProductDetail[];
 }
@@ -33,47 +43,20 @@ interface AddToCartPanelProps {
 const defaultCheckoutForm: CheckoutCartInput = {
   couponCode: "WELCOME20",
   customer: {
-    name: "Demo Customer",
+    name: "会员伙伴",
     phone: "13800138000"
   },
   address: {
-    receiverName: "Demo Customer",
+    receiverName: "会员伙伴",
     phone: "13800138000",
-    province: "Guangdong",
-    city: "Shenzhen",
-    district: "Nanshan",
-    detail: "Science Park 1"
+    province: "广东省",
+    city: "深圳市",
+    district: "南山区",
+    detail: "云养宠街 1 号"
   }
 };
 
 const defaultCancelReason: MemberCancelReason = "ORDER_CREATED_BY_MISTAKE";
-
-const cancelReasonLabels: Record<MemberCancelReason, string> = {
-  ORDER_CREATED_BY_MISTAKE: "Created by mistake",
-  CHANGED_MIND: "Changed my mind",
-  WRONG_PRODUCT: "Selected the wrong product",
-  WRONG_ADDRESS: "Shipping address is wrong",
-  FOUND_BETTER_OPTION: "Found a better option",
-  OTHER: "Other"
-};
-const paymentFailureLabels: Record<PaymentFailureCode, string> = {
-  INSUFFICIENT_BALANCE: "Insufficient balance. Please choose another payment method or try again.",
-  PAYMENT_DECLINED: "The payment was declined. Please retry the payment.",
-  PROVIDER_UNAVAILABLE: "The payment service is temporarily unavailable. Please try again shortly.",
-  USER_CANCELLED_PAYMENT: "This payment attempt was cancelled. The order can still be paid.",
-  UNKNOWN_PROVIDER_ERROR: "The payment failed. Please create a new payment attempt."
-};
-
-function formatPaymentFailure(
-  failureCode?: PaymentFailureCode,
-  fallback?: string
-) {
-  if (failureCode && paymentFailureLabels[failureCode]) {
-    return paymentFailureLabels[failureCode];
-  }
-
-  return fallback ?? "The payment failed. Please create a new payment attempt.";
-}
 
 export function AddToCartPanel({ products }: AddToCartPanelProps) {
   const [cart, setCart] = useState<CartResponse | null>(null);
@@ -94,7 +77,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
   const [cancelNote, setCancelNote] = useState("");
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const [message, setMessage] = useState("Pick a product to start checkout.");
+  const [message, setMessage] = useState("选择商品后开始结算。");
   const [error, setError] = useState<string | null>(null);
   const [checkoutForm, setCheckoutForm] =
     useState<CheckoutCartInput>(defaultCheckoutForm);
@@ -169,12 +152,12 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
           nextOrder.closeReason === "PAYMENT_TIMEOUT"
         ) {
           setMessage(
-            `Order ${nextOrder.orderNo} payment expired and was closed. Start a new order to continue checkout.`
+            `订单 ${nextOrder.orderNo} 的支付已过期，库存已释放。`
           );
         }
       } catch {
         if (active) {
-          setError("Failed to refresh the expired payment state.");
+          setError("刷新过期支付状态失败。");
         }
       } finally {
         if (active) {
@@ -202,14 +185,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
       return storedSession;
     }
 
-    const login = await loginMember({
-      name: checkoutForm.customer.name,
-      phone: checkoutForm.customer.phone
-    });
-    localStorage.setItem("kzt_member_session", login.sessionToken);
-    localStorage.setItem("kzt_member_name", login.member.name);
-    localStorage.setItem("kzt_member_phone", login.member.phone);
-    return login.sessionToken;
+    throw new Error("请先前往会员中心完成短信验证后再支付");
   }
 
   async function refreshPaymentAttempts(orderNo: string, sessionToken: string) {
@@ -221,7 +197,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
     const variant = product.variants.find((item) => item.isAvailable);
 
     if (!variant) {
-      setError("This product is currently out of stock.");
+      setError("该商品当前缺货。");
       return;
     }
 
@@ -259,9 +235,9 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
       setCart(nextCart);
       setOrder(null);
       setPayment(null);
-      setMessage(`${product.title} added to cart.`);
+      setMessage(`${getProductTitleLabel(product.title)} 已加入购物车。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to add item.");
+      setError(caught instanceof Error ? caught.message : "加入购物车失败。");
     } finally {
       setBusySku(null);
     }
@@ -271,7 +247,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
     event.preventDefault();
 
     if (!cart || cart.items.length === 0) {
-      setError("Add at least one item before checkout.");
+      setError("请先加入至少一件商品再结算。");
       return;
     }
 
@@ -288,9 +264,9 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
         subtotalCents: 0
       });
       localStorage.removeItem("kzt_cart_id");
-      setMessage(`Order ${nextOrder.orderNo} created. Choose a payment method.`);
+      setMessage(`订单 ${nextOrder.orderNo} 已创建，请选择支付方式。`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Checkout failed.");
+      setError(caught instanceof Error ? caught.message : "结算失败。");
     } finally {
       setIsCheckingOut(false);
     }
@@ -298,7 +274,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
 
   async function handleCreatePayment() {
     if (!order) {
-      setError("Create an order before paying.");
+      setError("请先创建订单再支付。");
       return;
     }
 
@@ -316,11 +292,11 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
       setPayment(nextPayment);
       setMessage(
         nextPayment.attemptNo > 1
-          ? `Payment attempt ${nextPayment.attemptNo} is ready.`
-          : `${paymentProvider === "wechat" ? "WeChat" : "Alipay"} payment intent ready.`
+          ? `第 ${nextPayment.attemptNo} 次支付尝试已创建。`
+          : `${paymentProvider === "wechat" ? "微信" : "支付宝"} 支付单已创建。`
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to create payment intent.");
+      setError(caught instanceof Error ? caught.message : "创建支付单失败。");
     } finally {
       setIsPaying(false);
     }
@@ -328,7 +304,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
 
   async function handleConfirmPayment(result: "success" | "failed") {
     if (!payment) {
-      setError("Create a payment intent first.");
+      setError("请先创建支付单。");
       return;
     }
 
@@ -352,13 +328,13 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
       setPaymentAttempts(nextAttempts.attempts);
       setMessage(
         result === "success"
-          ? `Order ${nextOrder.orderNo} payment confirmed.`
+          ? `订单 ${nextOrder.orderNo} 支付成功。`
           : nextPayment.status === "expired"
-            ? `Order ${nextOrder.orderNo} payment expired. Please place a new order.`
-            : formatPaymentFailure(nextPayment.failureCode, nextPayment.failureMessage)
+            ? `订单 ${nextOrder.orderNo} 的支付已过期。`
+            : getPaymentFailureLabel(nextPayment.failureCode, nextPayment.failureMessage)
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to confirm payment.");
+      setError(caught instanceof Error ? caught.message : "支付确认失败。");
     } finally {
       setIsPaying(false);
     }
@@ -366,7 +342,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
 
   async function handleCancelOrder() {
     if (!order) {
-      setError("Create an order before cancelling it.");
+      setError("请先创建订单再取消。");
       return;
     }
 
@@ -393,11 +369,11 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
       setPaymentAttempts(nextAttempts.attempts);
       setMessage(
         cancelResult.inventoryReleased
-          ? `Order ${order.orderNo} cancelled and inventory released.`
-          : `Order ${order.orderNo} cancelled.`
+          ? `订单 ${order.orderNo} 已取消，库存已释放。`
+          : `订单 ${order.orderNo} 已取消。`
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to cancel order.");
+      setError(caught instanceof Error ? caught.message : "取消订单失败。");
     } finally {
       setIsCancellingOrder(false);
     }
@@ -410,7 +386,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
     setCancelNote("");
     setCancelReason(defaultCancelReason);
     setError(null);
-    setMessage("Start a new order by adding items to the cart again.");
+    setMessage("重新加入商品即可开启新订单。");
   }
   async function handleReviewSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -444,10 +420,10 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
         }));
       }
 
-      setMessage("Review submitted. It will appear after moderation.");
+      setMessage("评价已提交，审核通过后会公开展示。");
       event.currentTarget.reset();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Review submission failed.");
+      setError(caught instanceof Error ? caught.message : "评价提交失败。");
     } finally {
       setIsSubmittingReview(false);
     }
@@ -495,7 +471,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
 
   return (
     <div className="shop-grid">
-      <section className="shop-products" aria-label="Product list">
+      <section className="shop-products" aria-label="商品列表">
         {products.map((product) => {
           const variant = product.variants.find((item) => item.isAvailable);
           const isBusy = variant?.skuCode === busySku;
@@ -517,20 +493,20 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
               </div>
               <div className="shop-product__body">
                 <p className="shop-product__type">
-                  {product.petType} / {product.toyType}
+                  {getPetTypeLabel(product.petType)} / {getToyTypeLabel(product.toyType)}
                 </p>
                 {(product.tags ?? []).length > 0 ? (
-                  <div className="shop-product__tags" aria-label="Product tags">
+                  <div className="shop-product__tags" aria-label="商品标签">
                     {product.tags.slice(0, 4).map((tag) => (
-                      <span key={tag}>{tag}</span>
+                      <span key={tag}>{getProductTagLabel(tag)}</span>
                     ))}
                   </div>
                 ) : null}
-                <h2>{product.title}</h2>
-                <p>{product.description}</p>
+                <h2>{getProductTitleLabel(product.title)}</h2>
+                <p>{getProductDescriptionLabel(product.description)}</p>
                 <div className="shop-product__meta">
                   <strong>{formatCents(product.priceCents)}</strong>
-                  <span>{variant ? `Stock ${variant.stock}` : "Out of stock"}</span>
+                  <span>{variant ? `库存 ${variant.stock}` : "暂无可售规格"}</span>
                 </div>
                 <button
                   className="shop-product__button"
@@ -540,7 +516,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                   type="button"
                 >
                   <ShoppingCart size={16} />
-                  {isBusy ? "Adding..." : "Add to cart"}
+                  {isBusy ? "加入中..." : "加入购物车"}
                 </button>
               </div>
             </article>
@@ -550,28 +526,28 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
 
       <aside className="shop-cart" aria-live="polite">
         <div>
-          <p className="shop-cart__eyebrow">Cart</p>
-          <h2>Checkout</h2>
+          <p className="shop-cart__eyebrow">购物车</p>
+          <h2>结算</h2>
         </div>
         <p className={error ? "shop-cart__error" : "shop-cart__message"}>
           {error ?? message}
         </p>
         {cart ? (
           <div className="shop-cart__summary">
-            <span>{cart.items.length} items</span>
+            <span>{cart.items.length} 件商品</span>
             <strong>{formatCents(cart.subtotalCents)}</strong>
           </div>
         ) : (
           <div className="shop-cart__summary shop-cart__summary--empty">
-            <span>No items yet</span>
+            <span>购物车为空</span>
             <strong>{formatCents(0)}</strong>
           </div>
         )}
 
         <form className="shop-checkout" onSubmit={(event) => void handleCheckout(event)}>
-          <h3>Shipping details</h3>
+          <h3>收货与优惠</h3>
           <label>
-            Coupon code
+            优惠券码
             <input
               onChange={(event) => updateCouponCode(event.target.value)}
               placeholder="WELCOME20"
@@ -579,7 +555,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
             />
           </label>
           <label>
-            Customer name
+            客户姓名
             <input
               onChange={(event) => updateCustomer("name", event.target.value)}
               required
@@ -587,7 +563,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
             />
           </label>
           <label>
-            Customer phone
+            客户手机号
             <input
               inputMode="tel"
               onChange={(event) => {
@@ -599,7 +575,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
             />
           </label>
           <label>
-            Receiver name
+            收货人
             <input
               onChange={(event) => updateAddress("receiverName", event.target.value)}
               required
@@ -608,7 +584,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
           </label>
           <div className="shop-checkout__region">
             <label>
-              Province
+              省份
               <input
                 onChange={(event) => updateAddress("province", event.target.value)}
                 required
@@ -616,7 +592,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
               />
             </label>
             <label>
-              City
+              城市
               <input
                 onChange={(event) => updateAddress("city", event.target.value)}
                 required
@@ -624,7 +600,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
               />
             </label>
             <label>
-              District
+              区县
               <input
                 onChange={(event) => updateAddress("district", event.target.value)}
                 required
@@ -633,7 +609,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
             </label>
           </div>
           <label>
-            Street address
+            详细地址
             <textarea
               onChange={(event) => updateAddress("detail", event.target.value)}
               required
@@ -646,24 +622,24 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
             disabled={!cart || cart.items.length === 0 || isCheckingOut}
             type="submit"
           >
-            {isCheckingOut ? "Submitting..." : "Submit order"}
+            {isCheckingOut ? "结算中..." : "提交订单"}
           </button>
         </form>
 
         {order ? (
           <section className="shop-payment">
-            <h3>Order payment</h3>
+            <h3>模拟支付</h3>
             <p>
-              {order.orderNo} / {order.status}{order.closeReason ? ` / ${order.closeReason}` : ""}{order.memberCancelReason ? ` / ${cancelReasonLabels[order.memberCancelReason as MemberCancelReason] ?? order.memberCancelReason}` : ""} / {formatCents(order.totalCents)}
+              {order.orderNo} / {getPaymentStatusLabel(order.status)}{order.closeReason ? ` / ${order.closeReason}` : ""}{order.memberCancelReason ? ` / ${getMemberCancelReasonLabel(order.memberCancelReason)}` : ""} / {formatCents(order.totalCents)}
             </p>
             {order.memberDiscountCents && order.memberDiscountCents > 0 ? (
               <p>
-                Member price {order.memberTier}: saved {formatCents(order.memberDiscountCents)}
+                会员价 {order.memberTier}：已节省 {formatCents(order.memberDiscountCents)}
               </p>
             ) : null}
             {order.discountCents && order.discountCents > 0 ? (
               <p>
-                Coupon {order.couponCode} saved {formatCents(order.discountCents)} from {formatCents(order.subtotalCents ?? order.totalCents)}.
+                优惠券 {order.couponCode} 已优惠 {formatCents(order.discountCents)}，原小计 {formatCents(order.subtotalCents ?? order.totalCents)}。
               </p>
             ) : null}
             <div className="shop-payment__providers">
@@ -673,7 +649,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                   onChange={() => setPaymentProvider("wechat")}
                   type="radio"
                 />
-                WeChat
+                微信
               </label>
               <label>
                 <input
@@ -681,7 +657,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                   onChange={() => setPaymentProvider("alipay")}
                   type="radio"
                 />
-                Alipay
+                支付宝
               </label>
             </div>
             <button
@@ -690,28 +666,28 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
               onClick={() => void handleCreatePayment()}
               type="button"
             >
-              {canRetryPayment ? "Create a new payment attempt" : payment ? "Use current payment attempt" : "Create payment intent"}
+              {canRetryPayment ? "重新创建支付单" : payment ? "刷新支付单" : "创建支付单"}
             </button>
             {payment ? (
               <>
                 <p>
-                  Payment intent {payment.id} / attempt {payment.attemptNo} / {payment.status} / {formatCents(payment.amount)}
+                  支付单 {payment.id} / 第 {payment.attemptNo} 次 / {getPaymentStatusLabel(payment.status)} / {formatCents(payment.amount)}
                 </p>
                 <p>
                   {payment.status === "failed"
-                    ? formatPaymentFailure(payment.failureCode, payment.failureMessage)
+                    ? getPaymentFailureLabel(payment.failureCode, payment.failureMessage)
                     : payment.status === "cancelled"
-                      ? "This payment intent was cancelled."
+                      ? "支付已取消"
                       : payment.expiresAt
                         ? isPaymentExpired
                           ? isRefreshingExpiredPayment
-                            ? "Refreshing payment status..."
-                            : "Payment expired. Refreshing the order status..."
-                          : `Pay before ${new Date(payment.expiresAt).toLocaleString()} (${paymentRemainingSeconds}s left)`
-                        : "Payment deadline not set"}
+                            ? "正在刷新过期状态..."
+                            : "支付已过期，正在同步订单状态..."
+                          : `将于 ${new Date(payment.expiresAt).toLocaleString()} 过期，剩余 ${paymentRemainingSeconds} 秒`
+                        : "等待支付确认"}
                 </p>
                 {payment.previousPaymentIntentId ? (
-                  <p>Previous attempt {payment.previousPaymentIntentId}</p>
+                  <p>上一次支付尝试 {payment.previousPaymentIntentId}</p>
                 ) : null}
                 <div className="shop-payment__providers">
                   <button
@@ -720,7 +696,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                     onClick={() => void handleConfirmPayment("success")}
                     type="button"
                   >
-                    {payment.status === "paid" ? "Payment complete" : "Mock success"}
+                    {payment.status === "paid" ? "已支付" : "模拟支付成功"}
                   </button>
                   <button
                     className="shop-product__button shop-product__button--secondary"
@@ -728,7 +704,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                     onClick={() => void handleConfirmPayment("failed")}
                     type="button"
                   >
-                    Mock failure
+                    模拟支付失败
                   </button>
                 </div>
                 {canRetryPayment ? (
@@ -738,19 +714,19 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                     onClick={() => void handleCreatePayment()}
                     type="button"
                   >
-                    {isPaying ? "Preparing retry..." : "Retry payment"}
+                    {isPaying ? "重新创建中..." : "重试支付"}
                   </button>
                 ) : null}
               </>
             ) : null}
             {paymentAttempts.length > 0 ? (
               <div className="shop-checkout">
-                <h3>Payment attempts</h3>
+                <h3>支付尝试记录</h3>
                 {paymentAttempts.map((attempt) => (
                   <p key={attempt.paymentIntentId}>
-                    Attempt {attempt.attemptNo}: {attempt.provider} / {attempt.status}
+                    第 {attempt.attemptNo} 次：{getPaymentProviderLabel(attempt.provider)} / {getPaymentStatusLabel(attempt.status)}
                     {attempt.failureCode
-                      ? ` / ${formatPaymentFailure(attempt.failureCode, attempt.failureMessage)}`
+                      ? ` / ${getPaymentFailureLabel(attempt.failureCode, attempt.failureMessage)}`
                       : ""}
                   </p>
                 ))}
@@ -758,26 +734,26 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
             ) : null}
             {canRestartAfterTimeout ? (
               <div className="shop-checkout">
-                <h3>Payment timeout</h3>
-                <p>This unpaid order was closed after the payment window ended.</p>
+                <h3>支付超时</h3>
+                <p>订单已关闭，库存已释放，可重新下单。</p>
                 <button
                   className="shop-product__button shop-product__button--secondary"
                   onClick={handleRestartCheckoutFlow}
                   type="button"
                 >
-                  Start a new order
+                  重新下单
                 </button>
               </div>
             ) : null}
             <div className="shop-checkout">
-              <h3>Order cancellation</h3>
+              <h3>取消订单</h3>
               <label>
-                Cancellation reason
+                取消原因
                 <select
                   onChange={(event) => setCancelReason(event.target.value as MemberCancelReason)}
                   value={cancelReason}
                 >
-                  {Object.entries(cancelReasonLabels).map(([value, label]) => (
+                  {listMemberCancelReasonLabels().map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
                     </option>
@@ -785,10 +761,10 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                 </select>
               </label>
               <label>
-                Note
+                备注
                 <textarea
                   onChange={(event) => setCancelNote(event.target.value)}
-                  placeholder="Optional note"
+                  placeholder="可填写补充说明"
                   rows={2}
                   value={cancelNote}
                 />
@@ -799,21 +775,21 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                 onClick={() => void handleCancelOrder()}
                 type="button"
               >
-                {isCancellingOrder ? "Cancelling..." : "Cancel order"}
+                {isCancellingOrder ? "取消中..." : "取消订单"}
               </button>
             </div>
             <form className="shop-checkout" onSubmit={(event) => void handleReviewSubmit(event)}>
-              <h3>Submit a product review</h3>
+              <h3>订单评价</h3>
               <label>
-                Order number
+                订单号
                 <input defaultValue={order.orderNo} name="orderNo" required />
               </label>
               <label>
-                SKU
+                商品规格编号
                 <input defaultValue={order.items[0]?.skuCode ?? ""} name="skuCode" required />
               </label>
               <label>
-                Rating
+                评分
                 <select defaultValue="5" name="rating">
                   <option value="5">5</option>
                   <option value="4">4</option>
@@ -823,9 +799,9 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                 </select>
               </label>
               <label>
-                Review body
+                评价内容
                 <textarea
-                  defaultValue="Great quality and still intact after long play."
+                  defaultValue="这件玩具很适合我的宠物。"
                   name="body"
                   required
                   rows={3}
@@ -836,7 +812,7 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
                 disabled={isSubmittingReview}
                 type="submit"
               >
-                {isSubmittingReview ? "Submitting..." : "Submit review"}
+                {isSubmittingReview ? "提交中..." : "提交评价"}
               </button>
             </form>
           </section>
@@ -845,6 +821,3 @@ export function AddToCartPanel({ products }: AddToCartPanelProps) {
     </div>
   );
 }
-
-
-

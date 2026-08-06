@@ -373,6 +373,9 @@ export class MarketingService {
   }
 
   private isDatabaseConfigured() {
-    return Boolean(this.configService.get<string>("DATABASE_URL"));
+    return (
+      this.configService.get<string>("KZT_USE_MEMORY_STORE") !== "true" &&
+      Boolean(this.configService.get<string>("DATABASE_URL"))
+    );
   }
 }

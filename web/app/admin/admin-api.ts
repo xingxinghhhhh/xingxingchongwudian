@@ -5,6 +5,7 @@ import type {
   UpdateCmsBlockStatusInput
 } from "../cms-content-api";
 import type {
+  CloudPetHomepageArchive,
   CloudPetProfile,
   CommunityPost,
   CommunityReport
@@ -41,6 +42,13 @@ export interface AdminDashboardMetrics {
   operationLogCount: number;
   highRiskOperationCount: number;
   permissionDeniedCount: number;
+  memberVerificationIssuedCount: number;
+  memberVerificationSuccessCount: number;
+  memberVerificationActiveCount: number;
+  memberVerificationExpiredCount: number;
+  memberVerificationLockedCount: number;
+  memberVerificationFailedAttemptCount: number;
+  memberVerificationSuccessRate: number;
   pendingCommunityReportCount?: number;
 }
 
@@ -98,6 +106,7 @@ export type AdminPermission =
   | "catalog:write"
   | "customers:write"
   | "cms:write"
+  | "cloud_pets:write"
   | "community:moderate"
   | "fulfillment:write"
   | "marketing:write"
@@ -210,6 +219,93 @@ export interface ExpireOverduePaymentsResult {
 export interface AdminCloudPet extends CloudPetProfile {
   communityPostCount: number;
   homepageVisitCount: number;
+}
+
+export interface AdminCloudPetFilters {
+  q?: string;
+  species?: "cat" | "dog";
+  careState?: "needs_care" | "steady" | "thriving";
+}
+
+export interface AdminCloudPetOperationalDetail {
+  pet: AdminCloudPet;
+  archive: CloudPetHomepageArchive;
+  community: {
+    posts: CommunityPost[];
+    postCount: number;
+    likeCount: number;
+    commentCount: number;
+    reportCount: number;
+    pendingReportCount: number;
+  };
+  diary: {
+    entryCount: number;
+    latestEntry?: CloudPetProfile["timeline"][number];
+    latestOwnerNote?: CloudPetProfile["timeline"][number];
+  };
+}
+
+export interface AdminCloudPetRetentionMetrics {
+  date: string;
+  totalPetCount: number;
+  careCompletedTodayCount: number;
+  careCompletionRate: number;
+  averageCareScore: number;
+  maxCareStreakDays: number;
+  careStateCounts: {
+    needsCare: number;
+    steady: number;
+    thriving: number;
+  };
+  dailyDiaryCoveredCount: number;
+  dailyDiaryMissingCount: number;
+  dailyDiaryCoverageRate: number;
+  homepageVisitCount: number;
+  communityPostCount: number;
+  pendingCommunityReportCount: number;
+}
+
+export interface AdminCloudPetGrowthTaskOperations {
+  totalPetCount: number;
+  items: Array<{
+    key: string;
+    title: string;
+    description: string;
+    points: number;
+    rewards: {
+      mood: number;
+      energy: number;
+      intimacy: number;
+    };
+    completedTodayCount: number;
+    completionRate: number;
+  }>;
+}
+
+export interface UpdateAdminCloudPetGrowthTaskInput {
+  title?: string;
+  description?: string;
+  points?: number;
+  rewards?: {
+    mood?: number;
+    energy?: number;
+    intimacy?: number;
+  };
+}
+
+export interface AdminCloudPetCareScoreRules {
+  dailyTaskBonus: number;
+  steadyMinScore: number;
+  thrivingMinScore: number;
+  thrivingRequiresCareToday: boolean;
+  updatedAt?: string;
+}
+
+export interface UpdateAdminCloudPetCareScoreRulesInput {
+  dailyTaskBonus?: number;
+  steadyMinScore?: number;
+  thrivingMinScore?: number;
+  thrivingRequiresCareToday?: boolean;
 }
 
 export interface CloudPetDailyDiaryGenerationResult {
@@ -343,6 +439,11 @@ export interface RefundRequestRecord {
 
 export type AdminProductReview = ProductReview;
 export type AdminCommunityReport = CommunityReport;
+export interface AdminCommunityReportFilters {
+  status?: CommunityReportStatus;
+  postNo?: string;
+  memberPhone?: string;
+}
 export type AdminCmsBlock = CmsBlock;
 export type AdminCmsBlockStatus = CmsBlockStatus;
 export type AdminCreateCmsBlockInput = CreateCmsBlockInput;
@@ -629,15 +730,116 @@ export function createCustomerFollowUp(
 
 export async function listAdminCloudPets(
   token: string,
-  fetcher: Fetcher = fetch
+  filtersOrFetcher: AdminCloudPetFilters | Fetcher = {},
+  maybeFetcher?: Fetcher
 ) {
+  const filters = typeof filtersOrFetcher === "function" ? {} : filtersOrFetcher;
+  const fetcher = typeof filtersOrFetcher === "function" ? filtersOrFetcher : maybeFetcher ?? fetch;
+  const params = new URLSearchParams();
+
+  if (filters.q?.trim()) {
+    params.set("q", filters.q.trim());
+  }
+
+  if (filters.species) {
+    params.set("species", filters.species);
+  }
+
+  if (filters.careState) {
+    params.set("careState", filters.careState);
+  }
+
+  const query = params.toString();
   const response = await requestJson<{ items: AdminCloudPet[] }>(
-    "/admin/cloud-pets",
+    `/admin/cloud-pets${query ? `?${query}` : ""}`,
     adminRequest(token),
     fetcher
   );
 
   return response.items;
+}
+
+export function getAdminCloudPetRetentionMetrics(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetRetentionMetrics>(
+    "/admin/cloud-pets/retention-metrics",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function getAdminCloudPetGrowthTaskOperations(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetGrowthTaskOperations>(
+    "/admin/cloud-pets/growth-tasks",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function updateAdminCloudPetGrowthTask(
+  token: string,
+  taskKey: string,
+  input: UpdateAdminCloudPetGrowthTaskInput,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetGrowthTaskOperations["items"][number]>(
+    `/admin/cloud-pets/growth-tasks/${encodeURIComponent(taskKey)}`,
+    jsonAdminRequest(token, input, "PATCH"),
+    fetcher
+  );
+}
+
+export function getAdminCloudPetCareScoreRules(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetCareScoreRules>(
+    "/admin/cloud-pets/care-score-rules",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function updateAdminCloudPetCareScoreRules(
+  token: string,
+  input: UpdateAdminCloudPetCareScoreRulesInput,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetCareScoreRules>(
+    "/admin/cloud-pets/care-score-rules",
+    jsonAdminRequest(token, input, "PATCH"),
+    fetcher
+  );
+}
+
+export function removeAdminCloudPetDiaryNote(
+  token: string,
+  petNo: string,
+  noteId: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPet>(
+    `/admin/cloud-pets/${encodeURIComponent(petNo)}/diary-notes/${encodeURIComponent(noteId)}`,
+    { ...adminRequest(token), method: "DELETE" },
+    fetcher
+  );
+}
+
+export function getAdminCloudPetDetail(
+  token: string,
+  petNo: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetOperationalDetail>(
+    `/admin/cloud-pets/${encodeURIComponent(petNo)}/detail`,
+    adminRequest(token),
+    fetcher
+  );
 }
 
 export function generateCloudPetDailyDiaries(
@@ -845,10 +1047,28 @@ export async function listAdminCommunityPosts(
 
 export async function listAdminCommunityReports(
   token: string,
-  fetcher: Fetcher = fetch
+  filtersOrFetcher: AdminCommunityReportFilters | Fetcher = {},
+  maybeFetcher?: Fetcher
 ) {
+  const filters = typeof filtersOrFetcher === "function" ? {} : filtersOrFetcher;
+  const fetcher = typeof filtersOrFetcher === "function" ? filtersOrFetcher : maybeFetcher ?? fetch;
+  const params = new URLSearchParams();
+
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+
+  if (filters.postNo?.trim()) {
+    params.set("postNo", filters.postNo.trim());
+  }
+
+  if (filters.memberPhone?.trim()) {
+    params.set("memberPhone", filters.memberPhone.trim());
+  }
+
+  const query = params.toString();
   const response = await requestJson<{ items: AdminCommunityReport[] }>(
-    "/admin/community/reports",
+    `/admin/community/reports${query ? `?${query}` : ""}`,
     adminRequest(token),
     fetcher
   );
@@ -1051,7 +1271,7 @@ function getErrorMessage(payload: unknown, status: number) {
     return payload.message;
   }
 
-  return "Request failed";
+  return "请求失败";
 }
 
 

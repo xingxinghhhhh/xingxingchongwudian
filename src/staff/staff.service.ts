@@ -10,6 +10,7 @@ export type AdminPermission =
   | "catalog:write"
   | "customers:write"
   | "cms:write"
+  | "cloud_pets:write"
   | "community:moderate"
   | "fulfillment:write"
   | "marketing:write"
@@ -57,6 +58,7 @@ const OWNER_PERMISSIONS: AdminPermission[] = [
   "catalog:write",
   "customers:write",
   "cms:write",
+  "cloud_pets:write",
   "community:moderate",
   "fulfillment:write",
   "marketing:write",
@@ -95,7 +97,13 @@ export class StaffService {
       return null;
     }
 
-    if (token === (ownerToken || "dev-admin-key") || token === "dev-admin-key") {
+    const isProduction =
+      this.configService.get<string>("NODE_ENV") === "production";
+    const acceptsOwnerToken =
+      (ownerToken && token === ownerToken) ||
+      (!isProduction && token === "dev-admin-key");
+
+    if (acceptsOwnerToken) {
       return {
         staffNo: "STAFF_OWNER",
         name: "Owner Admin",
@@ -104,7 +112,7 @@ export class StaffService {
       };
     }
 
-    if (token === "ops-admin-key") {
+    if (!isProduction && token === "ops-admin-key") {
       return {
         staffNo: "STAFF_OPS",
         name: "Operations Admin",
@@ -232,6 +240,9 @@ export class StaffService {
   }
 
   private isDatabaseConfigured() {
-    return Boolean(this.configService.get<string>("DATABASE_URL"));
+    return (
+      this.configService.get<string>("KZT_USE_MEMORY_STORE") !== "true" &&
+      Boolean(this.configService.get<string>("DATABASE_URL"))
+    );
   }
 }

@@ -8,6 +8,7 @@ import type {
   ShopProductDetail
 } from "./shop-api";
 import { formatCents, getProductDetail, searchProducts } from "./shop-api";
+import { getToyTypeLabel } from "./shop-copy";
 
 type ShopPageProps = {
   searchParams?: Promise<{
@@ -43,7 +44,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
         : [];
   } catch (caught) {
     loadError =
-      caught instanceof Error ? caught.message : "Product API is temporarily unavailable.";
+      caught instanceof Error ? caught.message : "商城数据加载失败";
   }
 
   return (
@@ -52,11 +53,11 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
 
       <section className="shop-hero">
         <div className="shop-hero__inner">
-          <p className="section__kicker">Shop</p>
-          <h1>Pet toy commerce center</h1>
+          <p className="section__kicker">商城</p>
+          <h1>宠物商城</h1>
           <p>
-            Search pet-matched toys, add them to cart, checkout, simulate payment,
-            and submit reviews through the live commerce APIs.
+            搜索适合宠物的玩具，加入购物车后可下单、模拟支付，
+            并在订单完成后提交评价。
           </p>
         </div>
       </section>
@@ -64,7 +65,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
       <section className="shop-section">
         {loadError ? (
           <div className="shop-error" role="alert">
-            <h2>Products failed to load</h2>
+            <h2>商城暂时不可用</h2>
             <p>{loadError}</p>
           </div>
         ) : (
@@ -72,16 +73,16 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
             <ProductDiscoveryForm catalog={catalog} filters={filters} />
             {products.length === 0 ? (
               <div className="shop-empty">
-                <p className="shop-product__type">No matches</p>
-                <h2>No products matched these filters.</h2>
+                <p className="shop-product__type">没有匹配结果</p>
+                <h2>没有找到完全匹配的商品</h2>
                 <p>
                   {catalog?.meta.recommendationReason ??
-                    "Try removing a price range or switching pet type."}
+                    "可以放宽筛选条件，或先看看系统推荐的备选商品。"}
                 </p>
                 {recommendedProducts.length > 0 ? (
                   <div className="shop-empty__actions">
-                    <span>{recommendedProducts.length} in-stock picks are ready below.</span>
-                    <a href="/shop">Reset catalog</a>
+                    <span>{recommendedProducts.length} 件有库存的推荐商品已展示在下方。</span>
+                    <a href="/shop">清空筛选</a>
                   </div>
                 ) : null}
               </div>
@@ -112,49 +113,49 @@ function ProductDiscoveryForm({
     <form action="/shop" className="shop-filters">
       <div className="shop-filters__heading">
         <div>
-          <p className="shop-product__type">Product discovery</p>
-          <h2>Search and filter the catalog</h2>
+          <p className="shop-product__type">商品发现</p>
+          <h2>按宠物档案筛选商品</h2>
         </div>
         <p>
           {catalog
-            ? `${catalog.meta.total} products matched. Price range ${formatCents(
+            ? `${catalog.meta.total} 件商品匹配，价格区间 ${formatCents(
                 catalog.meta.priceRange.minCents
-              )} - ${formatCents(catalog.meta.priceRange.maxCents)}.`
-            : "Use filters to find the right toy faster."}
+              )}。`
+            : "正在等待商品目录数据。"}
         </p>
       </div>
 
       <div className="shop-filters__fields">
         <label>
-          Keyword
+          关键词
           <input
             defaultValue={filters.q ?? ""}
             name="q"
-            placeholder="rope, wand, chew"
+            placeholder="商城数据加载失败"
           />
         </label>
         <label>
-          Pet type
+          宠物类型
           <select defaultValue={filters.petType ?? ""} name="petType">
-            <option value="">All pets</option>
-            <option value="dog">Dog</option>
-            <option value="cat">Cat</option>
-            <option value="both">Both</option>
+            <option value="">全部宠物</option>
+            <option value="dog">狗狗</option>
+            <option value="cat">猫猫</option>
+            <option value="both">通用</option>
           </select>
         </label>
         <label>
-          Toy type
+          玩具类型
           <select defaultValue={filters.toyType ?? ""} name="toyType">
-            <option value="">All toys</option>
+            <option value="">全部玩具</option>
             {availableToyTypes.map((toyType) => (
-              <option key={toyType} value={toyType}>
-                {toyType}
+              <option key={getToyTypeLabel(toyType)} value={toyType}>
+                {getToyTypeLabel(toyType)}
               </option>
             ))}
           </select>
         </label>
         <label>
-          Min price cents
+          最低价（分）
           <input
             defaultValue={filters.minPriceCents ?? ""}
             min="0"
@@ -164,7 +165,7 @@ function ProductDiscoveryForm({
           />
         </label>
         <label>
-          Max price cents
+          最高价（分）
           <input
             defaultValue={filters.maxPriceCents ?? ""}
             min="0"
@@ -174,20 +175,20 @@ function ProductDiscoveryForm({
           />
         </label>
         <label>
-          Sort
+          排序
           <select defaultValue={filters.sort ?? "default"} name="sort">
-            <option value="default">Featured</option>
-            <option value="price_asc">Price low to high</option>
-            <option value="price_desc">Price high to low</option>
+            <option value="default">综合排序</option>
+            <option value="price_asc">价格从低到高</option>
+            <option value="price_desc">价格从高到低</option>
           </select>
         </label>
       </div>
 
       <div className="shop-filters__actions">
         <button className="shop-product__button" type="submit">
-          Apply filters
+          应用筛选
         </button>
-        <a href="/shop">Reset catalog</a>
+        <a href="/shop">清空筛选</a>
       </div>
     </form>
   );

@@ -36,7 +36,7 @@ export function CmsSlot({ slotPrefix }: { slotPrefix: string }) {
 
   if (!blocks.length) {
     return isLoaded ? null : (
-      <section className="section cms-slot" aria-label="CMS content loading" />
+      <section className="section cms-slot" aria-label="运营内容加载中" />
     );
   }
 
@@ -44,7 +44,7 @@ export function CmsSlot({ slotPrefix }: { slotPrefix: string }) {
     <section className="section cms-slot" id="daily-cms">
       <div className="section__header section__header--tight">
         <div>
-          <p className="section__kicker">Daily CMS</p>
+          <p className="section__kicker">今日运营内容</p>
           <h2>今天后台推送的成长内容和商家活动。</h2>
         </div>
       </div>

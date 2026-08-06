@@ -1,11 +1,18 @@
-import { IsNotEmpty, IsString, Matches, MaxLength } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsString, Matches, MaxLength } from "class-validator";
 
 export class LoginMemberDto {
+  @Transform(({ value }) =>
+    typeof value === "string" ? value.trim() : value
+  )
   @IsString()
-  @IsNotEmpty()
-  @MaxLength(40)
-  name: string;
+  @MaxLength(64)
+  @Matches(/^verify_[a-zA-Z0-9_-]{16,48}$/)
+  challengeId: string;
 
-  @Matches(/^1[3-9]\d{9}$/)
-  phone: string;
+  @Transform(({ value }) =>
+    typeof value === "string" ? value.trim() : value
+  )
+  @Matches(/^\d{6}$/)
+  code: string;
 }

@@ -1,10 +1,12 @@
 ﻿import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../database/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { ProductListItem } from "../products/product.types";
 import { CreateCloudPetDto } from "./dto/create-cloud-pet.dto";
+import { CreateCloudPetDiaryNoteDto } from "./dto/create-cloud-pet-diary-note.dto";
 import { UpdateCloudPetHomepageDto } from "./dto/update-cloud-pet-homepage.dto";
 
 export interface CloudPetProfile {
@@ -24,12 +26,18 @@ export interface CloudPetProfile {
   growth: CloudPetGrowthProfile;
   homepage: CloudPetHomepageProfile;
   timeline: Array<{
+    id?: string;
     type: string;
     title: string;
     body: string;
     createdAt: string;
   }>;
 }
+
+export type CloudPetPublicProfile = Omit<
+  CloudPetProfile,
+  "ownerName" | "ownerPhone"
+>;
 
 export type CloudPetCareState = "needs_care" | "steady" | "thriving";
 export type CloudPetHomepageTheme = "sunny" | "forest" | "midnight";
@@ -86,6 +94,11 @@ export interface CloudPetGrowthProfile {
   careState: CloudPetCareState;
   careScore: number;
   todayCompletedTaskCount: number;
+  todayCompletedTaskKeys: string[];
+  isCareCompleteToday: boolean;
+  careStreakDays: number;
+  lastCareDate?: string;
+  nextCarePrompt: string;
 }
 
 export interface CloudPetRecommendation extends ProductListItem {
@@ -110,6 +123,28 @@ export interface GrowthTask {
     energy: number;
     intimacy: number;
   };
+}
+
+export interface CloudPetCareScoreRules {
+  dailyTaskBonus: number;
+  steadyMinScore: number;
+  thrivingMinScore: number;
+  thrivingRequiresCareToday: boolean;
+  updatedAt?: string;
+}
+
+export interface UpdateCloudPetCareScoreRulesInput {
+  dailyTaskBonus?: number;
+  steadyMinScore?: number;
+  thrivingMinScore?: number;
+  thrivingRequiresCareToday?: boolean;
+}
+
+export interface UpdateGrowthTaskTemplateInput {
+  title?: string;
+  description?: string;
+  points?: number;
+  rewards?: Partial<GrowthTask["rewards"]>;
 }
 
 export interface GrowthTaskCompletionRecord {
@@ -229,6 +264,7 @@ interface CloudPetRecord {
   energy: number;
   intimacy: number;
   timeline: Array<{
+    id?: string;
     type: string;
     title: string;
     body: string;
@@ -237,6 +273,7 @@ interface CloudPetRecord {
 }
 
 type CloudPetTimelineEventInput = {
+  id?: string;
   type: string;
   title: string;
   body: string;
@@ -246,8 +283,8 @@ type CloudPetTimelineEventInput = {
 export const growthTasks: GrowthTask[] = [
   {
     key: "daily-care",
-    title: "Daily care",
-    description: "Complete feeding, grooming, or a light interaction so the pet has a care record every day.",
+    title: "日常照护",
+    description: "完成喂食、梳理或轻互动，为宠物留下每日照护记录。",
     points: 20,
     rewards: {
       mood: 8,
@@ -256,9 +293,53 @@ export const growthTasks: GrowthTask[] = [
     }
   },
   {
+    key: "feed-care",
+    title: "喂食记录",
+    description: "记录今天的餐食与食欲，让宠物的日常节奏更鲜活。",
+    points: 12,
+    rewards: {
+      mood: 5,
+      energy: 6,
+      intimacy: 4
+    }
+  },
+  {
+    key: "play-care",
+    title: "一起玩耍",
+    description: "安排一段简短互动，提升心情并维持亲密关系。",
+    points: 12,
+    rewards: {
+      mood: 8,
+      energy: 3,
+      intimacy: 5
+    }
+  },
+  {
+    key: "clean-care",
+    title: "清理空间",
+    description: "整理宠物的小空间，补全今天的照护记录。",
+    points: 10,
+    rewards: {
+      mood: 4,
+      energy: 4,
+      intimacy: 4
+    }
+  },
+  {
+    key: "accompany-care",
+    title: "安静陪伴",
+    description: "安静陪宠物待一会儿，记录今天的陪伴时刻。",
+    points: 14,
+    rewards: {
+      mood: 5,
+      energy: 2,
+      intimacy: 8
+    }
+  },
+  {
     key: "community-share",
-    title: "Community share",
-    description: "Publish a pet update so the growth record flows into the interactive community.",
+    title: "社区分享",
+    description: "发布一条宠物动态，让成长记录进入互动社区。",
     points: 30,
     rewards: {
       mood: 6,
@@ -268,8 +349,8 @@ export const growthTasks: GrowthTask[] = [
   },
   {
     key: "shop-gift",
-    title: "Shop gift",
-    description: "Choose a recommended product from the pet profile and connect content to commerce.",
+    title: "商城礼物",
+    description: "从宠物主页选择推荐商品，连接内容与商城体验。",
     points: 40,
     rewards: {
       mood: 10,
@@ -279,12 +360,26 @@ export const growthTasks: GrowthTask[] = [
   }
 ];
 
+const defaultCareScoreRules: CloudPetCareScoreRules = {
+  dailyTaskBonus: 12,
+  steadyMinScore: 60,
+  thrivingMinScore: 70,
+  thrivingRequiresCareToday: true
+};
+
+const MAX_OWNER_DIARY_NOTES_PER_DAY = 5;
+
 @Injectable()
-export class CloudPetsService {
+export class CloudPetsService implements OnModuleInit {
   private readonly pets = new Map<string, CloudPetRecord>();
   private readonly completedTaskDates = new Set<string>();
   private readonly taskCompletions = new Map<string, GrowthTaskCompletionRecord>();
   private readonly homepageVisits = new Map<string, CloudPetHomepageVisitRecord>();
+  private growthTaskTemplates: GrowthTask[] = growthTasks.map((task) => ({
+    ...task,
+    rewards: { ...task.rewards }
+  }));
+  private careScoreRules: CloudPetCareScoreRules = { ...defaultCareScoreRules };
   private sequence = 0;
 
   constructor(
@@ -293,9 +388,54 @@ export class CloudPetsService {
     private readonly productsService: ProductsService
   ) {}
 
+  async onModuleInit() {
+    if (!this.isDatabaseConfigured()) {
+      return;
+    }
+
+    const [savedTemplates, savedRules] = await Promise.all([
+      this.prisma.cloudPetGrowthTaskTemplate.findMany(),
+      this.prisma.cloudPetCareScoreConfig.findUnique({
+        where: { id: "active" }
+      })
+    ]);
+    const savedTemplateByKey = new Map(
+      savedTemplates.map((template) => [template.key, template])
+    );
+
+    this.growthTaskTemplates = growthTasks.map((task) => {
+      const saved = savedTemplateByKey.get(task.key);
+
+      return saved
+        ? {
+            key: task.key,
+            title: saved.title,
+            description: saved.description,
+            points: saved.points,
+            rewards: {
+              mood: saved.rewardMood,
+              energy: saved.rewardEnergy,
+              intimacy: saved.rewardIntimacy
+            }
+          }
+        : this.cloneGrowthTask(task);
+    });
+
+    if (savedRules) {
+      this.careScoreRules = {
+        dailyTaskBonus: savedRules.dailyTaskBonus,
+        steadyMinScore: savedRules.steadyMinScore,
+        thrivingMinScore: savedRules.thrivingMinScore,
+        thrivingRequiresCareToday: savedRules.thrivingRequiresCareToday,
+        updatedAt: savedRules.updatedAt.toISOString()
+      };
+    }
+  }
+
   async createPet(dto: CreateCloudPetDto): Promise<CloudPetProfile> {
+    const petInput = this.normalizeCreatePetInput(dto);
     const petNo = this.createPetNo();
-    const pet = this.createPetRecord(petNo, dto);
+    const pet = this.createPetRecord(petNo, petInput);
 
     if (!this.isDatabaseConfigured()) {
       this.pets.set(pet.petNo, pet);
@@ -370,6 +510,17 @@ export class CloudPetsService {
     );
   }
 
+  async getPublicPet(petNo: string): Promise<CloudPetPublicProfile> {
+    const pet = await this.getPet(petNo);
+    const { ownerName: _ownerName, ownerPhone: _ownerPhone, ...publicPet } = pet;
+    const speciesLabel = pet.species === "cat" ? "猫咪" : "狗狗";
+
+    return {
+      ...publicPet,
+      bio: `${pet.name}是一只性格${pet.personality}的云养${speciesLabel}。`
+    };
+  }
+
   async getPetRecord(petNo: string): Promise<CloudPetProfile> {
     return this.getPet(petNo);
   }
@@ -396,7 +547,97 @@ export class CloudPetsService {
   }
 
   listGrowthTasks() {
-    return growthTasks;
+    return this.growthTaskTemplates.map((task) => this.cloneGrowthTask(task));
+  }
+
+  async updateGrowthTaskTemplate(
+    taskKey: string,
+    input: UpdateGrowthTaskTemplateInput
+  ): Promise<GrowthTask> {
+    const index = this.growthTaskTemplates.findIndex((task) => task.key === taskKey);
+
+    if (index === -1) {
+      throw new NotFoundException("Growth task not found");
+    }
+
+    const current = this.growthTaskTemplates[index];
+    const next: GrowthTask = {
+      ...current,
+      ...this.normalizeGrowthTaskTemplate(input),
+      rewards: {
+        ...current.rewards,
+        ...this.normalizeGrowthTaskRewards(input.rewards ?? {})
+      }
+    };
+
+    if (this.isDatabaseConfigured()) {
+      await this.prisma.cloudPetGrowthTaskTemplate.upsert({
+        where: { key: taskKey },
+        create: {
+          key: taskKey,
+          title: next.title,
+          description: next.description,
+          points: next.points,
+          rewardMood: next.rewards.mood,
+          rewardEnergy: next.rewards.energy,
+          rewardIntimacy: next.rewards.intimacy
+        },
+        update: {
+          title: next.title,
+          description: next.description,
+          points: next.points,
+          rewardMood: next.rewards.mood,
+          rewardEnergy: next.rewards.energy,
+          rewardIntimacy: next.rewards.intimacy
+        }
+      });
+    }
+
+    this.growthTaskTemplates[index] = next;
+    return this.cloneGrowthTask(next);
+  }
+
+  getCareScoreRules(): CloudPetCareScoreRules {
+    return { ...this.careScoreRules };
+  }
+
+  async updateCareScoreRules(
+    input: UpdateCloudPetCareScoreRulesInput
+  ): Promise<CloudPetCareScoreRules> {
+    const nextRules = {
+      ...this.careScoreRules,
+      ...this.normalizeCareScoreRules(input),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (nextRules.steadyMinScore > nextRules.thrivingMinScore) {
+      throw new BadRequestException(
+        "steadyMinScore cannot be greater than thrivingMinScore"
+      );
+    }
+
+    if (this.isDatabaseConfigured()) {
+      const saved = await this.prisma.cloudPetCareScoreConfig.upsert({
+        where: { id: "active" },
+        create: {
+          id: "active",
+          dailyTaskBonus: nextRules.dailyTaskBonus,
+          steadyMinScore: nextRules.steadyMinScore,
+          thrivingMinScore: nextRules.thrivingMinScore,
+          thrivingRequiresCareToday: nextRules.thrivingRequiresCareToday
+        },
+        update: {
+          dailyTaskBonus: nextRules.dailyTaskBonus,
+          steadyMinScore: nextRules.steadyMinScore,
+          thrivingMinScore: nextRules.thrivingMinScore,
+          thrivingRequiresCareToday: nextRules.thrivingRequiresCareToday
+        }
+      });
+      nextRules.updatedAt = saved.updatedAt.toISOString();
+    }
+
+    this.careScoreRules = nextRules;
+    return this.getCareScoreRules();
   }
 
   async listTaskCompletionsByOwnerPhone(
@@ -454,7 +695,7 @@ export class CloudPetsService {
   }
 
   async completeGrowthTask(petNo: string, taskKey: string) {
-    const task = growthTasks.find((item) => item.key === taskKey);
+    const task = this.findGrowthTask(taskKey);
 
     if (!task) {
       throw new NotFoundException("Growth task not found");
@@ -594,6 +835,8 @@ export class CloudPetsService {
     petNo: string,
     dto: UpdateCloudPetHomepageDto
   ): Promise<CloudPetProfile> {
+    const homepageSettings = this.normalizeHomepageSettings(dto);
+
     if (!this.isDatabaseConfigured()) {
       const pet = this.pets.get(petNo);
 
@@ -601,7 +844,7 @@ export class CloudPetsService {
         throw new NotFoundException("Cloud pet not found");
       }
 
-      const updatedPet = this.applyHomepageSettings(pet, dto);
+      const updatedPet = this.applyHomepageSettings(pet, homepageSettings);
       this.pets.set(petNo, updatedPet);
 
       return this.toProfile(
@@ -612,7 +855,7 @@ export class CloudPetsService {
 
     const pet = await this.prisma.virtualPet.update({
       where: { petNo },
-      data: this.toHomepageUpdateData(dto),
+      data: this.toHomepageUpdateData(homepageSettings),
       include: {
         taskCompletions: { orderBy: [{ completedDate: "desc" }, { createdAt: "desc" }] },
         timeline: { orderBy: { createdAt: "desc" } }
@@ -622,6 +865,137 @@ export class CloudPetsService {
     return this.toProfile(pet, this.toCompletionRecords(pet.taskCompletions));
   }
 
+  async createDiaryNote(
+    petNo: string,
+    dto: CreateCloudPetDiaryNoteDto
+  ): Promise<CloudPetProfile> {
+    const body = dto.body.trim();
+
+    if (!body) {
+      throw new BadRequestException("Diary note body is required");
+    }
+
+    if (!this.isDatabaseConfigured()) {
+      const pet = this.pets.get(petNo);
+
+      if (!pet) {
+        throw new NotFoundException("Cloud pet not found");
+      }
+
+      this.assertOwnerDiaryNoteQuota(pet);
+      pet.timeline.unshift(this.buildOwnerDiaryNoteEvent(pet.name, dto));
+      this.pets.set(petNo, pet);
+
+      return this.toProfile(pet, this.getMemoryTaskCompletionsForPet(petNo));
+    }
+
+    const petRecord = await this.prisma.virtualPet.findUnique({
+      where: { petNo },
+      select: { id: true, name: true }
+    });
+
+    if (!petRecord) {
+      throw new NotFoundException("Cloud pet not found");
+    }
+
+    await this.assertOwnerDiaryNoteQuotaForDatabase(petRecord.id);
+
+    const pet = await this.prisma.virtualPet.update({
+      where: { petNo },
+      data: {
+        timeline: {
+          create: this.buildOwnerDiaryNoteEvent(petRecord.name, dto)
+        }
+      },
+      include: {
+        taskCompletions: { orderBy: [{ completedDate: "desc" }, { createdAt: "desc" }] },
+        timeline: { orderBy: { createdAt: "desc" } }
+      }
+    });
+
+    return this.toProfile(pet, this.toCompletionRecords(pet.taskCompletions));
+  }
+
+  async updateDiaryNote(
+    petNo: string,
+    noteId: string,
+    dto: CreateCloudPetDiaryNoteDto
+  ): Promise<CloudPetProfile> {
+    const body = dto.body.trim();
+
+    if (!body) {
+      throw new BadRequestException("Diary note body is required");
+    }
+
+    if (!this.isDatabaseConfigured()) {
+      const pet = this.pets.get(petNo);
+
+      if (!pet) {
+        throw new NotFoundException("Cloud pet not found");
+      }
+
+      const note = pet.timeline.find(
+        (event) => event.type === "owner_note" && this.getTimelineEventId(event) === noteId
+      );
+
+      if (!note) {
+        throw new NotFoundException("Diary note not found");
+      }
+
+      note.title = dto.title?.trim() || note.title;
+      note.body = body;
+      this.pets.set(petNo, pet);
+
+      return this.toProfile(pet, this.getMemoryTaskCompletionsForPet(petNo));
+    }
+
+    const result = await this.prisma.virtualPetEvent.updateMany({
+      where: { id: noteId, pet: { petNo }, type: "owner_note" },
+      data: {
+        ...(dto.title?.trim() ? { title: dto.title.trim() } : {}),
+        body
+      }
+    });
+
+    if (result.count === 0) {
+      throw new NotFoundException("Diary note not found");
+    }
+
+    return this.getPet(petNo);
+  }
+
+  async deleteDiaryNote(petNo: string, noteId: string): Promise<CloudPetProfile> {
+    if (!this.isDatabaseConfigured()) {
+      const pet = this.pets.get(petNo);
+
+      if (!pet) {
+        throw new NotFoundException("Cloud pet not found");
+      }
+
+      const originalLength = pet.timeline.length;
+      pet.timeline = pet.timeline.filter(
+        (event) => !(event.type === "owner_note" && this.getTimelineEventId(event) === noteId)
+      );
+
+      if (pet.timeline.length === originalLength) {
+        throw new NotFoundException("Diary note not found");
+      }
+
+      this.pets.set(petNo, pet);
+
+      return this.toProfile(pet, this.getMemoryTaskCompletionsForPet(petNo));
+    }
+
+    const result = await this.prisma.virtualPetEvent.deleteMany({
+      where: { id: noteId, pet: { petNo }, type: "owner_note" }
+    });
+
+    if (result.count === 0) {
+      throw new NotFoundException("Diary note not found");
+    }
+
+    return this.getPet(petNo);
+  }
   async getHomepageArchive(
     petNo: string,
     eventType?: string
@@ -638,7 +1012,7 @@ export class CloudPetsService {
         title: pet.homepage.headline,
         description: pet.homepage.ownerStory,
         url: "/cloud-pets/" + pet.petNo,
-        ctaLabel: "Open pet homepage"
+        ctaLabel: "打开宠物主页"
       },
       commerceReward: await this.buildCommerceReward(pet),
       engagement: {
@@ -650,7 +1024,7 @@ export class CloudPetsService {
   }
 
   async generateDailyDiariesForToday(): Promise<CloudPetDailyDiaryGenerationResult> {
-    const task = growthTasks[0];
+    const task = this.getPrimaryDailyTask();
     const items: CloudPetDailyDiaryGenerationItem[] = [];
 
     if (!this.isDatabaseConfigured()) {
@@ -898,9 +1272,24 @@ export class CloudPetsService {
 
   async recordHomepageVisit(
     petNo: string,
+    visitorId: string,
     source = "direct"
   ): Promise<CloudPetHomepageVisitRecord> {
     const normalizedSource = source.trim() || "direct";
+    const normalizedVisitorId = visitorId.trim();
+
+    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(normalizedSource)) {
+      throw new BadRequestException("Invalid homepage visit source");
+    }
+    if (!/^[a-zA-Z0-9_-]{16,64}$/.test(normalizedVisitorId)) {
+      throw new BadRequestException("Invalid homepage visitor");
+    }
+
+    const visitDate = this.getTaskDate();
+    const visitorKey = createHash("sha256")
+      .update(normalizedVisitorId)
+      .digest("hex")
+      .slice(0, 32);
 
     if (!this.isDatabaseConfigured()) {
       const pet = this.pets.get(petNo);
@@ -909,16 +1298,33 @@ export class CloudPetsService {
         throw new NotFoundException("Cloud pet not found");
       }
 
-      const visitNo = petNo + ":" + Date.now() + ":" + (this.homepageVisits.size + 1);
+      const visitKey = [
+        petNo,
+        normalizedSource,
+        visitorKey,
+        visitDate
+      ].join(":");
+      const existingVisit = this.homepageVisits.get(visitKey);
+
+      if (existingVisit) {
+        return {
+          ...existingVisit,
+          visitCount: this.countMemoryHomepageVisits(petNo)
+        };
+      }
+
       const record = {
         petNo,
         source: normalizedSource,
-        visitCount: this.countMemoryHomepageVisits(petNo) + 1,
+        visitCount: 1,
         createdAt: new Date().toISOString()
       };
-      this.homepageVisits.set(visitNo, record);
+      this.homepageVisits.set(visitKey, record);
 
-      return record;
+      return {
+        ...record,
+        visitCount: this.countMemoryHomepageVisits(petNo)
+      };
     }
 
     const pet = await this.prisma.virtualPet.findUnique({
@@ -930,12 +1336,23 @@ export class CloudPetsService {
       throw new NotFoundException("Cloud pet not found");
     }
 
-    const visit = await this.prisma.virtualPetHomepageVisit.create({
-      data: {
+    const visit = await this.prisma.virtualPetHomepageVisit.upsert({
+      where: {
+        petNo_source_visitorKey_visitDate: {
+          petNo,
+          source: normalizedSource,
+          visitorKey,
+          visitDate
+        }
+      },
+      create: {
         petId: pet.id,
         petNo,
-        source: normalizedSource
-      }
+        source: normalizedSource,
+        visitorKey,
+        visitDate
+      },
+      update: {}
     });
 
     return {
@@ -951,7 +1368,7 @@ export class CloudPetsService {
   ): Promise<CloudPetRecommendation[]> {
     const pet = await this.getPet(petNo);
     const products = await this.productsService.listActiveProducts();
-    const speciesLabel = pet.species === "cat" ? "cat" : "dog";
+    const speciesLabel = pet.species === "cat" ? "猫咪" : "狗狗";
 
     return products
       .filter(
@@ -959,13 +1376,33 @@ export class CloudPetsService {
       )
       .map((product) => ({
         ...product,
-        reason:
-          "Recommended for " +
-          pet.name +
-          "'s " +
-          speciesLabel +
-          " interaction needs."
+        reason: `适合${pet.name}的${speciesLabel}互动需求。`
       }));
+  }
+
+  private normalizeCreatePetInput(dto: CreateCloudPetDto): CreateCloudPetDto {
+    const ownerName = dto.ownerName.trim();
+    const name = dto.name.trim();
+    const personality = dto.personality.trim();
+
+    if (!ownerName) {
+      throw new BadRequestException("宠物主人姓名不能为空");
+    }
+
+    if (!name) {
+      throw new BadRequestException("宠物名称不能为空");
+    }
+
+    if (!personality) {
+      throw new BadRequestException("宠物性格描述不能为空");
+    }
+
+    return {
+      ...dto,
+      name,
+      ownerName,
+      personality
+    };
   }
 
   private createPetRecord(
@@ -976,7 +1413,7 @@ export class CloudPetsService {
       dto.species === "cat"
         ? "/brand/naigai-niangao/naigai-standard.png"
         : "/brand/naigai-niangao/niangao-standard.png";
-    const speciesLabel = dto.species === "cat" ? "cat" : "dog";
+    const speciesLabel = dto.species === "cat" ? "猫咪" : "狗狗";
 
     return {
       petNo,
@@ -986,18 +1423,10 @@ export class CloudPetsService {
       species: dto.species,
       personality: dto.personality,
       avatarUrl,
-      bio:
-        dto.name +
-        " is " +
-        dto.ownerName +
-        "'s custom cloud " +
-        speciesLabel +
-        ", with a personality of " +
-        dto.personality +
-        ".",
+      bio: `${dto.name}是${dto.ownerName}专属的云养${speciesLabel}，性格是${dto.personality}。`,
       homepageTheme: "sunny",
-      homepageHeadline: dto.name + "'s cloud-pet homepage",
-      homepageOwnerStory: "A dedicated space for daily growth, memories, and shop recommendations.",
+      homepageHeadline: dto.name + "的云养宠主页",
+      homepageOwnerStory: "记录每日成长、珍贵回忆与专属商品推荐。",
       homepageShowGrowthArchive: true,
       homepageShowMallRecommendations: true,
       mood: 72,
@@ -1006,8 +1435,8 @@ export class CloudPetsService {
       timeline: [
         {
           type: "adoption",
-          title: dto.name + " arrived at the cloud-pet home",
-          body: "The first day is for learning the home's rhythm, scent, light, and the owner's voice.",
+          title: dto.name + "来到云养宠之家",
+          body: "第一天，从熟悉这里的节奏、气味、光线和主人的声音开始。",
           createdAt: new Date()
         }
       ]
@@ -1035,6 +1464,7 @@ export class CloudPetsService {
       growth: this.buildGrowthProfile(pet, completions),
       homepage: this.buildHomepageProfile(pet),
       timeline: pet.timeline.map((event) => ({
+        id: this.getTimelineEventId(event),
         type: event.type,
         title: event.title,
         body: event.body,
@@ -1049,13 +1479,39 @@ export class CloudPetsService {
   private buildHomepageProfile(pet: CloudPetRecord): CloudPetHomepageProfile {
     return {
       theme: this.getHomepageTheme(pet.homepageTheme),
-      headline: pet.homepageHeadline || pet.name + "'s cloud-pet homepage",
+      headline: pet.homepageHeadline || pet.name + "的云养宠主页",
       ownerStory:
         pet.homepageOwnerStory ||
-        "A dedicated space for daily growth, memories, and shop recommendations.",
+        "记录每日成长、珍贵回忆与专属商品推荐。",
       showGrowthArchive: pet.homepageShowGrowthArchive ?? true,
       showMallRecommendations: pet.homepageShowMallRecommendations ?? true
     };
+  }
+
+  private normalizeHomepageSettings(dto: UpdateCloudPetHomepageDto): UpdateCloudPetHomepageDto {
+    const settings: UpdateCloudPetHomepageDto = { ...dto };
+
+    if (dto.headline !== undefined) {
+      const headline = dto.headline.trim();
+
+      if (!headline) {
+        throw new BadRequestException("Homepage headline cannot be blank");
+      }
+
+      settings.headline = headline;
+    }
+
+    if (dto.ownerStory !== undefined) {
+      const ownerStory = dto.ownerStory.trim();
+
+      if (!ownerStory) {
+        throw new BadRequestException("Homepage owner story cannot be blank");
+      }
+
+      settings.ownerStory = ownerStory;
+    }
+
+    return settings;
   }
 
   private applyHomepageSettings(
@@ -1123,13 +1579,14 @@ export class CloudPetsService {
       {} as Record<string, number>
     );
     const labels: Record<string, string> = {
-      adoption: "Adoption",
-      growth_task: "Growth tasks",
-      daily_diary: "Daily diary"
+      adoption: "初次相遇",
+      growth_task: "成长任务",
+      daily_diary: "成长日记",
+      owner_note: "主人手记"
     };
 
     return [
-      { key: "all", label: "All", count: events.length },
+      { key: "all", label: "全部", count: events.length },
       ...Object.entries(counts).map(([key, count]) => ({
         key,
         label: labels[key] ?? key,
@@ -1149,9 +1606,9 @@ export class CloudPetsService {
   }
 
   private countMemoryHomepageVisits(petNo: string) {
-    return Array.from(this.homepageVisits.values()).filter(
-      (visit) => visit.petNo === petNo
-    ).length;
+    return Array.from(this.homepageVisits.values())
+      .filter((visit) => visit.petNo === petNo)
+      .reduce((total, visit) => total + visit.visitCount, 0);
   }
 
   private async buildCommerceReward(pet: CloudPetProfile) {
@@ -1164,11 +1621,11 @@ export class CloudPetsService {
     if (!isUnlocked) {
       return {
         status: "locked" as const,
-        title: "Complete today's care task",
+        title: "完成今日照护任务",
         description:
-          "Finish a cloud-pet growth task to unlock the homepage shop reward.",
+          "完成一项云养宠成长任务，即可解锁主页商城奖励。",
         ctaHref: "/member",
-        ctaLabel: "Go complete task",
+        ctaLabel: "去完成任务",
         recommendedProductSlug: recommendedProduct?.slug,
         recommendedProductTitle: recommendedProduct?.title
       };
@@ -1176,13 +1633,13 @@ export class CloudPetsService {
 
     return {
       status: "unlocked" as const,
-      title: "Today's cloud-pet shop reward",
+      title: "今日云养宠商城奖励",
       description:
-        "Daily care is complete. Use WELCOME20 on the pet mall recommendation.",
+        "今日照护已完成，可在宠物商城推荐中使用 WELCOME20。",
       couponCode: "WELCOME20",
       discountCents: 2000,
       ctaHref: "/shop",
-      ctaLabel: "Use reward in shop",
+      ctaLabel: "去商城使用奖励",
       recommendedProductSlug: recommendedProduct?.slug,
       recommendedProductTitle: recommendedProduct?.title
     };
@@ -1195,32 +1652,32 @@ export class CloudPetsService {
     return [
       {
         key: "open-homepage",
-        title: "Review the dedicated pet homepage",
-        description: "Today's " + task.title + " is now part of the growth archive.",
+        title: "查看宠物专属主页",
+        description: `今天的“${task.title}”已加入成长归档。`,
         href: "/cloud-pets/" + petNo,
-        ctaLabel: "Open homepage"
+        ctaLabel: "打开主页"
       },
       {
         key: "share-community",
-        title: "Share today's care moment",
+        title: "分享今日照护时刻",
         description:
-          "Turn the completed task into a community post for social retention.",
+          "把刚完成的任务写成社区动态，留下今天的互动记忆。",
         href: "/cloud-pets#community",
-        ctaLabel: "Post update"
+        ctaLabel: "发布动态"
       },
       {
         key: "shop-reward",
-        title: "Use the mall reward",
-        description: "Daily care unlocked the pet-aware shop recommendation path.",
+        title: "使用商城奖励",
+        description: "今日照护已解锁宠物专属商品推荐。",
         href: "/shop",
-        ctaLabel: "Visit shop"
+        ctaLabel: "前往商城"
       },
       {
         key: "continue-care",
-        title: "Plan tomorrow's care streak",
-        description: "Come back tomorrow to keep the growth calendar active.",
+        title: "规划明日连续照护",
+        description: "明天继续回来照护，让成长日历保持活跃。",
         href: "/member",
-        ctaLabel: "View member center"
+        ctaLabel: "查看会员中心"
       }
     ];
   }
@@ -1230,7 +1687,7 @@ export class CloudPetsService {
     completions: GrowthTaskCompletionRecord[]
   ): CloudPetGrowthProfile {
     const taskPoints = completions.reduce((total, completion) => {
-      const task = growthTasks.find((item) => item.key === completion.taskKey);
+      const task = this.findGrowthTask(completion.taskKey);
       return total + (task?.points ?? 0);
     }, 0);
     const experiencePoints = pet.intimacy + taskPoints;
@@ -1238,13 +1695,20 @@ export class CloudPetsService {
     const currentLevelExperience = this.getLevelThreshold(level);
     const nextLevelExperience = this.getLevelThreshold(level + 1);
     const progressRange = Math.max(nextLevelExperience - currentLevelExperience, 1);
-    const todayCompletedTaskCount = completions.filter(
+    const todayCompletions = completions.filter(
       (completion) => completion.completedDate === this.getTaskDate()
-    ).length;
+    );
+    const todayCompletedTaskCount = todayCompletions.length;
+    const todayCompletedTaskKeys = Array.from(
+      new Set(todayCompletions.map((completion) => completion.taskKey))
+    );
+    const isCareCompleteToday = todayCompletedTaskCount > 0;
+    const careStreak = this.buildCareStreak(completions);
+    const careScoreRules = this.careScoreRules;
     const careScore = Math.min(
       100,
       Math.round((pet.mood + pet.energy + pet.intimacy) / 3) +
-        todayCompletedTaskCount * 12
+        todayCompletedTaskCount * careScoreRules.dailyTaskBonus
     );
 
     return {
@@ -1261,10 +1725,52 @@ export class CloudPetsService {
           )
         )
       ),
-      careState: this.getCareState(todayCompletedTaskCount, careScore),
+      careState: this.getCareState(todayCompletedTaskCount, careScore, careScoreRules),
       careScore,
-      todayCompletedTaskCount
+      todayCompletedTaskCount,
+      todayCompletedTaskKeys,
+      isCareCompleteToday,
+      careStreakDays: careStreak.careStreakDays,
+      lastCareDate: careStreak.lastCareDate,
+      nextCarePrompt: this.buildNextCarePrompt(isCareCompleteToday, careStreak.careStreakDays)
     };
+  }
+
+  private buildCareStreak(completions: GrowthTaskCompletionRecord[]) {
+    const completedDates = Array.from(
+      new Set(completions.map((completion) => completion.completedDate))
+    ).sort((left, right) => right.localeCompare(left));
+
+    if (completedDates.length === 0) {
+      return { careStreakDays: 0, lastCareDate: undefined };
+    }
+
+    const completedDateSet = new Set(completedDates);
+    const today = this.getTaskDate();
+    let cursor = completedDateSet.has(today) ? today : this.addDays(today, -1);
+    let careStreakDays = 0;
+
+    while (completedDateSet.has(cursor)) {
+      careStreakDays += 1;
+      cursor = this.addDays(cursor, -1);
+    }
+
+    return {
+      careStreakDays,
+      lastCareDate: completedDates[0]
+    };
+  }
+
+  private buildNextCarePrompt(isCareCompleteToday: boolean, careStreakDays: number) {
+    if (!isCareCompleteToday) {
+      return "完成一个照顾任务，保住今天的成长记录";
+    }
+
+    if (careStreakDays >= 3) {
+      return "已形成连续照顾节奏，明天继续累积";
+    }
+
+    return "今天已照顾，明天回来继续累积连续天数";
   }
 
   private getGrowthLevel(experiencePoints: number) {
@@ -1297,17 +1803,137 @@ export class CloudPetsService {
 
   private getCareState(
     todayCompletedTaskCount: number,
-    careScore: number
+    careScore: number,
+    rules: CloudPetCareScoreRules
   ): CloudPetCareState {
-    if (todayCompletedTaskCount > 0 && careScore >= 70) {
+    const canThrive = rules.thrivingRequiresCareToday
+      ? todayCompletedTaskCount > 0
+      : true;
+
+    if (canThrive && careScore >= rules.thrivingMinScore) {
       return "thriving";
     }
 
-    if (careScore >= 60) {
+    if (careScore >= rules.steadyMinScore) {
       return "steady";
     }
 
     return "needs_care";
+  }
+
+  private findGrowthTask(taskKey: string) {
+    return this.growthTaskTemplates.find((task) => task.key === taskKey);
+  }
+
+  private getPrimaryDailyTask() {
+    return this.growthTaskTemplates[0];
+  }
+
+  private cloneGrowthTask(task: GrowthTask): GrowthTask {
+    return {
+      ...task,
+      rewards: { ...task.rewards }
+    };
+  }
+
+  private normalizeGrowthTaskTemplate(
+    input: UpdateGrowthTaskTemplateInput
+  ): Partial<Omit<GrowthTask, "key" | "rewards">> {
+    const normalized: Partial<Omit<GrowthTask, "key" | "rewards">> = {};
+
+    if (input.title !== undefined) {
+      const title = input.title.trim();
+      if (title.length < 2 || title.length > 80) {
+        throw new BadRequestException("title must be 2 to 80 characters");
+      }
+      normalized.title = title;
+    }
+
+    if (input.description !== undefined) {
+      const description = input.description.trim();
+      if (description.length < 10 || description.length > 240) {
+        throw new BadRequestException("description must be 10 to 240 characters");
+      }
+      normalized.description = description;
+    }
+
+    if (input.points !== undefined) {
+      normalized.points = this.normalizeCareScoreNumber(input.points, "points", 0, 100);
+    }
+
+    return normalized;
+  }
+
+  private normalizeGrowthTaskRewards(
+    rewards: Partial<GrowthTask["rewards"]>
+  ): Partial<GrowthTask["rewards"]> {
+    const normalized: Partial<GrowthTask["rewards"]> = {};
+
+    if (rewards.mood !== undefined) {
+      normalized.mood = this.normalizeCareScoreNumber(rewards.mood, "rewards.mood", 0, 50);
+    }
+
+    if (rewards.energy !== undefined) {
+      normalized.energy = this.normalizeCareScoreNumber(rewards.energy, "rewards.energy", 0, 50);
+    }
+
+    if (rewards.intimacy !== undefined) {
+      normalized.intimacy = this.normalizeCareScoreNumber(rewards.intimacy, "rewards.intimacy", 0, 50);
+    }
+
+    return normalized;
+  }
+
+  private normalizeCareScoreRules(
+    input: UpdateCloudPetCareScoreRulesInput
+  ): Partial<CloudPetCareScoreRules> {
+    const normalized: Partial<CloudPetCareScoreRules> = {};
+
+    if (input.dailyTaskBonus !== undefined) {
+      normalized.dailyTaskBonus = this.normalizeCareScoreNumber(
+        input.dailyTaskBonus,
+        "dailyTaskBonus",
+        0,
+        50
+      );
+    }
+
+    if (input.steadyMinScore !== undefined) {
+      normalized.steadyMinScore = this.normalizeCareScoreNumber(
+        input.steadyMinScore,
+        "steadyMinScore",
+        0,
+        100
+      );
+    }
+
+    if (input.thrivingMinScore !== undefined) {
+      normalized.thrivingMinScore = this.normalizeCareScoreNumber(
+        input.thrivingMinScore,
+        "thrivingMinScore",
+        0,
+        100
+      );
+    }
+
+    if (input.thrivingRequiresCareToday !== undefined) {
+      normalized.thrivingRequiresCareToday = Boolean(input.thrivingRequiresCareToday);
+    }
+
+    return normalized;
+  }
+
+  private normalizeCareScoreNumber(
+    value: number,
+    field: string,
+    min: number,
+    max: number
+  ) {
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value < min || value > max) {
+      throw new BadRequestException(field + " must be an integer from " + min + " to " + max);
+    }
+
+    return value;
   }
 
   private getMemoryTaskCompletionsForPet(petNo: string) {
@@ -1343,11 +1969,53 @@ export class CloudPetsService {
     }
   }
 
+  private assertOwnerDiaryNoteQuota(pet: CloudPetRecord) {
+    const ownerNoteCountToday = pet.timeline.filter(
+      (event) => event.type === "owner_note" && this.toIsoDate(event.createdAt) === this.getTaskDate()
+    ).length;
+
+    if (ownerNoteCountToday >= MAX_OWNER_DIARY_NOTES_PER_DAY) {
+      throw new ConflictException("Daily owner diary note limit reached");
+    }
+  }
+
+  private async assertOwnerDiaryNoteQuotaForDatabase(petId: string) {
+    const ownerNoteCountToday = await this.prisma.virtualPetEvent.count({
+      where: {
+        petId,
+        type: "owner_note",
+        createdAt: {
+          gte: this.createDiaryCreatedAt(this.getTaskDate()),
+          lt: this.createDiaryCreatedAt(this.addDays(this.getTaskDate(), 1))
+        }
+      }
+    });
+
+    if (ownerNoteCountToday >= MAX_OWNER_DIARY_NOTES_PER_DAY) {
+      throw new ConflictException("Daily owner diary note limit reached");
+    }
+  }
+
+  private buildOwnerDiaryNoteEvent(
+    petName: string,
+    dto: CreateCloudPetDiaryNoteDto
+  ): CloudPetTimelineEventInput {
+    const title = dto.title?.trim() || petName + "的主人手记";
+
+    return {
+      id: "note_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      type: "owner_note",
+      title,
+      body: dto.body.trim(),
+      createdAt: new Date()
+    };
+  }
+
   private buildGrowthTaskEvent(task: GrowthTask): CloudPetTimelineEventInput {
     return {
       type: "growth_task",
-      title: "Completed " + task.title,
-      body: task.description + " Reward: " + task.points + " growth points.",
+      title: "完成“" + task.title + "”",
+      body: task.description + " 获得 " + task.points + " 成长积分。",
       createdAt: new Date()
     };
   }
@@ -1365,20 +2033,13 @@ export class CloudPetsService {
       (product) => product.petType === pet.species || product.petType === "both"
     );
     const productSentence = recommendedProduct
-      ? " Recommended mall item: " + recommendedProduct.title + "."
-      : " Recommended mall item will refresh when the catalog is ready.";
+      ? " 推荐商品：" + this.getProductDisplayTitle(recommendedProduct.title) + "。"
+      : " 商品目录准备好后会刷新推荐。";
 
     return {
       type: "daily_diary",
-      title: "Daily diary for " + pet.name,
-      body:
-        pet.name +
-        " completed " +
-        task.title +
-        " today and earned " +
-        task.points +
-        " growth points. WELCOME20 is ready for today's pet-aware shop reward." +
-        productSentence,
+      title: pet.name + "的成长日记",
+      body: `${pet.name}今天完成了“${task.title}”，获得 ${task.points} 成长积分。今日宠物商城奖励可使用 WELCOME20。${productSentence}`,
       createdAt
     };
   }
@@ -1395,18 +2056,13 @@ export class CloudPetsService {
       (product) => product.petType === pet.species || product.petType === "both"
     );
     const productSentence = recommendedProduct
-      ? " Recommended mall item: " + recommendedProduct.title + "."
-      : " Recommended mall item will refresh when the catalog is ready.";
+      ? " 推荐商品：" + this.getProductDisplayTitle(recommendedProduct.title) + "。"
+      : " 商品目录准备好后会刷新推荐。";
 
     return {
       type: "daily_diary",
-      title: "Daily diary for " + pet.name,
-      body:
-        pet.name +
-        " spent a calm day in the cloud-pet home on " +
-        date +
-        ". No new growth task was completed, but the daily presence record is now restored." +
-        productSentence,
+      title: pet.name + "的成长日记",
+      body: `${pet.name}在 ${date} 度过了安静的一天。今天没有完成新的成长任务，这条陪伴记录已补入日记。${productSentence}`,
       createdAt: this.createDiaryCreatedAt(date)
     };
   }
@@ -1420,6 +2076,13 @@ export class CloudPetsService {
       body: event.body,
       createdAt: event.createdAt.toISOString()
     };
+  }
+
+  private getProductDisplayTitle(title: string) {
+    return {
+      "Durable bite rope": "耐咬棉绳玩具",
+      "Cat teaser wand set": "猫咪逗趣羽毛杆套装"
+    }[title] ?? title;
   }
 
   private toDailyDiaryGenerationResult(
@@ -1479,7 +2142,7 @@ export class CloudPetsService {
               name: pet.name,
               species: pet.species
             },
-            growthTasks[0],
+            this.getPrimaryDailyTask(),
             this.createDiaryCreatedAt(date)
           )
         : await this.buildPresenceDailyDiaryEvent(
@@ -1598,6 +2261,19 @@ export class CloudPetsService {
     return petNo + ":" + taskKey + ":" + this.getTaskDate();
   }
 
+  private getTimelineEventId(event: { id?: string; createdAt: Date | string }) {
+    return event.id ?? this.toEventDate(event.createdAt);
+  }
+
+  private toEventDate(createdAt: Date | string) {
+    return createdAt instanceof Date ? createdAt.toISOString() : createdAt;
+  }
+  private addDays(date: string, dayDelta: number) {
+    const next = new Date(date + "T00:00:00.000Z");
+    next.setUTCDate(next.getUTCDate() + dayDelta);
+    return next.toISOString().slice(0, 10);
+  }
+
   private getTaskDate() {
     return new Date().toISOString().slice(0, 10);
   }
@@ -1627,6 +2303,9 @@ export class CloudPetsService {
   }
 
   private isDatabaseConfigured() {
-    return Boolean(this.configService.get<string>("DATABASE_URL"));
+    return (
+      this.configService.get<string>("KZT_USE_MEMORY_STORE") !== "true" &&
+      Boolean(this.configService.get<string>("DATABASE_URL"))
+    );
   }
 }

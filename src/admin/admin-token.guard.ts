@@ -21,8 +21,7 @@ export class AdminTokenGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const sessionToken = request.header("x-admin-session");
     const token = request.header("x-admin-token");
-    const expectedToken =
-      this.configService.get<string>("ADMIN_API_KEY") ?? "dev-admin-key";
+    const expectedToken = this.configService.get<string>("ADMIN_API_KEY");
 
     if (sessionToken) {
       const staff = await this.adminAuthService.getSession(sessionToken);

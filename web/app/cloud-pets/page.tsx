@@ -8,7 +8,7 @@ export default function CloudPetsPage() {
 
       <section className="cloud-pets-hero">
         <div className="cloud-pets-hero__inner">
-          <p className="section__kicker">Naigai & Niangao Cloud Pets</p>
+          <p className="section__kicker">云养宠主线</p>
           <h1>把云养宠、主页、社区和商城做成一条活的链路</h1>
           <p>
             用户先定制一只宠物，再拥有专属主页、发布互动日常，最后自然进入宠物商城完成购买。

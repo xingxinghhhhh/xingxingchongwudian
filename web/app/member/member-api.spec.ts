@@ -4,6 +4,8 @@ import {
   getCurrentMemberProfile,
   getMemberProfile,
   loginMember,
+  logoutMember,
+  requestMemberVerification,
   redeemMemberPoints
 } from "./member-api";
 
@@ -93,7 +95,9 @@ describe("member api client", () => {
       })
     });
 
-    await expect(getMemberProfile("13800138000", fetcher)).resolves.toMatchObject({
+    await expect(
+      getMemberProfile("13800138000", "member_session_001", fetcher)
+    ).resolves.toMatchObject({
       member: {
         phone: "13800138000",
         points: 54
@@ -128,15 +132,60 @@ describe("member api client", () => {
     });
     expect(fetcher).toHaveBeenCalledWith(
       "http://localhost:3000/api/members/13800138000",
-      { cache: "no-store" }
+      {
+        cache: "no-store",
+        headers: {
+          "X-Member-Token": "member_session_001"
+        }
+      }
     );
   });
 
-  it("logs in a member and stores the session token contract", async () => {
+  it("requests a verification code before member login", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        challengeId: "verify_202605260001abcd",
+        expiresAt: "2026-06-25T00:05:00.000Z",
+        retryAfterSeconds: 60,
+        developmentCode: "123456"
+      })
+    });
+
+    await expect(
+      requestMemberVerification(
+        {
+          name: "Session Owner",
+          phone: "13600136000"
+        },
+        fetcher
+      )
+    ).resolves.toMatchObject({
+      challengeId: "verify_202605260001abcd",
+      developmentCode: "123456"
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/auth/verification-codes",
+      {
+        body: JSON.stringify({
+          name: "Session Owner",
+          phone: "13600136000"
+        }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+  });
+
+  it("logs in a member with a verification challenge", async () => {
     const fetcher = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         sessionToken: "member_202605260001",
+        expiresAt: "2026-06-25T00:00:00.000Z",
         member: {
           name: "Session Owner",
           phone: "13600136000"
@@ -147,8 +196,8 @@ describe("member api client", () => {
     await expect(
       loginMember(
         {
-          name: "Session Owner",
-          phone: "13600136000"
+          challengeId: "verify_202605260001abcd",
+          code: "123456"
         },
         fetcher
       )
@@ -162,12 +211,35 @@ describe("member api client", () => {
       "http://localhost:3000/api/auth/login",
       {
         body: JSON.stringify({
-          name: "Session Owner",
-          phone: "13600136000"
+          challengeId: "verify_202605260001abcd",
+          code: "123456"
         }),
         cache: "no-store",
         headers: {
           "Content-Type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+  });
+
+  it("logs out the active member session through the API", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true })
+    });
+
+    await expect(
+      logoutMember("member_202605260001", fetcher)
+    ).resolves.toEqual({ success: true });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/auth/logout",
+      {
+        body: JSON.stringify({}),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_202605260001"
         },
         method: "POST"
       }
@@ -191,7 +263,7 @@ describe("member api client", () => {
 
     await expect(
       createMemberAddress(
-        "13800138000",
+        "member_session_001",
         {
           receiverName: "Member Owner",
           phone: "13800138000",
@@ -208,7 +280,7 @@ describe("member api client", () => {
       isDefault: true
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "http://localhost:3000/api/members/13800138000/addresses",
+      "http://localhost:3000/api/members/me/addresses",
       {
         body: JSON.stringify({
           receiverName: "Member Owner",
@@ -221,7 +293,8 @@ describe("member api client", () => {
         }),
         cache: "no-store",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_session_001"
         },
         method: "POST"
       }
@@ -244,7 +317,7 @@ describe("member api client", () => {
 
     await expect(
       redeemMemberPoints(
-        "13800138000",
+        "member_session_001",
         {
           rewardKey: "points-coupon-8"
         },
@@ -255,14 +328,15 @@ describe("member api client", () => {
       remainingPoints: 24
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "http://localhost:3000/api/members/13800138000/points/redemptions",
+      "http://localhost:3000/api/members/me/points/redemptions",
       {
         body: JSON.stringify({
           rewardKey: "points-coupon-8"
         }),
         cache: "no-store",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_session_001"
         },
         method: "POST"
       }
@@ -356,7 +430,7 @@ describe("member api client", () => {
     });
 
     await expect(
-      completeGrowthTask("VP001", "daily-care", fetcher)
+      completeGrowthTask("VP001", "daily-care", "member_202607140000", fetcher)
     ).resolves.toMatchObject({
       completedTask: {
         key: "daily-care"
@@ -377,6 +451,42 @@ describe("member api client", () => {
       "http://localhost:3000/api/cloud-pets/VP001/growth-tasks/daily-care/complete",
       {
         cache: "no-store",
+        headers: {
+          "X-Member-Token": "member_202607140000"
+        },
+        method: "POST"
+      }
+    );
+  });
+  it("sends the member session token when completing a pet growth task", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        completedTask: {
+          key: "daily-care",
+          points: 20
+        },
+        pet: {
+          petNo: "VP001"
+        },
+        nextActions: []
+      })
+    });
+
+    await completeGrowthTask(
+      "VP001",
+      "daily-care",
+      "member_202607140001",
+      fetcher
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/cloud-pets/VP001/growth-tasks/daily-care/complete",
+      {
+        cache: "no-store",
+        headers: {
+          "X-Member-Token": "member_202607140001"
+        },
         method: "POST"
       }
     );

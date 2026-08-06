@@ -9,11 +9,10 @@ export default function DailyDiaryCoveragePage() {
 
       <section className="admin-hero">
         <div className="admin-hero__inner">
-          <p className="section__kicker">Cloud Pet Ops</p>
-          <h1>Daily Diary Coverage Recovery</h1>
+          <p className="section__kicker">云养宠运营</p>
+          <h1>日记缺口覆盖状态</h1>
           <p>
-            Inspect missing pet diary coverage, recover gaps, and keep the cloud-pet
-            retention loop active.
+            查看指定日期的云养宠日记覆盖情况，一键补救缺失记录。
           </p>
         </div>
       </section>

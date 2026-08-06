@@ -1,0 +1,4 @@
+.site-header,
+nextjs-portal {
+  visibility: hidden !important;
+}

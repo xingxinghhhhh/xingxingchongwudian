@@ -5,6 +5,12 @@ import { Copy } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { formatCents } from "../../shop/shop-api";
 import {
+  getMemberCancelReasonLabel,
+  getPaymentFailureLabel,
+  getPaymentProviderLabel,
+  getPaymentStatusLabel
+} from "../../shop/shop-copy";
+import {
   adminLogout,
   AdminPaymentDetail,
   AdminPaymentFailureCode,
@@ -17,6 +23,7 @@ import {
   getAdminPayment,
   listAdminPayments
 } from "../admin-api";
+import { getAdminRoleLabel, getAdminStaffNameLabel, getStatusLabel } from "../admin-copy";
 
 const defaultToken = "";
 
@@ -72,14 +79,6 @@ function buildPaymentListUrl(filters: PaymentFilters, paymentIntentId?: string |
   return `/admin/payments${query ? `?${query}` : ""}`;
 }
 
-const failureReasonLabels: Record<AdminPaymentFailureCode, string> = {
-  INSUFFICIENT_BALANCE: "Insufficient balance",
-  PAYMENT_DECLINED: "Payment declined",
-  PROVIDER_UNAVAILABLE: "Provider unavailable",
-  USER_CANCELLED_PAYMENT: "User cancelled payment",
-  UNKNOWN_PROVIDER_ERROR: "Unknown provider error"
-};
-
 function describeFailure(payment: {
   failureCode?: AdminPaymentFailureCode;
   failureMessage?: string;
@@ -88,8 +87,7 @@ function describeFailure(payment: {
     return null;
   }
 
-  const label = failureReasonLabels[payment.failureCode] ?? payment.failureCode;
-  return payment.failureMessage ? `${label} / ${payment.failureMessage}` : label;
+  return getPaymentFailureLabel(payment.failureCode, payment.failureMessage);
 }
 
 function formatMetadataValue(value: unknown) {
@@ -110,19 +108,27 @@ function describeLedgerMetadata(metadata?: Record<string, unknown>) {
   }
 
   const labels: Record<string, string> = {
-    attemptNo: "Attempt",
-    closeReason: "Close reason",
-    failureCode: "Failure code",
-    failureMessage: "Failure message",
-    memberCancelNote: "Member note",
-    memberCancelReason: "Member reason",
-    previousPaymentIntentId: "Previous intent",
-    reason: "Reason"
+    attemptNo: "支付次数",
+    closeReason: "关闭原因",
+    failureCode: "失败原因",
+    failureMessage: "失败说明",
+    memberCancelNote: "会员备注",
+    memberCancelReason: "会员取消原因",
+    previousPaymentIntentId: "上一次支付单",
+    reason: "原因"
   };
 
   return Object.entries(metadata)
     .map(([key, value]) => {
-      const formattedValue = formatMetadataValue(value);
+      if (key === "failureMessage" && metadata.failureCode) {
+        return null;
+      }
+
+      const formattedValue = key === "failureCode"
+        ? getPaymentFailureLabel(String(value))
+        : key === "memberCancelReason"
+          ? getMemberCancelReasonLabel(String(value))
+          : formatMetadataValue(value);
       if (!formattedValue) {
         return null;
       }
@@ -130,6 +136,16 @@ function describeLedgerMetadata(metadata?: Record<string, unknown>) {
       return `${labels[key] ?? key}: ${formattedValue}`;
     })
     .filter((item): item is string => Boolean(item));
+}
+
+function getLedgerEventTypeLabel(eventType: string) {
+  return {
+    payment_created: "支付单已创建",
+    payment_confirmed: "支付已确认",
+    payment_failed: "支付失败",
+    payment_expired: "支付已过期",
+    payment_cancelled: "支付已取消"
+  }[eventType] ?? eventType;
 }
 
 export function PaymentsConsole() {
@@ -144,7 +160,7 @@ export function PaymentsConsole() {
   const [expireLoading, setExpireLoading] = useState(false);
   const [expireSummary, setExpireSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [statusText, setStatusText] = useState("Loading payment ledger.");
+  const [statusText, setStatusText] = useState("正在加载支付流水...");
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
 
   useEffect(() => {
@@ -171,7 +187,7 @@ export function PaymentsConsole() {
   ) {
     if (!nextToken) {
       setLoading(false);
-      setError("Admin session required");
+      setError("需要后台登录会话");
       return;
     }
 
@@ -194,7 +210,7 @@ export function PaymentsConsole() {
       ]);
       setCurrentStaff(staff);
       setPayments(items);
-      setStatusText(`Loaded ${items.length} payment intents.`);
+      setStatusText(`已加载 ${items.length} 条支付单。`);
 
       if (nextSelectedPaymentId) {
         await loadPaymentDetail(nextSelectedPaymentId, nextToken, nextFilters);
@@ -210,7 +226,7 @@ export function PaymentsConsole() {
         return;
       }
 
-      setError(caught instanceof Error ? caught.message : "Failed to load payments");
+      setError(caught instanceof Error ? caught.message : "支付流水加载失败");
     } finally {
       setLoading(false);
     }
@@ -226,7 +242,7 @@ export function PaymentsConsole() {
       setSelectedPayment(detail);
       window.history.replaceState({}, "", buildPaymentListUrl(nextFilters, paymentIntentId));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to load payment detail");
+      setError(caught instanceof Error ? caught.message : "支付详情加载失败");
     } finally {
       setDetailLoading(false);
     }
@@ -234,7 +250,7 @@ export function PaymentsConsole() {
 
   async function handleCopy(value: string) {
     if (!navigator.clipboard?.writeText) {
-      setError("Clipboard is not available in this browser.");
+      setError("当前浏览器不支持剪贴板。");
       return;
     }
 
@@ -257,7 +273,7 @@ export function PaymentsConsole() {
 
   async function handleExpireOverdue() {
     if (!token) {
-      setError("Admin session required");
+      setError("需要后台登录会话");
       return;
     }
 
@@ -268,11 +284,11 @@ export function PaymentsConsole() {
     try {
       const result = await expireOverduePayments(token, { limit: 50 });
       setExpireSummary(
-        `Scanned ${result.scannedCount}; expired ${result.expiredIntentCount}; closed ${result.closedOrderCount}; inventory released ${result.inventoryReleasedCount}; skipped ${result.skippedCount}; failed ${result.failedCount}.`
+        `已扫描 ${result.scannedCount} 条；过期 ${result.expiredIntentCount} 条；关闭订单 ${result.closedOrderCount} 笔；释放库存 ${result.inventoryReleasedCount} 件；跳过 ${result.skippedCount} 条；失败 ${result.failedCount} 条。`
       );
       await loadPayments(token);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to expire overdue payments");
+      setError(caught instanceof Error ? caught.message : "逾期支付处理失败");
     } finally {
       setExpireLoading(false);
     }
@@ -283,7 +299,7 @@ export function PaymentsConsole() {
       try {
         await adminLogout(token);
       } catch {
-        // Ignore logout failure and clear local session anyway.
+        // 无论接口是否成功，前端会话都必须清除。
       }
     }
 
@@ -295,45 +311,45 @@ export function PaymentsConsole() {
     <div className="admin-console">
       <section className="admin-card admin-card--token">
         <div>
-          <p className="section__kicker">Payments</p>
-          <h2>Payment Intent Ledger</h2>
-          <p>Track order payments, provider states, and ledger events in one place.</p>
+          <p className="section__kicker">支付流水</p>
+          <h2>支付单与事件账本</h2>
+          <p>集中查看订单支付、渠道状态和追加式流水事件。</p>
         </div>
         <div className="admin-token-form">
           <div>
-            <strong>{currentStaff?.name ?? "Staff session"}</strong>
-            <span>{currentStaff ? currentStaff.role : "validating"}</span>
+            <strong>{currentStaff ? getAdminStaffNameLabel(currentStaff.name) : "员工会话"}</strong>
+            <span>{currentStaff ? getAdminRoleLabel(currentStaff.role) : "校验中"}</span>
           </div>
           <button className="admin-button" onClick={() => void loadPayments(token)} type="button">
-            Refresh payments
+            刷新支付流水
           </button>
           <button className="admin-button" disabled={expireLoading} onClick={() => void handleExpireOverdue()} type="button">
-            {expireLoading ? "Processing..." : "Process overdue payments"}
+            {expireLoading ? "处理中..." : "处理逾期支付"}
           </button>
           <button
             className="admin-button admin-button--ghost"
             onClick={() => void handleLogout()}
             type="button"
           >
-            Sign out
+            退出登录
           </button>
         </div>
         <div className="admin-inline-actions">
           <Link className="admin-button admin-button--ghost" href="/admin">
-            Back to dashboard
+            返回仪表盘
           </Link>
         </div>
         <p className={error ? "admin-status admin-status--error" : "admin-status"}>
-          {error ?? expireSummary ?? (loading ? "Loading payments..." : statusText)}
+          {error ?? expireSummary ?? (loading ? "正在加载支付流水..." : statusText)}
         </p>
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Filters</p>
-        <h2>Search Payment Intents</h2>
+        <p className="section__kicker">筛选</p>
+        <h2>查询支付单</h2>
         <form className="admin-inline-actions" onSubmit={(event) => void handleSubmit(event)}>
           <label>
-            Order No
+            订单号
             <input
               onChange={(event) =>
                 setFilters((current) => ({ ...current, orderId: event.target.value }))
@@ -342,7 +358,7 @@ export function PaymentsConsole() {
             />
           </label>
           <label>
-            Status
+            状态
             <select
               onChange={(event) =>
                 setFilters((current) => ({
@@ -352,17 +368,17 @@ export function PaymentsConsole() {
               }
               value={filters.status}
             >
-              <option value="">All</option>
-              <option value="created">created</option>
-              <option value="pending">pending</option>
-              <option value="paid">paid</option>
-              <option value="failed">failed</option>
-              <option value="expired">expired</option>
-              <option value="cancelled">cancelled</option>
+              <option value="">全部</option>
+              <option value="created">已创建</option>
+              <option value="pending">待支付</option>
+              <option value="paid">已支付</option>
+              <option value="failed">支付失败</option>
+              <option value="expired">已过期</option>
+              <option value="cancelled">已取消</option>
             </select>
           </label>
           <label>
-            Provider
+            支付渠道
             <select
               onChange={(event) =>
                 setFilters((current) => ({
@@ -372,13 +388,13 @@ export function PaymentsConsole() {
               }
               value={filters.provider}
             >
-              <option value="">All</option>
-              <option value="mock_wechat">mock_wechat</option>
-              <option value="mock_alipay">mock_alipay</option>
+              <option value="">全部</option>
+              <option value="mock_wechat">模拟微信</option>
+              <option value="mock_alipay">模拟支付宝</option>
             </select>
           </label>
           <label>
-            Failure
+            失败原因
             <select
               onChange={(event) =>
                 setFilters((current) => ({
@@ -388,12 +404,12 @@ export function PaymentsConsole() {
               }
               value={filters.failureCode}
             >
-              <option value="">All</option>
-              <option value="INSUFFICIENT_BALANCE">INSUFFICIENT_BALANCE</option>
-              <option value="PAYMENT_DECLINED">PAYMENT_DECLINED</option>
-              <option value="PROVIDER_UNAVAILABLE">PROVIDER_UNAVAILABLE</option>
-              <option value="USER_CANCELLED_PAYMENT">USER_CANCELLED_PAYMENT</option>
-              <option value="UNKNOWN_PROVIDER_ERROR">UNKNOWN_PROVIDER_ERROR</option>
+              <option value="">全部</option>
+              <option value="INSUFFICIENT_BALANCE">余额不足</option>
+              <option value="PAYMENT_DECLINED">支付被拒绝</option>
+              <option value="PROVIDER_UNAVAILABLE">支付渠道不可用</option>
+              <option value="USER_CANCELLED_PAYMENT">用户取消支付</option>
+              <option value="UNKNOWN_PROVIDER_ERROR">未知渠道错误</option>
             </select>
           </label>
           <label>
@@ -404,26 +420,26 @@ export function PaymentsConsole() {
               }
               type="checkbox"
             />
-            Overdue only
+            仅看逾期
           </label>
           <button className="admin-button" disabled={loading} type="submit">
-            Apply filters
+            应用筛选
           </button>
           <button
             className="admin-button admin-button--ghost"
             onClick={handleResetFilters}
             type="button"
           >
-            Reset
+            重置
           </button>
         </form>
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Payment List</p>
-        <h2>Ledger Overview</h2>
+        <p className="section__kicker">支付列表</p>
+        <h2>支付流水概览</h2>
         {payments.length === 0 && !loading ? (
-          <p className="admin-muted">No payment intents matched these filters.</p>
+          <p className="admin-muted">没有符合当前筛选条件的支付单。</p>
         ) : null}
         <div className="admin-list">
           {payments.map((payment) => {
@@ -439,29 +455,29 @@ export function PaymentsConsole() {
                 <div>
                   <strong>{payment.id}</strong>
                   <span>
-                    {payment.orderId} / {payment.memberId} / {payment.provider}
+                    {payment.orderId} / {payment.memberId} / {getPaymentProviderLabel(payment.provider)}
                   </span>
                   <p>
-                    Attempt {payment.attemptNo} / {payment.status} / {formatCents(payment.amount)} / {payment.providerTradeNo ?? "No provider trade no"}
+                    第 {payment.attemptNo} 次 / {getPaymentStatusLabel(payment.status)} / {formatCents(payment.amount)} / {payment.providerTradeNo ?? "暂无渠道流水号"}
                   </p>
                   <p>
-                    Expires {payment.expiresAt ? new Date(payment.expiresAt).toLocaleString() : "not set"} / {payment.remainingSeconds === 0 ? "overdue" : payment.remainingSeconds ? `${payment.remainingSeconds}s left` : payment.orderCloseReason ?? payment.orderStatus}
+                    过期时间 {payment.expiresAt ? new Date(payment.expiresAt).toLocaleString() : "未设置"} / {payment.remainingSeconds === 0 ? "已逾期" : payment.remainingSeconds ? `剩余 ${payment.remainingSeconds} 秒` : payment.orderCloseReason ?? getStatusLabel(payment.orderStatus)}
                   </p>
-                  {failureText ? <p>Failure {failureText}</p> : null}
+                  {failureText ? <p>失败原因：{failureText}</p> : null}
                   {payment.orderMemberCancelReason ? (
                     <p>
-                      Cancel reason {payment.orderMemberCancelReason}
+                      取消原因：{getMemberCancelReasonLabel(payment.orderMemberCancelReason)}
                       {payment.orderMemberCancelNote ? ` / ${payment.orderMemberCancelNote}` : ""}
                     </p>
                   ) : null}
                 </div>
                 <em>
                   {payment.paidAt
-                    ? `Paid ${new Date(payment.paidAt).toLocaleString()}`
+                    ? `支付于 ${new Date(payment.paidAt).toLocaleString()}`
                     : payment.failedAt
-                      ? `Failed ${new Date(payment.failedAt).toLocaleString()}`
+                      ? `失败于 ${new Date(payment.failedAt).toLocaleString()}`
                       : payment.cancelledAt
-                        ? `Cancelled ${new Date(payment.cancelledAt).toLocaleString()}`
+                        ? `取消于 ${new Date(payment.cancelledAt).toLocaleString()}`
                         : new Date(payment.createdAt).toLocaleString()}
                 </em>
               </button>
@@ -471,62 +487,62 @@ export function PaymentsConsole() {
       </section>
 
       <section className="admin-card">
-        <p className="section__kicker">Payment Detail</p>
-        <h2>Intent And Ledger Events</h2>
-        {detailLoading ? <p className="admin-muted">Loading payment detail...</p> : null}
+        <p className="section__kicker">支付详情</p>
+        <h2>支付单与流水事件</h2>
+        {detailLoading ? <p className="admin-muted">正在加载支付详情...</p> : null}
         {!detailLoading && !selectedPayment ? (
-          <p className="admin-muted">Select a payment intent to inspect ledger events.</p>
+          <p className="admin-muted">请选择一条支付单查看流水事件。</p>
         ) : null}
         {selectedPayment ? (
           <>
             <div className="admin-metrics">
               <article className="admin-metric admin-metric--with-action">
-                <span>Intent</span>
+                <span>支付单</span>
                 <strong>{selectedPayment.paymentIntent.id}</strong>
                 <button
-                  aria-label="Copy payment intent id"
+                  aria-label="复制支付单号"
                   className="admin-copy-button"
                   onClick={() => void handleCopy(selectedPayment.paymentIntent.id)}
-                  title="Copy payment intent id"
+                  title="复制支付单号"
                   type="button"
                 >
                   <Copy size={14} />
                 </button>
-                {copiedValue === selectedPayment.paymentIntent.id ? <small>Copied</small> : null}
+                {copiedValue === selectedPayment.paymentIntent.id ? <small>已复制</small> : null}
               </article>
               <article className="admin-metric">
-                <span>Status</span>
-                <strong>{selectedPayment.paymentIntent.status}</strong>
+                <span>状态</span>
+                <strong>{getPaymentStatusLabel(selectedPayment.paymentIntent.status)}</strong>
               </article>
               <article className="admin-metric admin-metric--with-action">
-                <span>Order</span>
+                <span>订单</span>
                 <strong>{selectedPayment.paymentIntent.orderId}</strong>
                 <button
-                  aria-label="Copy order id"
+                  aria-label="复制订单号"
                   className="admin-copy-button"
                   onClick={() => void handleCopy(selectedPayment.paymentIntent.orderId)}
-                  title="Copy order id"
+                  title="复制订单号"
                   type="button"
                 >
                   <Copy size={14} />
                 </button>
-                {copiedValue === selectedPayment.paymentIntent.orderId ? <small>Copied</small> : null}
+                {copiedValue === selectedPayment.paymentIntent.orderId ? <small>已复制</small> : null}
               </article>
               <article className="admin-metric">
-                <span>Amount</span>
+                <span>金额</span>
                 <strong>{formatCents(selectedPayment.paymentIntent.amount)}</strong>
               </article>
               <article className="admin-metric">
-                <span>Expires</span>
-                <strong>{selectedPayment.paymentIntent.expiresAt ? new Date(selectedPayment.paymentIntent.expiresAt).toLocaleString() : "not set"}</strong>
+                <span>过期时间</span>
+                <strong>{selectedPayment.paymentIntent.expiresAt ? new Date(selectedPayment.paymentIntent.expiresAt).toLocaleString() : "未设置"}</strong>
               </article>
             </div>
             {describeFailure(selectedPayment.paymentIntent) ? (
-              <p className="admin-muted">Failure: {describeFailure(selectedPayment.paymentIntent)}</p>
+              <p className="admin-muted">失败原因：{describeFailure(selectedPayment.paymentIntent)}</p>
             ) : null}
             {selectedPayment.paymentIntent.orderMemberCancelReason ? (
               <p className="admin-muted">
-                Cancellation: {selectedPayment.paymentIntent.orderMemberCancelReason}
+                取消原因：{getMemberCancelReasonLabel(selectedPayment.paymentIntent.orderMemberCancelReason)}
                 {selectedPayment.paymentIntent.orderMemberCancelNote ? ` / ${selectedPayment.paymentIntent.orderMemberCancelNote}` : ""}
               </p>
             ) : null}
@@ -540,13 +556,13 @@ export function PaymentsConsole() {
                     type="button"
                   >
                     <div>
-                      <strong>Attempt {intent.attemptNo}</strong>
+                      <strong>第 {intent.attemptNo} 次支付</strong>
                       <span>
-                        {intent.id} / {intent.provider} / {intent.status}
+                        {intent.id} / {getPaymentProviderLabel(intent.provider)} / {getPaymentStatusLabel(intent.status)}
                       </span>
-                      <p>{describeFailure(intent) ?? (intent.previousPaymentIntentId ? `Previous attempt ${intent.previousPaymentIntentId}` : "No failure recorded")}</p>
+                      <p>{describeFailure(intent) ?? (intent.previousPaymentIntentId ? `上一次支付单 ${intent.previousPaymentIntentId}` : "暂无失败记录")}</p>
                       {selectedPayment.paymentIntent.id === intent.id ? (
-                        <p>Current detail</p>
+                        <p>当前详情</p>
                       ) : null}
                     </div>
                     <em>{new Date(intent.createdAt).toLocaleString()}</em>
@@ -561,9 +577,9 @@ export function PaymentsConsole() {
                 return (
                   <div className="admin-row" key={entry.id}>
                     <div>
-                      <strong>{entry.eventType}</strong>
+                      <strong>{getLedgerEventTypeLabel(entry.eventType)}</strong>
                       <span>
-                        {entry.status} / {entry.provider} / {entry.providerTradeNo ?? "No provider trade no"}
+                        {getStatusLabel(entry.status)} / {getPaymentProviderLabel(entry.provider)} / {entry.providerTradeNo ?? "暂无渠道流水号"}
                       </span>
                       <p>{entry.idempotencyKey}</p>
                       {metadataLines.map((line) => (
@@ -581,5 +597,3 @@ export function PaymentsConsole() {
     </div>
   );
 }
-
-

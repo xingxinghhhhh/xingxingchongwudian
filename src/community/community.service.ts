@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CloudPetsService } from "../cloud-pets/cloud-pets.service";
 import { PrismaService } from "../database/prisma.service";
@@ -55,6 +55,13 @@ export interface CommunityReportResponse {
   note?: string;
   createdAt: string;
   resolvedAt?: string;
+  created?: boolean;
+}
+
+export interface CommunityReportFilters {
+  status?: CommunityReportStatus;
+  postNo?: string;
+  memberPhone?: string;
 }
 
 export interface CommunityEngagementSummary {
@@ -67,6 +74,28 @@ export interface CommunityEngagementSummary {
 interface CommunityPostRecord extends CommunityPostResponse {
   createdAt: string;
 }
+type AuthenticatedCommunityPostInput = CreateCommunityPostDto & {
+  authorName: string;
+};
+
+type AuthenticatedCommunityLikeInput = CreateCommunityLikeDto & {
+  memberPhone: string;
+};
+
+type AuthenticatedCommunityCommentInput = CreateCommunityCommentDto & {
+  memberPhone: string;
+  authorName: string;
+};
+
+type AuthenticatedCommunityFollowInput = CreateCommunityFollowDto & {
+  followerPhone: string;
+  followerName: string;
+};
+
+type AuthenticatedCommunityReportInput = CreateCommunityReportDto & {
+  memberPhone: string;
+  reporterName: string;
+};
 
 @Injectable()
 export class CommunityService {
@@ -85,7 +114,7 @@ export class CommunityService {
     private readonly cloudPetsService: CloudPetsService
   ) {}
 
-  async createPost(dto: CreateCommunityPostDto): Promise<CommunityPostResponse> {
+  async createPost(dto: AuthenticatedCommunityPostInput): Promise<CommunityPostResponse> {
     const pet = await this.cloudPetsService.getPetRecord(dto.petNo);
     const postNo = this.createPostNo();
 
@@ -165,7 +194,47 @@ export class CommunityService {
     return this.withCommerceBridges(posts.map((post) => this.toResponse(post)));
   }
 
-  async likePost(postNo: string, dto: CreateCommunityLikeDto) {
+  async listFollowedPostsByMemberPhone(
+    memberPhone: string
+  ): Promise<CommunityPostResponse[]> {
+    if (!this.isDatabaseConfigured()) {
+      const followedPetNos = new Set(
+        Array.from(this.follows.values())
+          .filter((follow) => follow.followerPhone === memberPhone)
+          .map((follow) => follow.petNo)
+      );
+
+      return this.withCommerceBridges(
+        this.posts.filter(
+          (post) => post.status === "visible" && followedPetNos.has(post.petNo)
+        )
+      );
+    }
+
+    const follows = await this.prisma.communityFollow.findMany({
+      where: { followerPhone: memberPhone },
+      select: { petNo: true }
+    });
+    const followedPetNos = follows.map((follow) => follow.petNo);
+
+    if (followedPetNos.length === 0) {
+      return [];
+    }
+
+    const posts = await this.prisma.communityPost.findMany({
+      where: {
+        status: "visible",
+        petNo: { in: followedPetNos }
+      },
+      include: this.postInclude(),
+      orderBy: { createdAt: "desc" },
+      take: 50
+    });
+
+    return this.withCommerceBridges(posts.map((post) => this.toResponse(post)));
+  }
+
+  async likePost(postNo: string, dto: AuthenticatedCommunityLikeInput) {
     await this.ensurePost(postNo);
 
     if (!this.isDatabaseConfigured()) {
@@ -214,7 +283,7 @@ export class CommunityService {
 
   async commentOnPost(
     postNo: string,
-    dto: CreateCommunityCommentDto
+    dto: AuthenticatedCommunityCommentInput
   ): Promise<CommunityCommentResponse> {
     await this.ensurePost(postNo);
     const commentNo = this.createCommentNo();
@@ -252,11 +321,31 @@ export class CommunityService {
     return this.toCommentResponse(comment);
   }
 
-  async followPet(petNo: string, dto: CreateCommunityFollowDto) {
+
+  async listComments(postNo: string): Promise<CommunityCommentResponse[]> {
+    await this.ensurePost(postNo);
+
+    if (!this.isDatabaseConfigured()) {
+      return this.comments
+        .filter((comment) => comment.postNo === postNo && comment.status === "visible")
+        .slice(0, 20);
+    }
+
+    const comments = await this.prisma.communityComment.findMany({
+      where: { postNo, status: "visible" },
+      orderBy: { createdAt: "desc" },
+      take: 20
+    });
+
+    return comments.map((comment) => this.toCommentResponse(comment));
+  }
+
+  async followPet(petNo: string, dto: AuthenticatedCommunityFollowInput) {
     await this.cloudPetsService.getPetRecord(petNo);
 
     if (!this.isDatabaseConfigured()) {
       const key = `${petNo}:${dto.followerPhone}`;
+      const created = !this.follows.has(key);
       this.follows.set(key, {
         petNo,
         followerPhone: dto.followerPhone,
@@ -267,12 +356,22 @@ export class CommunityService {
         petNo,
         followerPhone: dto.followerPhone,
         following: true,
+        created,
         followerCount: this.countMemoryFollows(petNo)
       };
     }
 
     const pet = await this.prisma.virtualPet.findUniqueOrThrow({
       where: { petNo },
+      select: { id: true }
+    });
+    const existingFollow = await this.prisma.communityFollow.findUnique({
+      where: {
+        petNo_followerPhone: {
+          petNo,
+          followerPhone: dto.followerPhone
+        }
+      },
       select: { id: true }
     });
     await this.prisma.communityFollow.upsert({
@@ -295,20 +394,31 @@ export class CommunityService {
       petNo,
       followerPhone: dto.followerPhone,
       following: true,
+      created: !existingFollow,
       followerCount: await this.prisma.communityFollow.count({ where: { petNo } })
     };
   }
 
   async reportPost(
     postNo: string,
-    dto: CreateCommunityReportDto
+    dto: AuthenticatedCommunityReportInput
   ): Promise<CommunityReportResponse> {
     await this.ensurePost(postNo);
-    const reportNo = this.createReportNo();
 
     if (!this.isDatabaseConfigured()) {
+      const existingReport = this.reports.find(
+        (report) =>
+          report.postNo === postNo &&
+          report.memberPhone === dto.memberPhone &&
+          report.status === "pending_review"
+      );
+
+      if (existingReport) {
+        return { ...existingReport, created: false };
+      }
+
       const report = {
-        reportNo,
+        reportNo: this.createReportNo(),
         postNo,
         memberPhone: dto.memberPhone,
         reporterName: dto.reporterName,
@@ -318,7 +428,20 @@ export class CommunityService {
       } satisfies CommunityReportResponse;
       this.reports.unshift(report);
       this.refreshMemoryPostMetrics(postNo);
-      return report;
+      return { ...report, created: true };
+    }
+
+    const existingReport = await this.prisma.communityReport.findFirst({
+      where: {
+        postNo,
+        memberPhone: dto.memberPhone,
+        status: "pending_review"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    if (existingReport) {
+      return { ...this.toReportResponse(existingReport), created: false };
     }
 
     const post = await this.prisma.communityPost.findUniqueOrThrow({
@@ -327,7 +450,7 @@ export class CommunityService {
     });
     const report = await this.prisma.communityReport.create({
       data: {
-        reportNo,
+        reportNo: this.createReportNo(),
         postId: post.id,
         postNo,
         memberPhone: dto.memberPhone,
@@ -336,15 +459,23 @@ export class CommunityService {
       }
     });
 
-    return this.toReportResponse(report);
+    return { ...this.toReportResponse(report), created: true };
   }
-
-  async listReports(): Promise<CommunityReportResponse[]> {
+  async listReports(
+    filters: CommunityReportFilters = {}
+  ): Promise<CommunityReportResponse[]> {
     if (!this.isDatabaseConfigured()) {
-      return this.reports;
+      return this.filterReports(this.reports, filters);
     }
 
+    const where = {
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.postNo ? { postNo: filters.postNo } : {}),
+      ...(filters.memberPhone ? { memberPhone: filters.memberPhone } : {})
+    };
+
     const reports = await this.prisma.communityReport.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       take: 100
     });
@@ -498,10 +629,10 @@ export class CommunityService {
       ...post,
       commerceBridge: {
         ctaHref: "/shop",
-        ctaLabel: "Shop recommended toy",
+        ctaLabel: "选购推荐玩具",
         reason: recommendedProduct
-          ? `${post.petName}'s community update is matched with ${recommendedProduct.title}.`
-          : `${post.petName}'s community update can continue into pet-aware shopping.`,
+          ? recommendedProduct.reason
+          : `${post.petName}的社区动态可以继续连接到宠物商城。`,
         recommendedProduct: recommendedProduct
           ? {
               slug: recommendedProduct.slug,
@@ -541,6 +672,27 @@ export class CommunityService {
           ? comment.createdAt.toISOString()
           : comment.createdAt
     };
+  }
+
+  private filterReports(
+    reports: CommunityReportResponse[],
+    filters: CommunityReportFilters
+  ) {
+    return reports.filter((report) => {
+      if (filters.status && report.status !== filters.status) {
+        return false;
+      }
+
+      if (filters.postNo && report.postNo !== filters.postNo) {
+        return false;
+      }
+
+      if (filters.memberPhone && report.memberPhone !== filters.memberPhone) {
+        return false;
+      }
+
+      return true;
+    });
   }
 
   private toReportResponse(report: {
@@ -680,6 +832,9 @@ export class CommunityService {
   }
 
   private isDatabaseConfigured() {
-    return Boolean(this.configService.get<string>("DATABASE_URL"));
+    return (
+      this.configService.get<string>("KZT_USE_MEMORY_STORE") !== "true" &&
+      Boolean(this.configService.get<string>("DATABASE_URL"))
+    );
   }
 }

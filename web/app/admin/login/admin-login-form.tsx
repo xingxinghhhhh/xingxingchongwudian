@@ -4,10 +4,16 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { adminLogin, getAdminMe } from "../admin-api";
 
+const SHOW_DEVELOPMENT_ACCOUNTS = process.env.NODE_ENV === "development";
+
 export function AdminLoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState("owner@example.com");
-  const [password, setPassword] = useState("owner123456");
+  const [email, setEmail] = useState(
+    SHOW_DEVELOPMENT_ACCOUNTS ? "owner@example.com" : ""
+  );
+  const [password, setPassword] = useState(
+    SHOW_DEVELOPMENT_ACCOUNTS ? "owner123456" : ""
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +48,7 @@ export function AdminLoginForm() {
       localStorage.setItem("kzt_admin_session", login.sessionToken);
       router.replace(getNextPath());
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Admin login failed");
+      setError(caught instanceof Error ? caught.message : "后台登录失败");
     } finally {
       setLoading(false);
     }
@@ -51,16 +57,16 @@ export function AdminLoginForm() {
   return (
     <section className="admin-card admin-card--token">
       <div>
-        <p className="section__kicker">Admin Auth</p>
-        <h2>Sign in to merchant operations</h2>
+        <p className="section__kicker">后台登录</p>
+        <h2>员工账号登录</h2>
         <p>
-          Use a staff session before managing catalog, refunds, customer CRM, and
-          cloud-pet daily diary recovery.
+          登录后可管理商品、退款、客户和云养宠日记补救。
+
         </p>
       </div>
       <form className="admin-token-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>
-          Email
+          邮箱
           <input
             autoComplete="email"
             onChange={(event) => setEmail(event.target.value)}
@@ -70,7 +76,7 @@ export function AdminLoginForm() {
           />
         </label>
         <label>
-          Password
+          密码
           <input
             autoComplete="current-password"
             onChange={(event) => setPassword(event.target.value)}
@@ -80,13 +86,17 @@ export function AdminLoginForm() {
           />
         </label>
         <button className="admin-button" disabled={loading} type="submit">
-          {loading ? "Signing in..." : "Sign in"}
+          {loading ? "登录中..." : "登录"}
         </button>
       </form>
-      <p className={error ? "admin-status admin-status--error" : "admin-status"}>
-        {error ??
-          "Seeded demo accounts: owner@example.com / owner123456, operator@example.com / operator123456."}
-      </p>
+      {error || SHOW_DEVELOPMENT_ACCOUNTS ? (
+        <p
+          className={error ? "admin-status admin-status--error" : "admin-status"}
+        >
+          {error ??
+            "测试账号：owner@example.com / owner123456，operator@example.com / operator123456。"}
+        </p>
+      ) : null}
     </section>
   );
 }

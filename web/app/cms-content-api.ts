@@ -61,5 +61,5 @@ function getErrorMessage(payload: unknown) {
     return payload.message;
   }
 
-  return "Request failed";
+  return "请求失败";
 }
