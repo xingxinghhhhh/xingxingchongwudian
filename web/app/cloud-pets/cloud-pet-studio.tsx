@@ -43,6 +43,10 @@ import {
   type GrowthTaskCompletion,
   type MemberProfile
 } from "../member/member-api";
+import {
+  isCloudPetDiaryEvent,
+  resolveCloudPetDiaryDisplay
+} from "./diary-display";
 import { getGrowthTaskCopy } from "./cloud-pet-copy";
 import { getProductTitleLabel } from "../shop/shop-copy";
 
@@ -130,14 +134,18 @@ export function CloudPetStudio() {
   const diaryArchiveEntries = useMemo(
     () =>
       activePetFromMember?.timeline.filter(
-        (event) => event.type === "daily_diary" || event.type === "owner_note"
+        (event) => isCloudPetDiaryEvent(event.type) || event.type === "owner_note"
       ) ?? [],
     [activePetFromMember]
   );
   const filteredDiaryEntries = useMemo(
     () =>
       diaryArchiveEntries.filter((event) => {
-        const matchesType = diaryFilter === "all" || event.type === diaryFilter;
+        const matchesType =
+          diaryFilter === "all" ||
+          (diaryFilter === "daily_diary"
+            ? isCloudPetDiaryEvent(event.type)
+            : event.type === diaryFilter);
         const matchesDate = !selectedDiaryDate || event.createdAt.startsWith(selectedDiaryDate);
 
         return matchesType && matchesDate;
@@ -147,7 +155,7 @@ export function CloudPetStudio() {
   const diaryFilterCounts = useMemo(
     () => ({
       all: diaryArchiveEntries.length,
-      dailyDiary: diaryArchiveEntries.filter((event) => event.type === "daily_diary").length,
+      dailyDiary: diaryArchiveEntries.filter((event) => isCloudPetDiaryEvent(event.type)).length,
       ownerNote: diaryArchiveEntries.filter((event) => event.type === "owner_note").length
     }),
     [diaryArchiveEntries]
@@ -162,7 +170,7 @@ export function CloudPetStudio() {
       const dateKey = entry.createdAt.slice(0, 10);
       const current = days.get(dateKey) ?? { dailyDiary: 0, ownerNote: 0, total: 0 };
       days.set(dateKey, {
-        dailyDiary: current.dailyDiary + (entry.type === "daily_diary" ? 1 : 0),
+        dailyDiary: current.dailyDiary + (isCloudPetDiaryEvent(entry.type) ? 1 : 0),
         ownerNote: current.ownerNote + (entry.type === "owner_note" ? 1 : 0),
         total: current.total + 1
       });
@@ -195,7 +203,7 @@ export function CloudPetStudio() {
   const todayDailyDiary = useMemo(
     () =>
       activePetFromMember?.timeline.find(
-        (event) => event.type === "daily_diary" && event.createdAt.startsWith(todayDateKey)
+        (event) => isCloudPetDiaryEvent(event.type) && event.createdAt.startsWith(todayDateKey)
       ) ?? null,
     [activePetFromMember, todayDateKey]
   );
@@ -1296,8 +1304,8 @@ export function CloudPetStudio() {
             >
               <div>
                 <span>今日照护分</span>
-                <strong>{activePetFromMember.growth.careScore}</strong>
-                <small>{getCareStateLabel(activePetFromMember.growth.careState)}</small>
+                <strong data-testid="cloud-care-score">{activePetFromMember.growth.careScore}</strong>
+                <small data-testid="cloud-care-state">{getCareStateLabel(activePetFromMember.growth.careState)}</small>
               </div>
               <div>
                 <span>成长等级</span>
@@ -1319,8 +1327,16 @@ export function CloudPetStudio() {
               <span>今日日记</span>
               {todayDailyDiary ? (
                 <div data-testid="cloud-today-diary-present">
+                  <strong data-testid="cloud-today-diary-source">
+                    {resolveCloudPetDiaryDisplay(todayDailyDiary.type).label}
+                  </strong>
                   <strong>{todayDailyDiary.title}</strong>
                   <p>{todayDailyDiary.body}</p>
+                  {resolveCloudPetDiaryDisplay(todayDailyDiary.type).explanation ? (
+                    <p data-testid="cloud-today-diary-source-note">
+                      {resolveCloudPetDiaryDisplay(todayDailyDiary.type).explanation}
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <div data-testid="cloud-today-diary-missing">
@@ -1333,8 +1349,16 @@ export function CloudPetStudio() {
             {latestDailyDiary ? (
               <article className="cloud-diary-highlight" data-testid="cloud-latest-diary">
                 <span>今日云养宠日记</span>
+                <strong data-testid="cloud-latest-diary-source">
+                  {resolveCloudPetDiaryDisplay(latestDailyDiary.type).label}
+                </strong>
                 <strong>{latestDailyDiary.title}</strong>
                 <p>{latestDailyDiary.body}</p>
+                {resolveCloudPetDiaryDisplay(latestDailyDiary.type).explanation ? (
+                  <p data-testid="cloud-latest-diary-source-note">
+                    {resolveCloudPetDiaryDisplay(latestDailyDiary.type).explanation}
+                  </p>
+                ) : null}
               </article>
             ) : null}
             {diaryCalendarDays.length > 0 ? (
@@ -1415,12 +1439,22 @@ export function CloudPetStudio() {
                   {recentDailyDiaries.map((diary) => {
                     const diaryNoteId = getDiaryNoteId(diary);
                     const isOwnerNote = diary.type === "owner_note";
+                    const diaryDisplay = resolveCloudPetDiaryDisplay(diary.type);
+                    const diaryTestType = isCloudPetDiaryEvent(diary.type)
+                      ? "daily_diary"
+                      : diary.type;
                     const isEditing = editingDiaryNoteId === diaryNoteId;
 
                     return (
                       <li data-testid="cloud-diary-entry" key={diaryNoteId}>
                         <strong>{diary.title}</strong>
                         <span>{new Date(diary.createdAt).toLocaleDateString("zh-CN")}</span>
+                        <span data-testid="cloud-diary-entry-source">{diaryDisplay.label}</span>
+                        {diaryDisplay.explanation ? (
+                          <small data-testid="cloud-diary-entry-source-note">
+                            {diaryDisplay.explanation}
+                          </small>
+                        ) : null}
                         {isEditing ? (
                           <div className="cloud-diary-edit">
                             <textarea
@@ -1477,14 +1511,14 @@ export function CloudPetStudio() {
                           <div className="cloud-diary-actions">
                             <Link
                               className="cloud-link-button cloud-link-button--compact"
-                              data-testid={"cloud-diary-entry-open-" + diary.type}
+                              data-testid={"cloud-diary-entry-open-" + diaryTestType}
                               href={getDiaryShareHref(activePetFromMember.petNo, diary)}
                             >
                               查看公开归档
                             </Link>
                             <button
                               className="cloud-button cloud-button--small cloud-button--ghost"
-                              data-testid={"cloud-diary-entry-copy-" + diary.type}
+                              data-testid={"cloud-diary-entry-copy-" + diaryTestType}
                               onClick={() => void handleCopyDiaryLink(diary)}
                               type="button"
                             >
@@ -2177,7 +2211,8 @@ function getDiaryShareAnchor(diary: { id?: string; createdAt: string }) {
 }
 
 function getDiaryShareHref(petNo: string, diary: { type: string; id?: string; createdAt: string }) {
-  return `/cloud-pets/${petNo}?archive=${diary.type}#${getDiaryShareAnchor(diary)}`;
+  const archiveType = isCloudPetDiaryEvent(diary.type) ? "daily_diary" : diary.type;
+  return `/cloud-pets/${petNo}?archive=${archiveType}#${getDiaryShareAnchor(diary)}`;
 }
 
 function getPetHomepageHref(petNo: string) {

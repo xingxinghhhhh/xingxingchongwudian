@@ -619,3 +619,11 @@ cmd /c npm run test:ui:headed
 - Jest 覆盖相对/绝对路径、内存库拒绝、SQL 字符串转义、稳定哈希、空表恢复，以及 SHA、SQLite 完整性、migration、domain 四类失败契约。
 - 独立 recovery smoke 会预创建空库、执行真实 migrations、写入代表性数据、生成两个唯一备份、修改源库并重复恢复，证明恢复的是备份时快照。
 - 节点最终门禁：151/151 单测、84/84 API E2E、22/22 Playwright、后端构建、Next 生产构建、production smoke 全部通过；recovery smoke 连续三次通过且无临时备份残留。
+
+## 36. 最新阶段同步：HTTP 请求体大小边界
+
+- `API_BODY_LIMIT_BYTES` 默认 100 KiB，生产配置只接受 16 KiB 到 1 MiB 的十进制整数。
+- JSON 和 URL-encoded 请求体均由显式 parser 限制，超限在进入 Controller 前返回 HTTP 413。
+- 413 契约固定为中文 `请求内容过大` 和机器码 `PAYLOAD_TOO_LARGE`，响应保留 `statusCode`、`message`、`error` 字段并带 `X-Request-Id`。
+- 非法 JSON 仍返回原有 400 路径，不得误判为 413；正常小请求和 API readiness 保持不变。
+- 定向单测覆盖默认值、边界值和非法配置；API E2E 覆盖小 JSON、超限 JSON、超限 URL-encoded 和 malformed JSON；production smoke 覆盖真实进程超限请求与进程健康。

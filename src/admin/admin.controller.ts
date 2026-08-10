@@ -3,12 +3,18 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
   Query,
   Req,
   UseGuards
+} from "@nestjs/common";
+import {
+  ConflictException,
+  InternalServerErrorException,
+  BadRequestException
 } from "@nestjs/common";
 import { AfterSalesService } from "../after-sales/after-sales.service";
 import { UpdateRefundStatusDto } from "../after-sales/dto/update-refund-status.dto";
@@ -43,6 +49,7 @@ import {
 } from "../staff/staff.service";
 import { AdminTokenGuard } from "./admin-token.guard";
 import { BackfillCloudPetDailyDiaryDto } from "./dto/backfill-cloud-pet-daily-diary.dto";
+import { isCloudPetDiaryEventType } from "../cloud-pets/cloud-pet-event-types";
 import { CreateAdminProductDto } from "./dto/create-admin-product.dto";
 import { CreateShipmentEventDto } from "./dto/create-shipment-event.dto";
 import { CreateShipmentDto } from "./dto/create-shipment.dto";
@@ -52,6 +59,17 @@ import { UpdateCommunityReportStatusDto } from "../community/dto/update-communit
 import { UpdateOrderStatusDto } from "./dto/update-order-status.dto";
 import { UpdateProductStatusDto } from "./dto/update-product-status.dto";
 import { UpdateVariantStockDto } from "./dto/update-variant-stock.dto";
+import { CloudPetOpsMetricsService } from "../observability/cloud-pet-ops-metrics";
+import { SqliteRecoveryStatusService } from "../observability/sqlite-recovery-status";
+import { CloudPetDeploymentReadinessService } from "../observability/cloud-pet-deployment-readiness";
+import { SqliteRecoveryAutoRefreshService } from "../observability/sqlite-recovery-auto-refresh";
+import { CloudPetLaunchReadinessService } from "../observability/cloud-pet-launch-readiness";
+import {
+  SqliteRecoveryNotConfiguredError,
+  SqliteRecoveryOperationsService,
+  SqliteRecoveryRunInProgressError
+} from "../observability/sqlite-recovery-operations";
+import { asSqliteRecoveryError } from "../operations/sqlite-recovery";
 
 @Controller("admin")
 @UseGuards(AdminTokenGuard)
@@ -69,7 +87,13 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly staffService: StaffService,
     private readonly cmsService: CmsService,
-    private readonly customersService: CustomersService
+    private readonly customersService: CustomersService,
+    private readonly cloudPetOpsMetricsService: CloudPetOpsMetricsService,
+    private readonly sqliteRecoveryStatusService: SqliteRecoveryStatusService,
+    private readonly sqliteRecoveryOperationsService: SqliteRecoveryOperationsService,
+    private readonly cloudPetDeploymentReadinessService: CloudPetDeploymentReadinessService,
+    private readonly sqliteRecoveryAutoRefreshService: SqliteRecoveryAutoRefreshService,
+    private readonly cloudPetLaunchReadinessService: CloudPetLaunchReadinessService
   ) {}
 
   @Get("dashboard")
@@ -157,6 +181,84 @@ export class AdminController {
   @Get("analytics")
   getAnalytics() {
     return this.analyticsService.getMerchantAnalytics();
+  }
+
+  @Get("ops/cloud-pet-health")
+  @Header("Cache-Control", "no-store")
+  getCloudPetOpsHealth(@Req() request: AdminRequest) {
+    this.requireStaff(request, "audit:read");
+    return this.cloudPetOpsMetricsService.getAdminHealthSnapshot();
+  }
+
+  @Get("ops/deployment-readiness")
+  @Header("Cache-Control", "no-store")
+  getDeploymentReadiness(@Req() request: AdminRequest) {
+    this.requireStaff(request, "audit:read");
+    return this.cloudPetDeploymentReadinessService.getReadiness();
+  }
+
+  @Get("ops/cloud-pet-launch-readiness")
+  @Header("Cache-Control", "no-store")
+  getCloudPetLaunchReadiness(@Req() request: AdminRequest) {
+    this.requireStaff(request, "audit:read");
+    return this.cloudPetLaunchReadinessService.getReadiness();
+  }
+
+  @Get("ops/sqlite-recovery-status")
+  @Header("Cache-Control", "no-store")
+  async getSqliteRecoveryStatus(@Req() request: AdminRequest) {
+    this.requireStaff(request, "audit:read");
+    return {
+      ...(await this.sqliteRecoveryStatusService.getStatus()),
+      autoRefreshEnabled: this.sqliteRecoveryAutoRefreshService.isEnabled(),
+      autoRefreshRuntime: this.sqliteRecoveryAutoRefreshService.getRuntimeStatus()
+    };
+  }
+
+  @Post("ops/sqlite-recovery/run")
+  @Header("Cache-Control", "no-store")
+  async createAndVerifySqliteRecovery(@Req() request: AdminRequest) {
+    const staff = this.requireStaff(request, "audit:read");
+
+    try {
+      const status = await this.sqliteRecoveryOperationsService.createAndVerify();
+      await this.recordOperation(staff, {
+        action: "ops.sqlite_recovery.run",
+        targetType: "sqlite_recovery",
+        targetId: "status",
+        summary: "Created and verified a SQLite backup"
+      });
+      return {
+        ok: true,
+        status: status.status,
+        freshness: status.freshness,
+        completedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      const recoveryError = asSqliteRecoveryError(error);
+      await this.recordOperation(staff, {
+        action: "ops.sqlite_recovery.run",
+        targetType: "sqlite_recovery",
+        targetId: "status",
+        summary: `SQLite backup verification failed: ${
+          error instanceof SqliteRecoveryRunInProgressError ||
+          error instanceof SqliteRecoveryNotConfiguredError
+            ? error.code
+            : recoveryError.code
+        }`
+      });
+
+      if (error instanceof SqliteRecoveryRunInProgressError) {
+        throw new ConflictException({ code: error.code, message: "SQLite recovery is already running" });
+      }
+      if (error instanceof SqliteRecoveryNotConfiguredError) {
+        throw new BadRequestException({ code: error.code, message: error.message });
+      }
+      throw new InternalServerErrorException({
+        code: recoveryError.code,
+        message: "SQLite backup verification failed"
+      });
+    }
   }
 
   @Get("customers")
@@ -683,8 +785,8 @@ export class AdminController {
     const petPosts = posts.filter((post) => post.petNo === pet.petNo);
     const petPostNos = new Set(petPosts.map((post) => post.postNo));
     const petReports = reports.filter((report) => petPostNos.has(report.postNo));
-    const diaryEntries = archive.items.filter((item) =>
-      ["daily_diary", "owner_note"].includes(item.type)
+    const diaryEntries = archive.items.filter(
+      (item) => isCloudPetDiaryEventType(item.type) || item.type === "owner_note"
     );
     const ownerNoteEntries = archive.items.filter((item) => item.type === "owner_note");
 

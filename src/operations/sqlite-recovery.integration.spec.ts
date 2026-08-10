@@ -13,6 +13,7 @@ import { basename, join, resolve } from "node:path";
 import {
   createSqliteBackup,
   runSqliteRestoreDrill,
+  runSqliteRestoreDrillWithAttestation,
   type SqliteRecoveryManifest
 } from "./sqlite-recovery";
 
@@ -153,5 +154,31 @@ describe("SQLite recovery integration", () => {
     await expect(
       runSqliteRestoreDrill({ manifestPath: pair.manifest })
     ).rejects.toMatchObject({ code: "DOMAIN_MISMATCH", exitCode: 35 });
+  });
+
+  it("publishes a failed attestation for a valid manifest that fails the drill", async () => {
+    const pair = await cloneBackupPair("failed-attestation");
+    pair.value.domains.virtualPetEvent.hash = "3".repeat(64);
+    await saveManifest(pair.manifest, pair.value);
+
+    await expect(
+      runSqliteRestoreDrillWithAttestation({ manifestPath: pair.manifest })
+    ).rejects.toMatchObject({ code: "DOMAIN_MISMATCH", exitCode: 35 });
+
+    const attestation = JSON.parse(
+      await readFile(
+        join(
+          temporaryDirectory,
+          "failed-attestation",
+          `${basename(pair.manifest, ".manifest.json")}.restore-check.json`
+        ),
+        "utf8"
+      )
+    ) as { manifestFile?: string; status?: string; failureCode?: string };
+    expect(attestation).toMatchObject({
+      manifestFile: basename(pair.manifest),
+      status: "failed",
+      failureCode: "DOMAIN_MISMATCH"
+    });
   });
 });

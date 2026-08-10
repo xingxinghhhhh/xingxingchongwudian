@@ -87,6 +87,17 @@ export type SqliteRecoveryManifest = SqliteRecoverySnapshot & {
   };
 };
 
+export const SQLITE_RESTORE_DRILL_ATTESTATION_SCHEMA_VERSION = 1 as const;
+
+export type SqliteRestoreDrillAttestation = {
+  schemaVersion: typeof SQLITE_RESTORE_DRILL_ATTESTATION_SCHEMA_VERSION;
+  manifestFile: string;
+  manifestSha256: string;
+  checkedAt: string;
+  status: "passed" | "failed";
+  failureCode?: SqliteRecoveryErrorCode;
+};
+
 export class SqliteRecoveryError extends Error {
   readonly exitCode: number;
   readonly cause?: unknown;
@@ -868,6 +879,72 @@ export async function runSqliteRestoreDrill(options: {
     if (!options.keepTemporaryDirectory) {
       await rm(temporaryDirectory, { recursive: true, force: true });
     }
+  }
+}
+
+function getRestoreDrillAttestationPath(manifestPath: string): string {
+  const manifestFile = basename(manifestPath);
+  const baseName = manifestFile.endsWith(".manifest.json")
+    ? manifestFile.slice(0, -".manifest.json".length)
+    : manifestFile;
+  return join(dirname(manifestPath), `${baseName}.restore-check.json`);
+}
+
+async function readManifestForAttestation(manifestPath: string) {
+  const resolvedManifestPath = await realpath(resolve(manifestPath));
+  const manifestText = await readFile(resolvedManifestPath, "utf8");
+  const manifestValue: unknown = JSON.parse(manifestText);
+  assertSqliteRecoveryManifest(manifestValue);
+  return {
+    manifestPath: resolvedManifestPath,
+    manifest: manifestValue,
+    manifestSha256: await sha256File(resolvedManifestPath)
+  };
+}
+
+export async function writeSqliteRestoreDrillAttestation(options: {
+  manifestPath: string;
+  status: "passed" | "failed";
+  checkedAt?: string;
+  failureCode?: SqliteRecoveryErrorCode;
+}): Promise<{ path: string; attestation: SqliteRestoreDrillAttestation }> {
+  const { manifestPath, manifestSha256 } = await readManifestForAttestation(
+    options.manifestPath
+  );
+  const attestation: SqliteRestoreDrillAttestation = {
+    schemaVersion: SQLITE_RESTORE_DRILL_ATTESTATION_SCHEMA_VERSION,
+    manifestFile: basename(manifestPath),
+    manifestSha256,
+    checkedAt: options.checkedAt ?? new Date().toISOString(),
+    status: options.status,
+    ...(options.status === "failed" && options.failureCode
+      ? { failureCode: options.failureCode }
+      : {})
+  };
+  const path = getRestoreDrillAttestationPath(manifestPath);
+  await writeFile(path, `${JSON.stringify(attestation, null, 2)}\n`, "utf8");
+  return { path, attestation };
+}
+
+export async function runSqliteRestoreDrillWithAttestation(options: {
+  manifestPath: string;
+  keepTemporaryDirectory?: boolean;
+}): Promise<Awaited<ReturnType<typeof runSqliteRestoreDrill>>> {
+  try {
+    const result = await runSqliteRestoreDrill(options);
+    await writeSqliteRestoreDrillAttestation({
+      manifestPath: options.manifestPath,
+      status: "passed"
+    }).catch(() => undefined);
+    return result;
+  } catch (error) {
+    const recoveryError = asSqliteRecoveryError(error);
+    await writeSqliteRestoreDrillAttestation({
+      manifestPath: options.manifestPath,
+      status: "failed",
+      failureCode: recoveryError.code
+    }).catch(() => undefined);
+    throw error;
   }
 }
 

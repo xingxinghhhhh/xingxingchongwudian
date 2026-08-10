@@ -4171,7 +4171,7 @@ describe("Pet toy shop API", () => {
         expect(body.pet.timeline).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
-              type: "daily_diary",
+              type: "care_daily_diary",
               title: expect.stringContaining("成长日记"),
               body: expect.stringContaining("WELCOME20")
             })
@@ -4858,7 +4858,7 @@ describe("Pet toy shop API", () => {
               petNo: missingPetResponse.body.petNo,
               status: "generated",
               event: expect.objectContaining({
-                type: "daily_diary",
+                type: "care_daily_diary",
                 title: expect.stringContaining("成长日记")
               })
             })
@@ -4927,9 +4927,13 @@ describe("Pet toy shop API", () => {
   });
 
   it("backfills missing daily cloud-pet diaries with selected and missing-only modes", async () => {
+    const selectedMemberSession = await loginAsMember(
+      "13900139984",
+      "Backfill Owner A"
+    );
     const selectedPetResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
-      .set("X-Member-Token", await loginAsMember("13900139984", "Backfill Owner A"))
+      .set("X-Member-Token", selectedMemberSession)
       .send({
         ownerName: "Backfill Owner A",
         ownerPhone: "13900139984",
@@ -5010,6 +5014,23 @@ describe("Pet toy shop API", () => {
             })
           ])
         );
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", selectedMemberSession)
+      .expect(200)
+      .expect(({ body }) => {
+        const selectedPet = body.pets.find(
+          (pet: { petNo: string }) => pet.petNo === selectedPetResponse.body.petNo
+        );
+        expect(selectedPet.timeline).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "presence_daily_diary" })
+          ])
+        );
+        expect(selectedPet.growth.todayCompletedTaskCount).toBe(0);
+        expect(selectedPet.growth.isCareCompleteToday).toBe(false);
       });
 
     await request(app.getHttpServer())

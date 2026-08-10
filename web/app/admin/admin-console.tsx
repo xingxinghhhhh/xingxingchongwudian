@@ -8,6 +8,10 @@ import { getGrowthTaskCopy } from "../cloud-pets/cloud-pet-copy";
 import { getProductTitleLabel } from "../shop/shop-copy";
 import {
   AdminCloudPet,
+  AdminCloudPetOpsHealth,
+  AdminCloudPetLaunchReadiness,
+  AdminDeploymentReadiness,
+  AdminSqliteRecoveryStatus,
   AdminCloudPetCareScoreRules,
   AdminCloudPetOperationalDetail,
   AdminCloudPetRetentionMetrics,
@@ -43,6 +47,11 @@ import {
   getAdminCloudPetGrowthTaskOperations,
   getCurrentAdminStaff,
   getAdminDashboard,
+  getCloudPetOpsHealth,
+  getAdminCloudPetLaunchReadiness,
+  getAdminDeploymentReadiness,
+  getAdminSqliteRecoveryStatus,
+  runAdminSqliteRecovery,
   getMerchantAnalytics,
   listAdminCustomers,
   listAdminCloudPets,
@@ -71,6 +80,12 @@ import {
   updateVariantStock
 } from "./admin-api";
 import {
+  compareCloudPetWebApiRelease,
+  getCloudPetEffectiveLaunchStatus,
+  getCloudPetWebRelease,
+  getCloudPetWebReleaseAttention
+} from "./cloud-pet-web-release";
+import {
   getAdminRoleLabel,
   getAdminStaffNameLabel,
   getCustomerSegmentCopy,
@@ -86,9 +101,40 @@ import {
 
 const defaultToken = "";
 
+function getInitialCommunityReportFilters() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return new URLSearchParams(window.location.search).get("reportStatus") ===
+    "pending_review"
+    ? { status: "pending_review" as const, postNo: "", memberPhone: "" }
+    : null;
+}
+
 export function AdminConsole() {
+  const webRelease = getCloudPetWebRelease();
   const [token, setToken] = useState(defaultToken);
   const [metrics, setMetrics] = useState<AdminDashboardMetrics | null>(null);
+  const [cloudPetOpsHealth, setCloudPetOpsHealth] =
+    useState<AdminCloudPetOpsHealth | null>(null);
+  const [cloudPetOpsHealthLoading, setCloudPetOpsHealthLoading] = useState(false);
+  const [cloudPetOpsHealthError, setCloudPetOpsHealthError] = useState<string | null>(null);
+  const [deploymentReadiness, setDeploymentReadiness] =
+    useState<AdminDeploymentReadiness | null>(null);
+  const [deploymentReadinessLoading, setDeploymentReadinessLoading] = useState(false);
+  const [deploymentReadinessError, setDeploymentReadinessError] = useState<string | null>(null);
+  const [cloudPetLaunchReadiness, setCloudPetLaunchReadiness] =
+    useState<AdminCloudPetLaunchReadiness | null>(null);
+  const [cloudPetLaunchReadinessLoading, setCloudPetLaunchReadinessLoading] =
+    useState(false);
+  const [cloudPetLaunchReadinessError, setCloudPetLaunchReadinessError] =
+    useState<string | null>(null);
+  const [sqliteRecoveryStatus, setSqliteRecoveryStatus] =
+    useState<AdminSqliteRecoveryStatus | null>(null);
+  const [sqliteRecoveryStatusLoading, setSqliteRecoveryStatusLoading] = useState(false);
+  const [sqliteRecoveryStatusError, setSqliteRecoveryStatusError] = useState<string | null>(null);
+  const [sqliteRecoveryRunLoading, setSqliteRecoveryRunLoading] = useState(false);
   const [analytics, setAnalytics] = useState<MerchantAnalytics | null>(null);
   const [currentStaff, setCurrentStaff] = useState<AdminStaffProfile | null>(null);
   const [customers, setCustomers] = useState<AdminCustomerListItem[]>([]);
@@ -160,13 +206,24 @@ export function AdminConsole() {
 
   useEffect(() => {
     const storedToken = localStorage.getItem("kzt_admin_session") ?? defaultToken;
+    const initialReportFilters = getInitialCommunityReportFilters();
     setToken(storedToken);
+    if (initialReportFilters) {
+      setReportFilters(initialReportFilters);
+    }
     if (storedToken) {
-      void loadAdminData(storedToken);
+      void loadAdminData(storedToken, initialReportFilters ?? undefined);
     }
   }, []);
 
-  async function loadAdminData(nextToken = token) {
+  async function loadAdminData(
+    nextToken = token,
+    initialReportFilters?: {
+      status: "pending_review";
+      postNo: string;
+      memberPhone: string;
+    }
+  ) {
     if (!nextToken) {
       setError("需要后台登录会话");
       return;
@@ -202,7 +259,7 @@ export function AdminConsole() {
         listAdminCmsBlocks(nextToken),
         listAdminCloudPets(nextToken),
         listAdminCommunityPosts(nextToken),
-        listAdminCommunityReports(nextToken),
+        listAdminCommunityReports(nextToken, initialReportFilters),
         listAdminProducts(nextToken),
         listAdminOrders(nextToken),
         listAdminCoupons(nextToken),
@@ -236,6 +293,21 @@ export function AdminConsole() {
       setCloudPetGrowthTaskOperations(nextCloudPetGrowthTaskOperations);
       setCloudPetCareScoreRules(nextCloudPetCareScoreRules);
       setOperationLogs(nextOperationLogs);
+      if (nextStaff.role === "owner") {
+        void loadDeploymentReadiness(nextToken, nextStaff.role);
+        void loadCloudPetOpsHealth(nextToken, nextStaff.role);
+        void loadSqliteRecoveryStatus(nextToken, nextStaff.role);
+        void loadCloudPetLaunchReadiness(nextToken, nextStaff.role);
+      } else {
+        setDeploymentReadiness(null);
+        setDeploymentReadinessError(null);
+        setCloudPetLaunchReadiness(null);
+        setCloudPetLaunchReadinessError(null);
+        setCloudPetOpsHealth(null);
+        setCloudPetOpsHealthError(null);
+        setSqliteRecoveryStatus(null);
+        setSqliteRecoveryStatusError(null);
+      }
       setStatus("商家运营数据已刷新。");
     } catch (caught) {
       if (
@@ -679,6 +751,117 @@ export function AdminConsole() {
     }
   }
 
+  async function loadCloudPetOpsHealth(
+    nextToken = token,
+    role = currentStaff?.role
+  ) {
+    if (role !== "owner") {
+      setCloudPetOpsHealth(null);
+      setCloudPetOpsHealthError(null);
+      return;
+    }
+
+    setCloudPetOpsHealthLoading(true);
+    setCloudPetOpsHealthError(null);
+
+    try {
+      setCloudPetOpsHealth(await getCloudPetOpsHealth(nextToken));
+    } catch (caught) {
+      setCloudPetOpsHealthError(
+        caught instanceof Error ? caught.message : "系统运行状态暂时无法获取"
+      );
+    } finally {
+      setCloudPetOpsHealthLoading(false);
+    }
+  }
+
+  async function loadDeploymentReadiness(
+    nextToken = token,
+    role = currentStaff?.role
+  ) {
+    if (!nextToken || role !== "owner") {
+      setDeploymentReadiness(null);
+      setDeploymentReadinessError(null);
+      return;
+    }
+
+    setDeploymentReadinessLoading(true);
+    setDeploymentReadinessError(null);
+    try {
+      setDeploymentReadiness(await getAdminDeploymentReadiness(nextToken));
+    } catch (caught) {
+      setDeploymentReadinessError(
+        caught instanceof Error ? caught.message : "暂时无法读取部署状态"
+      );
+    } finally {
+      setDeploymentReadinessLoading(false);
+    }
+  }
+
+  async function loadCloudPetLaunchReadiness(
+    nextToken = token,
+    role = currentStaff?.role
+  ) {
+    if (!nextToken || role !== "owner") {
+      setCloudPetLaunchReadiness(null);
+      setCloudPetLaunchReadinessError(null);
+      return;
+    }
+
+    setCloudPetLaunchReadinessLoading(true);
+    setCloudPetLaunchReadinessError(null);
+    try {
+      setCloudPetLaunchReadiness(await getAdminCloudPetLaunchReadiness(nextToken));
+    } catch (caught) {
+      setCloudPetLaunchReadinessError(
+        caught instanceof Error ? caught.message : "上线检查暂时无法获取"
+      );
+    } finally {
+      setCloudPetLaunchReadinessLoading(false);
+    }
+  }
+
+  async function loadSqliteRecoveryStatus(
+    nextToken = token,
+    role = currentStaff?.role
+  ) {
+    if (!nextToken || role !== "owner") {
+      setSqliteRecoveryStatus(null);
+      setSqliteRecoveryStatusError(null);
+      return;
+    }
+
+    setSqliteRecoveryStatusLoading(true);
+    setSqliteRecoveryStatusError(null);
+    try {
+      setSqliteRecoveryStatus(await getAdminSqliteRecoveryStatus(nextToken));
+    } catch (caught) {
+      setSqliteRecoveryStatusError(
+        caught instanceof Error ? caught.message : "数据保护状态加载失败"
+      );
+    } finally {
+      setSqliteRecoveryStatusLoading(false);
+    }
+  }
+
+  async function handleSqliteRecoveryRun() {
+    if (!token || currentStaff?.role !== "owner") return;
+
+    setSqliteRecoveryRunLoading(true);
+    setSqliteRecoveryStatusError(null);
+    try {
+      await runAdminSqliteRecovery(token);
+      await loadSqliteRecoveryStatus(token, currentStaff.role);
+    } catch (caught) {
+      setSqliteRecoveryStatusError(
+        caught instanceof Error ? caught.message : "创建并验证备份失败"
+      );
+      await loadSqliteRecoveryStatus(token, currentStaff.role);
+    } finally {
+      setSqliteRecoveryRunLoading(false);
+    }
+  }
+
   async function handleCommunityReportFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -878,6 +1061,28 @@ export function AdminConsole() {
     }
   }
 
+  const webReleaseAttention = deploymentReadiness
+    ? getCloudPetWebReleaseAttention(webRelease, deploymentReadiness.release)
+    : [];
+  const effectiveLaunchAttentionItems = cloudPetLaunchReadiness
+    ? [
+        ...cloudPetLaunchReadiness.attentionItems.map((item) => ({
+          kind: "backend" as const,
+          code: item.code
+        })),
+        ...webReleaseAttention.map((code) => ({
+          kind: "web" as const,
+          code
+        }))
+      ]
+    : [];
+  const effectiveLaunchStatus = cloudPetLaunchReadiness
+    ? getCloudPetEffectiveLaunchStatus(
+        cloudPetLaunchReadiness.status,
+        webReleaseAttention
+      )
+    : "needs_attention";
+
   return (
     <div className="admin-console">
       <section className="admin-card admin-card--token">
@@ -933,6 +1138,527 @@ export function AdminConsole() {
           ))}
         </div>
       </section>
+
+      {currentStaff?.role === "owner" ? (
+        <section className="admin-card" data-testid="admin-cloud-pet-launch-readiness">
+          <div className="admin-inline-actions">
+            <div>
+              <p className="section__kicker">云养宠上线检查</p>
+              <h2>内置上线检查</h2>
+            </div>
+            <button
+              className="admin-button admin-button--ghost"
+              data-testid="admin-cloud-pet-launch-readiness-refresh"
+              disabled={cloudPetLaunchReadinessLoading}
+              onClick={() =>
+                void loadCloudPetLaunchReadiness(token, currentStaff?.role)
+              }
+              type="button"
+            >
+              {cloudPetLaunchReadinessLoading ? "刷新中..." : "刷新状态"}
+            </button>
+          </div>
+          {cloudPetLaunchReadinessLoading && !cloudPetLaunchReadiness ? (
+            <p
+              className="admin-status"
+              data-testid="admin-cloud-pet-launch-readiness-loading"
+            >
+              正在加载上线检查...
+            </p>
+          ) : null}
+          {cloudPetLaunchReadinessError ? (
+            <div
+              className="admin-status admin-status--error"
+              data-testid="admin-cloud-pet-launch-readiness-error"
+            >
+              <span>{cloudPetLaunchReadinessError}</span>
+              <button
+                className="admin-button admin-button--ghost"
+                onClick={() =>
+                  void loadCloudPetLaunchReadiness(token, currentStaff?.role)
+                }
+                type="button"
+              >
+                重新加载
+              </button>
+            </div>
+          ) : null}
+          {cloudPetLaunchReadiness ? (
+            <>
+              <div
+                className={
+                  effectiveLaunchStatus === "passed"
+                    ? "admin-status"
+                    : "admin-status admin-status--error"
+                }
+                data-testid="admin-cloud-pet-launch-readiness-status"
+              >
+                {effectiveLaunchStatus === "passed"
+                  ? "内置上线检查：已通过"
+                  : "内置上线检查：需要处理"}
+              </div>
+              <div className="admin-metrics">
+                {[
+                  [
+                    "API / 运行环境",
+                    cloudPetLaunchReadiness.checks.runtime === "passed" ? "正常" : "需要处理"
+                  ],
+                  [
+                    "运行状态",
+                    cloudPetLaunchReadiness.checks.runtime === "passed" ? "正常" : "需要处理"
+                  ],
+                  [
+                    "数据备份",
+                    cloudPetLaunchReadiness.checks.dataProtection === "passed" ? "已验证且新鲜" : "需要处理"
+                  ],
+                  [
+                    "自动保护",
+                    cloudPetLaunchReadiness.checks.automation === "passed" ? "无失败抑制" : "失败抑制中"
+                  ]
+                ].map(([label, value]) => (
+                  <article className="admin-metric" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </article>
+                ))}
+              </div>
+              {effectiveLaunchAttentionItems.length > 0 ? (
+                <ul className="admin-list" data-testid="admin-cloud-pet-launch-readiness-attention">
+                  {effectiveLaunchAttentionItems.map(({ kind, code }) => {
+                    const target =
+                      kind === "web"
+                        ? { href: "#admin-deployment-readiness", label: "查看部署状态" }
+                        : getCloudPetLaunchReadinessAttentionTarget(code);
+                    const label =
+                      kind === "web"
+                        ? getCloudPetWebReleaseAttentionLabel(code)
+                        : getCloudPetLaunchReadinessAttentionLabel(code);
+                    return (
+                      <li key={`${kind}-${code}`}>
+                        <span>{label}</span>{" "}
+                        <a
+                          className="admin-button admin-button--small admin-button--ghost"
+                          data-testid={`admin-cloud-pet-launch-readiness-link-${code}`}
+                          href={target.href}
+                        >
+                          {target.label}
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              <p className="admin-status" data-testid="admin-cloud-pet-launch-readiness-checked-at">
+                最近检查：{new Date(cloudPetLaunchReadiness.checkedAt).toLocaleString()}
+              </p>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {currentStaff?.role === "owner" ? (
+        <section
+          className="admin-card"
+          data-testid="admin-deployment-readiness"
+          id="admin-deployment-readiness"
+        >
+          <div className="admin-inline-actions">
+            <div>
+              <p className="section__kicker">上线检查</p>
+              <h2>生产部署状态</h2>
+            </div>
+            <button
+              className="admin-button admin-button--ghost"
+              data-testid="admin-deployment-readiness-refresh"
+              disabled={deploymentReadinessLoading}
+              onClick={() =>
+                void loadDeploymentReadiness(token, currentStaff?.role)
+              }
+              type="button"
+            >
+              {deploymentReadinessLoading ? "刷新中..." : "刷新状态"}
+            </button>
+          </div>
+          {deploymentReadinessLoading && !deploymentReadiness ? (
+            <p className="admin-status" data-testid="admin-deployment-readiness-loading">
+              正在加载生产部署状态...
+            </p>
+          ) : null}
+          {deploymentReadinessError ? (
+            <div
+              className="admin-status admin-status--error"
+              data-testid="admin-deployment-readiness-error"
+            >
+              <span>{deploymentReadinessError}</span>
+              <button
+                className="admin-button admin-button--ghost"
+                onClick={() =>
+                  void loadDeploymentReadiness(token, currentStaff?.role)
+                }
+                type="button"
+              >
+                重新加载
+              </button>
+            </div>
+          ) : null}
+          {deploymentReadiness ? (
+            <>
+              <div
+                className={
+                  deploymentReadiness.status === "ready"
+                    ? "admin-status"
+                    : "admin-status admin-status--error"
+                }
+                data-testid="admin-deployment-readiness-status"
+              >
+                {deploymentReadiness.status === "ready"
+                  ? "当前实例已按生产模式运行"
+                  : "需要关注：当前部署配置需要运维检查"}
+              </div>
+              <div className="admin-metrics">
+                {[
+                  ["运行环境", deploymentReadiness.runtime.production ? "Production" : "非 Production"],
+                  [
+                    "数据持久化",
+                    deploymentReadiness.persistence.mode === "prisma_sqlite"
+                      ? "Prisma / SQLite"
+                      : deploymentReadiness.persistence.mode === "memory"
+                        ? "内存模式"
+                        : "无法确认"
+                  ],
+                  [
+                    "数据库",
+                    deploymentReadiness.persistence.databaseReady ? "正常" : "不可用"
+                  ],
+                  [
+                    "管理员认证",
+                    deploymentReadiness.configuration.adminAuthConfigured ? "已配置" : "未配置"
+                  ],
+                  [
+                    "会员验证码",
+                    deploymentReadiness.configuration.memberWebhookConfigured ? "已配置" : "未配置"
+                  ],
+                  [
+                    "HTTP 安全配置",
+                    deploymentReadiness.configuration.corsConfigured &&
+                    deploymentReadiness.configuration.trustedProxyConfigured &&
+                    deploymentReadiness.configuration.requestBodyLimitConfigured
+                      ? "已配置"
+                      : "未配置"
+                  ],
+                  [
+                    "运维指标",
+                    deploymentReadiness.configuration.opsMetricsConfigured ? "已配置" : "未配置"
+                  ],
+                  [
+                    "数据保护状态目录",
+                    deploymentReadiness.configuration.recoveryStatusDirectoryConfigured
+                      ? "已配置"
+                      : "未配置"
+                  ],
+                  [
+                    "生产安全配置基线",
+                    getCloudPetConfigBaselineLabel(deploymentReadiness.configBaseline.status)
+                  ],
+                  [
+                    "当前发布",
+                    getCloudPetReleaseLabel(deploymentReadiness.release)
+                  ],
+                  ["Web 发布", webRelease.id ?? "未标识"],
+                  [
+                    "Web 与 API 发布",
+                    getCloudPetWebApiReleaseLabel(
+                      compareCloudPetWebApiRelease(webRelease, deploymentReadiness.release)
+                    )
+                  ],
+                  [
+                    "数据库迁移",
+                    getCloudPetMigrationCompatibilityLabel(
+                      deploymentReadiness.migrationCompatibility.status
+                    )
+                  ]
+                ].map(([label, value]) => (
+                  <article className="admin-metric" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {currentStaff?.role === "owner" ? (
+        <section
+          className="admin-card"
+          data-testid="admin-cloud-pet-ops-health"
+          id="admin-cloud-pet-health"
+        >
+          <div className="admin-inline-actions">
+            <div>
+              <p className="section__kicker">系统运维</p>
+              <h2>云养宠系统运行状态</h2>
+            </div>
+            <button
+              className="admin-button admin-button--ghost"
+              data-testid="admin-cloud-pet-ops-health-refresh"
+              disabled={cloudPetOpsHealthLoading}
+              onClick={() =>
+                void loadCloudPetOpsHealth(token, currentStaff?.role)
+              }
+              type="button"
+            >
+              {cloudPetOpsHealthLoading ? "刷新中..." : "刷新状态"}
+            </button>
+          </div>
+
+          {cloudPetOpsHealthLoading && !cloudPetOpsHealth ? (
+            <p className="admin-status" data-testid="admin-cloud-pet-ops-health-loading">
+              正在加载系统运行状态...
+            </p>
+          ) : null}
+          {cloudPetOpsHealthError ? (
+            <div className="admin-status admin-status--error" data-testid="admin-cloud-pet-ops-health-error">
+              <span>{cloudPetOpsHealthError}</span>
+              <button
+                className="admin-button admin-button--ghost"
+                onClick={() =>
+                  void loadCloudPetOpsHealth(token, currentStaff?.role)
+                }
+                type="button"
+              >
+                重新加载
+              </button>
+            </div>
+          ) : null}
+          {cloudPetOpsHealth ? (
+            <>
+              <div
+                className={
+                  cloudPetOpsHealth.status === "healthy"
+                    ? "admin-status"
+                    : "admin-status admin-status--error"
+                }
+                data-testid="admin-cloud-pet-ops-health-status"
+              >
+                {cloudPetOpsHealth.status === "healthy"
+                  ? "系统运行正常"
+                  : "系统需要关注"}
+              </div>
+              <div className="admin-metrics">
+                {[
+                  ["近 5 分钟请求", cloudPetOpsHealth.http.requestCount],
+                  ["5xx 数量", cloudPetOpsHealth.http.serverErrorCount],
+                  [
+                    "5xx 比率",
+                    `${Math.round(cloudPetOpsHealth.http.serverErrorRate * 100)}%`
+                  ],
+                  ["429 数量", cloudPetOpsHealth.http.rateLimitedCount],
+                  [
+                    "今日日记覆盖率",
+                    cloudPetOpsHealth.cloudPet.dailyDiary
+                      ? `${Math.round(
+                          cloudPetOpsHealth.cloudPet.dailyDiary.coverageRate * 100
+                        )}%`
+                      : "—"
+                  ],
+                  [
+                    "今日日记缺失",
+                    cloudPetOpsHealth.cloudPet.dailyDiary?.missingCount ?? "—"
+                  ],
+                  [
+                    "待处理举报",
+                    cloudPetOpsHealth.cloudPet.communityModeration?.openReportCount ?? "—"
+                  ]
+                ].map(([label, value]) => (
+                  <article className="admin-metric" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </article>
+                ))}
+              </div>
+              {cloudPetOpsHealth.cloudPet.dailyDiary &&
+              cloudPetOpsHealth.cloudPet.dailyDiary.missingCount > 0 ? (
+                <Link
+                  className="admin-button admin-button--small admin-button--ghost"
+                  data-testid="admin-health-diary-gap-link"
+                  href={`/admin/pets/daily-diary-coverage?date=${encodeURIComponent(
+                    cloudPetOpsHealth.cloudPet.dailyDiary.date
+                  )}`}
+                >
+                  查看日记缺口
+                </Link>
+              ) : null}
+              {cloudPetOpsHealth.cloudPet.communityModeration &&
+              cloudPetOpsHealth.cloudPet.communityModeration.openReportCount > 0 ? (
+                <Link
+                  className="admin-button admin-button--small admin-button--ghost"
+                  data-testid="admin-health-pending-reports-link"
+                  href="/admin?reportStatus=pending_review#admin-community-reports"
+                >
+                  查看待处理举报
+                </Link>
+              ) : null}
+              <p className="admin-status" data-testid="admin-cloud-pet-ops-health-updated-at">
+                数据更新时间：{new Date(cloudPetOpsHealth.timestamp).toLocaleString()}
+              </p>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {currentStaff?.role === "owner" ? (
+        <section
+          className="admin-card"
+          data-testid="admin-sqlite-recovery-status"
+          id="admin-data-protection"
+        >
+          <div className="admin-inline-actions">
+            <div>
+              <p className="section__kicker">数据保护</p>
+              <h2>SQLite 备份与恢复状态</h2>
+            </div>
+            <button
+              className="admin-button admin-button--ghost"
+              data-testid="admin-sqlite-recovery-status-refresh"
+              disabled={sqliteRecoveryStatusLoading || sqliteRecoveryRunLoading}
+              onClick={() =>
+                void loadSqliteRecoveryStatus(token, currentStaff?.role)
+              }
+              type="button"
+            >
+              {sqliteRecoveryStatusLoading ? "刷新中..." : "刷新状态"}
+            </button>
+            <button
+              className="admin-button"
+              data-testid="admin-sqlite-recovery-run"
+              disabled={sqliteRecoveryStatusLoading || sqliteRecoveryRunLoading}
+              onClick={() => void handleSqliteRecoveryRun()}
+              type="button"
+            >
+              {sqliteRecoveryRunLoading ? "正在创建并验证..." : "创建并验证新备份"}
+            </button>
+          </div>
+          {sqliteRecoveryStatus ? (
+            <p className="admin-status" data-testid="admin-sqlite-recovery-auto-refresh">
+              自动数据保护：{sqliteRecoveryStatus.autoRefreshEnabled ? "已启用" : "未启用"}
+            </p>
+          ) : null}
+          {sqliteRecoveryStatus?.autoRefreshEnabled ? (
+            <div
+              className={
+                sqliteRecoveryStatus.autoRefreshRuntime.suppressionActive
+                  ? "admin-status admin-status--error"
+                  : "admin-status"
+              }
+              data-testid="admin-sqlite-recovery-auto-refresh-runtime"
+            >
+              <p>
+                {sqliteRecoveryStatus.autoRefreshRuntime.suppressionActive
+                  ? "自动数据保护需要关注"
+                  : "自动数据保护运行状态"}
+              </p>
+              <p>
+                最近自动检查：
+                {formatSqliteRecoveryAutoRefreshTimestamp(
+                  sqliteRecoveryStatus.autoRefreshRuntime.lastCheckedAt
+                )}
+              </p>
+              <p>
+                最近结果：
+                {getSqliteRecoveryAutoRefreshOutcomeLabel(
+                  sqliteRecoveryStatus.autoRefreshRuntime.lastOutcome
+                )}
+                {sqliteRecoveryStatus.autoRefreshRuntime.reasonCode
+                  ? `（${sqliteRecoveryStatus.autoRefreshRuntime.reasonCode}）`
+                  : ""}
+              </p>
+              {sqliteRecoveryStatus.autoRefreshRuntime.suppressionActive ? (
+                <p>本进程后续自动执行已暂停，请由 Owner 关注并处理。</p>
+              ) : null}
+              {sqliteRecoveryStatus.autoRefreshRuntime.nextCheckAt ? (
+                <p>
+                  下一次检查：
+                  {formatSqliteRecoveryAutoRefreshTimestamp(
+                    sqliteRecoveryStatus.autoRefreshRuntime.nextCheckAt
+                  )}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {sqliteRecoveryStatusLoading && !sqliteRecoveryStatus ? (
+            <p
+              className="admin-status"
+              data-testid="admin-sqlite-recovery-status-loading"
+            >
+              正在加载数据保护状态...
+            </p>
+          ) : null}
+          {sqliteRecoveryStatusError ? (
+            <div
+              className="admin-status admin-status--error"
+              data-testid="admin-sqlite-recovery-status-error"
+            >
+              <span>{sqliteRecoveryStatusError}</span>
+              <button
+                className="admin-button admin-button--ghost"
+                onClick={() =>
+                  void loadSqliteRecoveryStatus(token, currentStaff?.role)
+                }
+                type="button"
+              >
+                重新加载
+              </button>
+            </div>
+          ) : null}
+          {sqliteRecoveryStatus ? (
+            <>
+              <div
+                className={
+                  sqliteRecoveryStatus.status === "recoverable"
+                    ? "admin-status"
+                    : sqliteRecoveryStatus.status === "drill_failed"
+                      ? "admin-status admin-status--error"
+                      : "admin-status"
+                }
+                data-testid="admin-sqlite-recovery-status-value"
+              >
+                {getSqliteRecoveryStatusLabel(sqliteRecoveryStatus.status)}
+              </div>
+              <p
+                className={
+                  sqliteRecoveryStatus.freshness === "stale"
+                    ? "admin-status admin-status--error"
+                    : "admin-status"
+                }
+                data-testid="admin-sqlite-recovery-freshness"
+              >
+                备份新鲜度：{getSqliteRecoveryFreshnessLabel(sqliteRecoveryStatus.freshness)}
+                {sqliteRecoveryStatus.maxBackupAgeHours
+                  ? `（允许最大 ${sqliteRecoveryStatus.maxBackupAgeHours} 小时）`
+                  : ""}
+              </p>
+              {sqliteRecoveryStatus.latestBackup ? (
+                <p className="admin-status">
+                  最新备份：{new Date(sqliteRecoveryStatus.latestBackup.createdAt).toLocaleString()}（{formatAgeSeconds(
+                    sqliteRecoveryStatus.latestBackup.ageSeconds
+                  )}）
+                </p>
+              ) : null}
+              {sqliteRecoveryStatus.latestRestoreDrill ? (
+                <p className="admin-status">
+                  最近恢复演练：{new Date(sqliteRecoveryStatus.latestRestoreDrill.checkedAt).toLocaleString()}
+                  {sqliteRecoveryStatus.latestRestoreDrill.failureCode
+                    ? `（${sqliteRecoveryStatus.latestRestoreDrill.failureCode}）`
+                    : ""}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="admin-card">
         <p className="section__kicker">员工权限</p>
@@ -1174,7 +1900,16 @@ export function AdminConsole() {
           <h2>近期操作日志</h2>
           <div className="admin-list">
             {operationLogs.map((log) => (
-              <div className="admin-row" key={log.logNo}>
+              <div
+                className="admin-row"
+                data-action={log.action}
+                data-staff-name={log.staffName}
+                data-staff-role={log.role}
+                data-target-id={log.targetId}
+                data-target-type={log.targetType}
+                data-testid="admin-operation-log-item"
+                key={log.logNo}
+              >
                 <div>
                   <strong>{getOperationActionLabel(log.action)}</strong>
                   <span>
@@ -2262,6 +2997,173 @@ type CloudPetListRiskSummary = {
   highestLevel: "high" | "medium" | "low";
   summary: string;
 };
+
+function getSqliteRecoveryStatusLabel(
+  status: AdminSqliteRecoveryStatus["status"]
+) {
+  return {
+    no_backup: "尚未发现备份",
+    backup_unverified: "最新备份尚未完成恢复验证",
+    recoverable: "最新备份已通过恢复演练",
+    drill_failed: "最近恢复演练失败，需要关注",
+    unavailable: "未配置恢复状态目录"
+  }[status];
+}
+
+function getCloudPetLaunchReadinessAttentionLabel(
+  code: AdminCloudPetLaunchReadiness["attentionItems"][number]["code"]
+) {
+  return {
+    API_NOT_READY: "API 或数据库尚未达到生产就绪状态",
+    CONFIG_BASELINE_UNCONFIGURED: "生产安全配置基线尚未配置",
+    CONFIG_BASELINE_MISMATCH: "生产安全配置基线与发布预期不一致",
+    RELEASE_ID_UNCONFIGURED: "生产发布缺少 release ID，无法可靠确认当前运行版本",
+    DATABASE_MIGRATION_NOT_READY: "数据库迁移状态暂未确认与当前发布兼容",
+    RUNTIME_CRITICAL: "云养宠运行状态存在关键异常",
+    RECOVERY_NOT_VERIFIED: "数据备份尚未完成恢复验证",
+    BACKUP_STALE: "数据备份已经过期，需要更新",
+    AUTO_RECOVERY_SUPPRESSED: "自动数据保护当前处于失败抑制"
+  }[code];
+}
+
+function getCloudPetConfigBaselineLabel(
+  status: AdminDeploymentReadiness["configBaseline"]["status"]
+) {
+  return {
+    matched: "一致",
+    unconfigured: "尚未配置",
+    mismatch: "与发布预期不一致"
+  }[status];
+}
+
+function getCloudPetReleaseLabel(
+  release: AdminDeploymentReadiness["release"]
+) {
+  return release.status === "identified" && release.id
+    ? release.id
+    : "未标识";
+}
+
+function getCloudPetMigrationCompatibilityLabel(
+  status: AdminDeploymentReadiness["migrationCompatibility"]["status"]
+) {
+  return {
+    compatible: "与当前发布兼容",
+    mismatch: "需要处理",
+    unavailable: "暂时无法确认"
+  }[status];
+}
+
+function getCloudPetWebApiReleaseLabel(
+  status: ReturnType<typeof compareCloudPetWebApiRelease>
+) {
+  return {
+    matched: "一致",
+    mismatch: "不一致",
+    unidentified: "未标识"
+  }[status];
+}
+
+function getCloudPetWebReleaseAttentionLabel(
+  code: "WEB_RELEASE_UNIDENTIFIED" | "WEB_API_RELEASE_MISMATCH"
+) {
+  return {
+    WEB_RELEASE_UNIDENTIFIED: "Web 发布未标识，无法确认前后端是否属于同一发布",
+    WEB_API_RELEASE_MISMATCH: "Web 与 API 发布不一致，需要处理"
+  }[code];
+}
+
+function getCloudPetLaunchReadinessAttentionTarget(
+  code: AdminCloudPetLaunchReadiness["attentionItems"][number]["code"]
+) {
+  const targets: Record<
+    AdminCloudPetLaunchReadiness["attentionItems"][number]["code"],
+    { href: string; label: string }
+  > = {
+    API_NOT_READY: {
+      href: "#admin-deployment-readiness",
+      label: "查看部署状态"
+    },
+    CONFIG_BASELINE_UNCONFIGURED: {
+      href: "#admin-deployment-readiness",
+      label: "查看部署状态"
+    },
+    CONFIG_BASELINE_MISMATCH: {
+      href: "#admin-deployment-readiness",
+      label: "查看部署状态"
+    },
+    RELEASE_ID_UNCONFIGURED: {
+      href: "#admin-deployment-readiness",
+      label: "查看部署状态"
+    },
+    DATABASE_MIGRATION_NOT_READY: {
+      href: "#admin-deployment-readiness",
+      label: "查看部署状态"
+    },
+    RUNTIME_CRITICAL: {
+      href: "#admin-cloud-pet-health",
+      label: "查看运行状态"
+    },
+    RECOVERY_NOT_VERIFIED: {
+      href: "#admin-data-protection",
+      label: "查看数据保护"
+    },
+    BACKUP_STALE: {
+      href: "#admin-data-protection",
+      label: "查看数据保护"
+    },
+    AUTO_RECOVERY_SUPPRESSED: {
+      href: "#admin-data-protection",
+      label: "查看数据保护"
+    }
+  };
+
+  return targets[code];
+}
+
+function getSqliteRecoveryAutoRefreshOutcomeLabel(
+  outcome: AdminSqliteRecoveryStatus["autoRefreshRuntime"]["lastOutcome"]
+) {
+  switch (outcome) {
+    case "run_succeeded":
+      return "已创建并验证新备份";
+    case "skipped_fresh":
+      return "当前备份仍新鲜，无需执行";
+    case "skipped_ineligible":
+      return "当前状态不满足自动保鲜条件";
+    case "skipped_busy":
+      return "已有数据保护任务正在执行，本次自动检查已跳过";
+    case "skipped_suppressed":
+      return "自动执行已暂停";
+    case "run_failed":
+      return "最近自动执行失败";
+    default:
+      return "尚未执行";
+  }
+}
+
+function formatSqliteRecoveryAutoRefreshTimestamp(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "尚未执行";
+}
+
+function getSqliteRecoveryFreshnessLabel(
+  freshness: AdminSqliteRecoveryStatus["freshness"]
+) {
+  return {
+    fresh: "正常",
+    stale: "需要更新",
+    unknown: "未知"
+  }[freshness];
+}
+
+function formatAgeSeconds(ageSeconds: number) {
+  if (ageSeconds < 60) return `${ageSeconds} 秒前`;
+  const minutes = Math.floor(ageSeconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
 
 function getCloudPetListRiskSummary(pet: AdminCloudPet): CloudPetListRiskSummary {
   const signals: Array<{ level: "high" | "medium" | "low"; label: string }> = [];

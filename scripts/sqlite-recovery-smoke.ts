@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import {
   collectSqliteRecoverySnapshot,
   createSqliteBackup,
-  runSqliteRestoreDrill
+  runSqliteRestoreDrillWithAttestation
 } from "../src/operations/sqlite-recovery";
 
 const rootDirectory = resolve(__dirname, "..");
@@ -298,9 +298,24 @@ async function main(): Promise<void> {
       throw new Error("Recovery smoke did not prove snapshot isolation");
     }
 
-    await runSqliteRestoreDrill({ manifestPath: firstBackup.manifestPath });
-    await runSqliteRestoreDrill({ manifestPath: firstBackup.manifestPath });
-    await runSqliteRestoreDrill({ manifestPath: secondBackup.manifestPath });
+    await runSqliteRestoreDrillWithAttestation({ manifestPath: firstBackup.manifestPath });
+    await runSqliteRestoreDrillWithAttestation({ manifestPath: firstBackup.manifestPath });
+    await runSqliteRestoreDrillWithAttestation({ manifestPath: secondBackup.manifestPath });
+    const firstAttestation = JSON.parse(
+      await readFile(
+        join(
+          outputDirectory,
+          `${basename(firstBackup.manifestPath, ".manifest.json")}.restore-check.json`
+        ),
+        "utf8"
+      )
+    ) as { manifestFile?: string; status?: string };
+    if (
+      firstAttestation.manifestFile !== basename(firstBackup.manifestPath) ||
+      firstAttestation.status !== "passed"
+    ) {
+      throw new Error("Recovery drill attestation was not published safely");
+    }
     console.log(
       JSON.stringify({
         ok: true,

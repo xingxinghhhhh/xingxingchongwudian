@@ -143,6 +143,13 @@ test("cloud pet workspace requires a live session after logout", async ({
     }
   );
   expect(profile.status()).toBe(401);
+  const sameContextProfileStatus = await page.evaluate(async (token) => {
+    const response = await fetch("http://localhost:3000/api/members/me", {
+      headers: { "X-Member-Token": token }
+    });
+    return response.status;
+  }, sessionToken);
+  expect(sameContextProfileStatus).toBe(401);
 
   await page.reload();
 
@@ -853,6 +860,7 @@ test("cloud pet workspace supports the daily care loop", async ({ page }) => {
   await expect(page.getByTestId("cloud-latest-diary")).toBeVisible();
   await expect(page.getByTestId("cloud-diary-archive")).toBeVisible();
   await expect(page.getByTestId("cloud-diary-entry")).toHaveCount(1);
+  await expect(page.getByTestId("cloud-diary-entry-source").first()).toHaveText("照顾记录");
   await expect(page.getByTestId("cloud-diary-entry-open-daily_diary").first()).toHaveAttribute("href", /archive=daily_diary#diary-/);
   await page.getByTestId("cloud-diary-entry-copy-daily_diary").first().click();
   await expect(page.getByTestId("cloud-workspace-status")).toContainText("公开归档链接");
@@ -861,7 +869,9 @@ test("cloud pet workspace supports the daily care loop", async ({ page }) => {
   await expect(page.getByTestId("cloud-diary-note-submit")).toBeDisabled();
   await page.getByTestId("cloud-diary-note-body").fill(diaryNoteBody);
   await page.getByTestId("cloud-diary-note-submit").click();
-  await expect(page.getByTestId("cloud-diary-archive").getByText(diaryNoteBody).first()).toBeVisible();
+  const ownerNoteEntry = page.getByTestId("cloud-diary-entry").filter({ hasText: diaryNoteBody });
+  await expect(ownerNoteEntry).toBeVisible();
+  await expect(ownerNoteEntry.getByTestId("cloud-diary-entry-source")).toHaveText("主人手记");
   await expect(page.getByTestId("cloud-diary-calendar")).toBeVisible();
   await expect(page.getByTestId("cloud-diary-calendar-day").first()).toContainText("今天");
   await expect(page.getByTestId("cloud-diary-calendar-day").first()).toContainText("2 条记录");

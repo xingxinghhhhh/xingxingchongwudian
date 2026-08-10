@@ -1,21 +1,29 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { writeFile, mkdtemp, rm } from "node:fs/promises";
+import { writeFile, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
 const nextCli = resolve(rootDir, "node_modules/next/dist/bin/next");
 const schemaPath = resolve(rootDir, "prisma/schema.prisma");
 const apiEntry = resolve(rootDir, "dist/main.js");
+const opsMetricsScript = resolve(rootDir, "scripts/cloud-pet-ops-check.mjs");
 const smokeOwner = {
   email: "owner@smoke.example.com",
   password: "smoke-owner-secret-2026"
 };
 const memberWebhookToken = "production-smoke-member-webhook-token";
+const {
+  CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
+  computeCloudPetSafeConfigSha256
+} = await import(
+  pathToFileURL(resolve(rootDir, "dist/config/cloud-pet-config-fingerprint.js")).href
+);
 
 function run(command, args, options = {}) {
   return new Promise((resolveRun, rejectRun) => {
@@ -250,6 +258,30 @@ async function waitForWeb(baseUrl, web) {
   throw new Error(`Production web readiness timed out\n${web.getOutput()}`);
 }
 
+async function verifyWebApiRelease(webBaseUrl, baseUrl, sessionToken) {
+  const webResponse = await fetch(`${webBaseUrl}/admin/login`);
+  const webHtml = await webResponse.text();
+  const markerTag = webHtml
+    .match(/<meta\b[^>]*>/gi)
+    ?.find((tag) => /name="cloud-pet-web-release-id"/i.test(tag));
+  const webReleaseId =
+    markerTag?.match(/content="([^"]*)"/i)?.[1] || null;
+  const deployment = await requestJson(
+    baseUrl,
+    "/api/admin/ops/deployment-readiness",
+    { headers: { "X-Admin-Session": sessionToken } }
+  );
+
+  if (
+    !webResponse.ok ||
+    webReleaseId !== "production-smoke-release" ||
+    deployment.body?.release?.status !== "identified" ||
+    deployment.body?.release?.id !== webReleaseId
+  ) {
+    throw new Error("Production Web/API release identity mismatch");
+  }
+}
+
 async function verifyApiSecurityHeaders(baseUrl) {
   const trustedOrigin = "https://smoke.example.com";
   const untrustedOrigin = "https://untrusted.example.net";
@@ -301,6 +333,68 @@ async function verifyApiSecurityHeaders(baseUrl) {
   }
 }
 
+async function verifyApiRequestBodyLimit(baseUrl) {
+  const limit = Number(process.env.API_BODY_LIMIT_BYTES ?? 100 * 1024);
+  const small = await requestJson(baseUrl, "/api/health", {
+    method: "POST",
+    body: JSON.stringify({ payload: "ok" })
+  });
+  if (small.response.status !== 404) {
+    throw new Error(`Small JSON request routing changed: ${small.response.status}`);
+  }
+
+  const large = await requestJson(baseUrl, "/api/health", {
+    method: "POST",
+    body: JSON.stringify({ payload: "x".repeat(limit) })
+  });
+  if (
+    large.response.status !== 413 ||
+    large.body?.code !== "PAYLOAD_TOO_LARGE" ||
+    large.body?.message !== "请求内容过大"
+  ) {
+    throw new Error(
+      `Production API request body limit failed: ${large.response.status}`
+    );
+  }
+}
+
+async function verifyOpsMetrics(baseUrl, env) {
+  const endpoint = "/api/internal/ops/cloud-pet-health";
+  const missing = await requestJson(baseUrl, endpoint);
+  const invalid = await requestJson(baseUrl, endpoint, {
+    headers: { "X-Ops-Metrics-Token": "wrong-ops-metrics-token" }
+  });
+  const valid = await requestJson(baseUrl, endpoint, {
+    headers: { "X-Ops-Metrics-Token": env.OPS_METRICS_TOKEN }
+  });
+
+  if (
+    missing.response.status !== 401 ||
+    missing.body?.code !== "OPS_METRICS_UNAUTHORIZED" ||
+    invalid.response.status !== 401 ||
+    invalid.body?.code !== "OPS_METRICS_UNAUTHORIZED"
+  ) {
+    throw new Error("Production operations metrics authorization failed");
+  }
+
+  if (
+    !valid.response.ok ||
+    valid.response.headers.get("cache-control")?.includes("no-store") !== true ||
+    valid.body?.status !== "healthy" ||
+    valid.body?.http?.scope !== "process"
+  ) {
+    throw new Error("Production operations metrics snapshot failed");
+  }
+
+  const cliOutput = await run(process.execPath, [opsMetricsScript], {
+    env: { ...env, OPS_BASE_URL: baseUrl }
+  });
+  const cliResult = JSON.parse(cliOutput.trim());
+  if (cliResult.exitCode !== 0 || cliResult.ok !== true || cliResult.status !== "healthy") {
+    throw new Error(`Production operations metrics CLI failed: ${cliOutput}`);
+  }
+}
+
 async function login(baseUrl) {
   const { response, body } = await requestJson(
     baseUrl,
@@ -316,6 +410,196 @@ async function login(baseUrl) {
   }
 
   return body.sessionToken;
+}
+
+async function verifyAdminOpsHealth(baseUrl, sessionToken, opsToken) {
+  const unauthorized = await requestJson(baseUrl, "/api/admin/ops/cloud-pet-health");
+  const owner = await requestJson(baseUrl, "/api/admin/ops/cloud-pet-health", {
+    headers: { "X-Admin-Session": sessionToken }
+  });
+
+  if (unauthorized.response.status !== 401 || !owner.response.ok) {
+    throw new Error("Production Admin operations health authorization failed");
+  }
+
+  if (
+    owner.response.headers.get("cache-control")?.includes("no-store") !== true ||
+    owner.body?.status !== "healthy" ||
+    owner.body?.readiness?.ready !== true ||
+    owner.body?.http?.scope !== "process" ||
+    owner.body?.cloudPet?.dailyDiary?.date === undefined ||
+    owner.body?.cloudPet?.communityModeration?.openReportCount === undefined
+  ) {
+    throw new Error("Production Admin operations health projection failed");
+  }
+
+  const serialized = JSON.stringify(owner.body);
+  if (
+    serialized.includes(opsToken) ||
+    serialized.includes("processStartedAt") ||
+    serialized.includes('"database"')
+  ) {
+    throw new Error("Production Admin operations health exposed internal details");
+  }
+}
+
+async function verifyAdminDeploymentReadiness(baseUrl, sessionToken) {
+  const unauthorized = await requestJson(
+    baseUrl,
+    "/api/admin/ops/deployment-readiness"
+  );
+  const owner = await requestJson(
+    baseUrl,
+    "/api/admin/ops/deployment-readiness",
+    { headers: { "X-Admin-Session": sessionToken } }
+  );
+
+  if (unauthorized.response.status !== 401 || !owner.response.ok) {
+    throw new Error("Production deployment readiness authorization failed");
+  }
+
+  if (
+    owner.response.headers.get("cache-control")?.includes("no-store") !== true ||
+    owner.body?.status !== "ready" ||
+    owner.body?.runtime?.production !== true ||
+    owner.body?.persistence?.mode !== "prisma_sqlite" ||
+    owner.body?.persistence?.databaseReady !== true ||
+    owner.body?.configuration?.adminAuthConfigured !== true ||
+    owner.body?.configuration?.memberWebhookConfigured !== true ||
+    owner.body?.configuration?.corsConfigured !== true ||
+    owner.body?.configuration?.trustedProxyConfigured !== true ||
+    owner.body?.configuration?.requestBodyLimitConfigured !== true ||
+    owner.body?.configuration?.opsMetricsConfigured !== true ||
+    owner.body?.configBaseline?.status !== "matched" ||
+    owner.body?.release?.status !== "identified" ||
+    owner.body?.release?.id !== "production-smoke-release" ||
+    owner.body?.migrationCompatibility?.status !== "compatible"
+  ) {
+    throw new Error("Production deployment readiness projection failed");
+  }
+
+  const serialized = JSON.stringify(owner.body);
+  if (
+    serialized.includes("DATABASE_URL") ||
+    serialized.includes("OPS_METRICS_TOKEN") ||
+    serialized.includes("MEMBER_AUTH_WEBHOOK_TOKEN") ||
+    serialized.includes("WEB_ORIGIN") ||
+    serialized.includes("SQLITE_RECOVERY_STATUS_DIR")
+  ) {
+    throw new Error("Production deployment readiness exposed internal details");
+  }
+}
+
+async function verifyAdminCloudPetLaunchReadiness(baseUrl, sessionToken, opsToken) {
+  const unauthorized = await requestJson(
+    baseUrl,
+    "/api/admin/ops/cloud-pet-launch-readiness"
+  );
+  const owner = await requestJson(
+    baseUrl,
+    "/api/admin/ops/cloud-pet-launch-readiness",
+    { headers: { "X-Admin-Session": sessionToken } }
+  );
+
+  if (unauthorized.response.status !== 401 || !owner.response.ok) {
+    throw new Error("Production launch readiness authorization failed");
+  }
+
+  if (
+    owner.response.headers.get("cache-control")?.includes("no-store") !== true ||
+    owner.body?.status !== "passed" ||
+    owner.body?.checks?.runtime !== "passed" ||
+    owner.body?.checks?.dataProtection !== "passed" ||
+    owner.body?.checks?.automation !== "passed" ||
+    !Array.isArray(owner.body?.attentionItems) ||
+    owner.body.attentionItems.length !== 0
+  ) {
+    throw new Error("Production launch readiness projection failed");
+  }
+
+  const serialized = JSON.stringify(owner.body);
+  if (
+    serialized.includes(opsToken) ||
+    serialized.includes("DATABASE_URL") ||
+    serialized.includes("processStartedAt") ||
+    serialized.includes("stack")
+  ) {
+    throw new Error("Production launch readiness exposed internal details");
+  }
+}
+
+async function verifyAdminSqliteRecoveryRun(baseUrl, sessionToken) {
+  const unauthorized = await requestJson(
+    baseUrl,
+    "/api/admin/ops/sqlite-recovery/run",
+    { method: "POST", body: JSON.stringify({}) }
+  );
+  if (unauthorized.response.status !== 401) {
+    throw new Error("Production SQLite recovery run authorization failed");
+  }
+
+  const run = await requestJson(
+    baseUrl,
+    "/api/admin/ops/sqlite-recovery/run",
+    {
+      method: "POST",
+      headers: { "X-Admin-Session": sessionToken },
+      body: JSON.stringify({})
+    }
+  );
+  const status = await requestJson(
+    baseUrl,
+    "/api/admin/ops/sqlite-recovery-status",
+    { headers: { "X-Admin-Session": sessionToken } }
+  );
+  const logs = await requestJson(baseUrl, "/api/admin/operation-logs", {
+    headers: { "X-Admin-Session": sessionToken }
+  });
+  const recoveryLog = logs.body?.items?.find(
+    (item) => item.action === "ops.sqlite_recovery.run"
+  );
+
+  if (
+    !run.response.ok ||
+    run.body?.status !== "recoverable" ||
+    run.body?.freshness !== "fresh" ||
+    !status.response.ok ||
+    status.body?.status !== "recoverable" ||
+    status.body?.freshness !== "fresh" ||
+    status.body?.autoRefreshEnabled !== true ||
+    !logs.response.ok ||
+    recoveryLog?.staffNo !== "STAFF_OWNER" ||
+    recoveryLog?.role !== "owner"
+  ) {
+    throw new Error("Production SQLite recovery run did not produce a fresh recoverable status");
+  }
+
+  const serialized = JSON.stringify(run.body);
+  if (serialized.includes("DATABASE_URL") || serialized.includes("manifest")) {
+    throw new Error("Production SQLite recovery run exposed internal details");
+  }
+}
+
+async function waitForAutomaticSqliteRecovery(baseUrl, sessionToken) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const status = await requestJson(
+      baseUrl,
+      "/api/admin/ops/sqlite-recovery-status",
+      { headers: { "X-Admin-Session": sessionToken } }
+    );
+    if (
+      status.response.ok &&
+      status.body?.autoRefreshEnabled === true &&
+      status.body?.status === "recoverable" &&
+      status.body?.freshness === "fresh"
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error("Production automatic SQLite recovery did not refresh the backup");
 }
 
 async function verifyPersistentSession(baseUrl, sessionToken) {
@@ -616,6 +900,7 @@ async function verifyOperationsConfig(baseUrl, sessionToken) {
 async function main() {
   const tempDir = await mkdtemp(join(tmpdir(), "kzt-production-smoke-"));
   const databasePath = join(tempDir, "smoke.db");
+  const recoveryDirectory = join(tempDir, "recovery");
   const port = await getAvailablePort();
   const webPort = await getAvailablePort();
   const memberWebhookPort = await getAvailablePort();
@@ -625,7 +910,7 @@ async function main() {
   const baseUrl = `http://127.0.0.1:${port}`;
   const webBaseUrl = `http://127.0.0.1:${webPort}`;
   const databaseUrl = `file:${databasePath.replaceAll("\\", "/")}`;
-  const env = {
+  const baseEnv = {
     ...process.env,
     NODE_ENV: "production",
     DATABASE_URL: databaseUrl,
@@ -634,6 +919,7 @@ async function main() {
     ADMIN_OWNER_NAME: "Production Smoke Owner",
     ADMIN_OWNER_EMAIL: smokeOwner.email,
     ADMIN_OWNER_PASSWORD: smokeOwner.password,
+    CLOUD_PET_RELEASE_ID: "production-smoke-release",
     WEB_ORIGIN: "https://smoke.example.com",
     TRUST_PROXY_HOPS: "1",
     KZT_PRODUCTION_SMOKE: "true",
@@ -641,14 +927,24 @@ async function main() {
     MEMBER_AUTH_CODE_SECRET: "production-smoke-member-code-secret-2026",
     MEMBER_AUTH_WEBHOOK_URL: memberVerificationWebhook.url,
     MEMBER_AUTH_WEBHOOK_TOKEN: memberWebhookToken,
+    OPS_METRICS_TOKEN: "production-smoke-ops-metrics-token-with-more-than-32-chars",
+    SQLITE_RECOVERY_STATUS_DIR: recoveryDirectory,
+    SQLITE_RECOVERY_MAX_BACKUP_AGE_HOURS: "24",
+    SQLITE_RECOVERY_AUTO_REFRESH_ENABLED: "true",
     PAYMENT_TIMEOUT_MINUTES: "30",
     PORT: String(port)
+  };
+  const env = {
+    ...baseEnv,
+    [CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256]:
+      computeCloudPetSafeConfigSha256(baseEnv)
   };
   let api;
   let web;
 
   try {
     await writeFile(databasePath, "");
+    await mkdir(recoveryDirectory, { recursive: true });
     await run(
       process.execPath,
       [prismaCli, "migrate", "deploy", "--schema", schemaPath],
@@ -672,10 +968,25 @@ async function main() {
     api = startApi(env);
     await waitForReadiness(baseUrl, api);
     await verifyApiSecurityHeaders(baseUrl);
-    web = startWeb(env, webPort);
+    await verifyApiRequestBodyLimit(baseUrl);
+    await verifyOpsMetrics(baseUrl, env);
+    web = startWeb(
+      { ...env, CLOUD_PET_RELEASE_ID: "web-runtime-must-not-replace-build-id" },
+      webPort
+    );
     await waitForWeb(webBaseUrl, web);
     await verifyProxyAwareMemberAuthRateLimit(baseUrl);
     const firstSession = await login(baseUrl);
+    await verifyAdminOpsHealth(baseUrl, firstSession, env.OPS_METRICS_TOKEN);
+    await verifyAdminDeploymentReadiness(baseUrl, firstSession);
+    await verifyWebApiRelease(webBaseUrl, baseUrl, firstSession);
+    await waitForAutomaticSqliteRecovery(baseUrl, firstSession);
+    await verifyAdminSqliteRecoveryRun(baseUrl, firstSession);
+    await verifyAdminCloudPetLaunchReadiness(
+      baseUrl,
+      firstSession,
+      env.OPS_METRICS_TOKEN
+    );
     const firstMemberSession = await loginMember(
       baseUrl,
       memberVerificationWebhook
@@ -698,7 +1009,7 @@ async function main() {
     await verifyOperationsConfig(baseUrl, secondSession);
 
     console.log(
-      "Production smoke passed: migrations, API/web readiness, HTTP security headers, member verification webhook, persistent admin/member sessions, logout, and operations restart persistence."
+      "Production smoke passed: migrations, startup migration compatibility gate, API/web readiness, HTTP security headers, request body limits, operations metrics, SQLite backup/recovery run, member verification webhook, persistent admin/member sessions, logout, and operations restart persistence."
     );
   } finally {
     await stopApi(web);

@@ -13,6 +13,7 @@ import { PaymentsModule } from "../payments/payments.module";
 import { ProductsModule } from "../products/products.module";
 import { ReviewsModule } from "../reviews/reviews.module";
 import { StaffModule } from "../staff/staff.module";
+import { OpsMetricsModule } from "../observability/ops-metrics.module";
 import { AdminController } from "./admin.controller";
 import { AdminTokenGuard } from "./admin-token.guard";
 
@@ -31,7 +32,8 @@ import { AdminTokenGuard } from "./admin-token.guard";
     PaymentsModule,
     ProductsModule,
     ReviewsModule,
-    StaffModule
+    StaffModule,
+    OpsMetricsModule
   ],
   controllers: [AdminController],
   providers: [AdminTokenGuard]

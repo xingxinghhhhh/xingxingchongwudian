@@ -1,3 +1,13 @@
+import { resolveApiBodyLimit } from "./request-body";
+import { resolveOpsMetricsToken } from "./ops-metrics";
+import { resolveSqliteRecoveryMaxBackupAgeHours } from "./sqlite-recovery";
+import { resolveSqliteRecoveryAutoRefreshEnabled } from "./sqlite-recovery-auto-refresh";
+import {
+  CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
+  resolveCloudPetExpectedSafeConfigSha256
+} from "./cloud-pet-config-fingerprint";
+import { CLOUD_PET_RELEASE_ID, resolveCloudPetReleaseId } from "./cloud-pet-release";
+
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 
 function readString(config: Record<string, unknown>, key: string) {
@@ -10,6 +20,27 @@ function isValidEmail(value: string) {
 }
 
 export function validateEnvironment(config: Record<string, unknown>) {
+  if (readString(config, CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256)) {
+    resolveCloudPetExpectedSafeConfigSha256(config);
+  }
+  if (readString(config, CLOUD_PET_RELEASE_ID)) {
+    resolveCloudPetReleaseId(config);
+  }
+
+  if (readString(config, "SQLITE_RECOVERY_AUTO_REFRESH_ENABLED")) {
+    resolveSqliteRecoveryAutoRefreshEnabled(config);
+  }
+
+  if (readString(config, "SQLITE_RECOVERY_MAX_BACKUP_AGE_HOURS")) {
+    try {
+      resolveSqliteRecoveryMaxBackupAgeHours(config);
+    } catch (error) {
+      if (readString(config, "NODE_ENV") !== "production") {
+        throw error;
+      }
+    }
+  }
+
   if (readString(config, "NODE_ENV") !== "production") {
     return config;
   }
@@ -33,6 +64,7 @@ export function validateEnvironment(config: Record<string, unknown>) {
     "MEMBER_AUTH_SEND_COOLDOWN_SECONDS"
   );
   const trustProxyHops = readString(config, "TRUST_PROXY_HOPS");
+  const apiBodyLimit = readString(config, "API_BODY_LIMIT_BYTES");
 
   if (!databaseUrl) {
     errors.push("DATABASE_URL is required");
@@ -50,11 +82,16 @@ export function validateEnvironment(config: Record<string, unknown>) {
     const parsedOrigin = new URL(webOrigin);
     const isHttp = parsedOrigin.protocol === "http:" || parsedOrigin.protocol === "https:";
     const isOriginOnly = parsedOrigin.origin === webOrigin.replace(/\/$/, "");
+    const allowSmokeLocalOrigin =
+      readString(config, "KZT_PRODUCTION_SMOKE") === "true" &&
+      parsedOrigin.protocol === "http:" &&
+      LOCAL_HOSTNAMES.has(parsedOrigin.hostname.toLowerCase());
 
     if (
       !isHttp ||
       !isOriginOnly ||
-      LOCAL_HOSTNAMES.has(parsedOrigin.hostname.toLowerCase())
+      (LOCAL_HOSTNAMES.has(parsedOrigin.hostname.toLowerCase()) &&
+        !allowSmokeLocalOrigin)
     ) {
       errors.push("WEB_ORIGIN must be a non-local HTTP(S) origin");
     }
@@ -143,6 +180,30 @@ export function validateEnvironment(config: Record<string, unknown>) {
 
   if (!/^\d+$/.test(trustProxyHops)) {
     errors.push("TRUST_PROXY_HOPS must be a non-negative integer");
+  }
+
+  if (apiBodyLimit) {
+    try {
+      resolveApiBodyLimit(config);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "API_BODY_LIMIT_BYTES is invalid");
+    }
+  }
+
+  try {
+    resolveOpsMetricsToken(config);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : "OPS_METRICS_TOKEN is invalid");
+  }
+
+  try {
+    resolveSqliteRecoveryMaxBackupAgeHours(config);
+  } catch (error) {
+    errors.push(
+      error instanceof Error
+        ? error.message
+        : "SQLITE_RECOVERY_MAX_BACKUP_AGE_HOURS is invalid"
+    );
   }
 
   if (errors.length > 0) {

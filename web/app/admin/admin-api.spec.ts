@@ -18,6 +18,11 @@ import {
   updateAdminCloudPetGrowthTask,
   getCurrentAdminStaff,
   getAdminDashboard,
+  getCloudPetOpsHealth,
+  getAdminDeploymentReadiness,
+  getAdminCloudPetLaunchReadiness,
+  getAdminSqliteRecoveryStatus,
+  runAdminSqliteRecovery,
   getMerchantAnalytics,
   listAdminCustomers,
   listAdminCoupons,
@@ -117,6 +122,173 @@ describe("admin api client", () => {
       {
         cache: "no-store",
         headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("loads the owner-only cloud-pet operations health projection", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        timestamp: "2026-08-09T00:00:00.000Z",
+        status: "healthy",
+        reasons: [],
+        readiness: { ready: true },
+        http: {
+          scope: "process",
+          windowSeconds: 300,
+          requestCount: 10,
+          serverErrorCount: 0,
+          serverErrorRate: 0,
+          rateLimitedCount: 1
+        },
+        cloudPet: {
+          dailyDiary: {
+            date: "2026-08-09",
+            coveredCount: 5,
+            missingCount: 1,
+            coverageRate: 0.83
+          },
+          communityModeration: { openReportCount: 2 }
+        }
+      })
+    });
+
+    await expect(getCloudPetOpsHealth(token, fetcher)).resolves.toMatchObject({
+      status: "healthy",
+      readiness: { ready: true },
+      http: { requestCount: 10, rateLimitedCount: 1 },
+      cloudPet: { communityModeration: { openReportCount: 2 } }
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/ops/cloud-pet-health",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("loads the owner-only deployment readiness projection", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "ready",
+        runtime: { production: true },
+        persistence: { mode: "prisma_sqlite", databaseReady: true },
+        configuration: {
+          adminAuthConfigured: true,
+          memberWebhookConfigured: true,
+          corsConfigured: true,
+          trustedProxyConfigured: true,
+          requestBodyLimitConfigured: true,
+          opsMetricsConfigured: true,
+          recoveryStatusDirectoryConfigured: false
+        },
+        configBaseline: { status: "matched" },
+        release: { status: "identified", id: "release-1" },
+        migrationCompatibility: { status: "compatible" }
+      })
+    });
+
+    await expect(getAdminDeploymentReadiness(token, fetcher)).resolves.toMatchObject({
+      status: "ready",
+      runtime: { production: true },
+      persistence: { mode: "prisma_sqlite", databaseReady: true }
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/ops/deployment-readiness",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("loads the owner-only cloud-pet launch readiness projection", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        checkedAt: "2026-08-09T00:00:00.000Z",
+        status: "passed",
+        checks: {
+          runtime: "passed",
+          dataProtection: "passed",
+          automation: "passed"
+        },
+        attentionItems: []
+      })
+    });
+
+    await expect(getAdminCloudPetLaunchReadiness(token, fetcher)).resolves.toMatchObject({
+      status: "passed",
+      checks: { runtime: "passed", dataProtection: "passed" },
+      attentionItems: []
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/ops/cloud-pet-launch-readiness",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("loads the owner-only SQLite recovery status projection", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "recoverable",
+        latestBackup: {
+          createdAt: "2026-08-09T00:00:00.000Z",
+          ageSeconds: 120
+        },
+        latestRestoreDrill: {
+          checkedAt: "2026-08-09T00:01:00.000Z",
+          status: "passed"
+        }
+      })
+    });
+
+    await expect(getAdminSqliteRecoveryStatus(token, fetcher)).resolves.toMatchObject({
+      status: "recoverable",
+      latestRestoreDrill: { status: "passed" }
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/ops/sqlite-recovery-status",
+      {
+        cache: "no-store",
+        headers: { "X-Admin-Token": token }
+      }
+    );
+  });
+
+  it("runs an owner SQLite recovery operation with an empty request body", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        status: "recoverable",
+        freshness: "fresh",
+        completedAt: "2026-08-09T00:02:00.000Z"
+      })
+    });
+
+    await expect(runAdminSqliteRecovery(token, fetcher)).resolves.toMatchObject({
+      ok: true,
+      status: "recoverable",
+      freshness: "fresh"
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/admin/ops/sqlite-recovery/run",
+      {
+        body: "{}",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Token": token
+        },
+        method: "POST"
       }
     );
   });

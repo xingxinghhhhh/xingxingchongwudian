@@ -1,4 +1,6 @@
 import { validateEnvironment } from "./environment";
+import { CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256 } from "./cloud-pet-config-fingerprint";
+import { CLOUD_PET_RELEASE_ID } from "./cloud-pet-release";
 
 const validProductionEnvironment = {
   NODE_ENV: "production",
@@ -11,6 +13,7 @@ const validProductionEnvironment = {
   MEMBER_AUTH_CODE_SECRET: "member-auth-code-secret-with-32-characters",
   MEMBER_AUTH_WEBHOOK_URL: "https://sms.example.com/member-verification",
   MEMBER_AUTH_WEBHOOK_TOKEN: "member-auth-webhook-token-2026",
+  OPS_METRICS_TOKEN: "ops-metrics-production-token-with-more-than-32-chars",
   TRUST_PROXY_HOPS: "1"
 };
 
@@ -45,7 +48,8 @@ describe("validateEnvironment", () => {
         "MEMBER_AUTH_CODE_SECRET must contain at least 32 non-default characters",
         "MEMBER_AUTH_WEBHOOK_URL must be a valid URL",
         "MEMBER_AUTH_WEBHOOK_TOKEN must contain at least 24 non-default characters",
-        "TRUST_PROXY_HOPS must be a non-negative integer"
+        "TRUST_PROXY_HOPS must be a non-negative integer",
+        "OPS_METRICS_TOKEN is required in production"
       ].join("\n- ")
     );
   });
@@ -59,6 +63,27 @@ describe("validateEnvironment", () => {
         WEB_ORIGIN: "http://localhost:3001"
       })
     ).toThrow("Invalid production environment");
+  });
+
+  it("allows a local web origin only for the explicit production smoke", () => {
+    expect(
+      validateEnvironment({
+        ...validProductionEnvironment,
+        KZT_PRODUCTION_SMOKE: "true",
+        WEB_ORIGIN: "http://127.0.0.1:3001"
+      })
+    ).toEqual(
+      expect.objectContaining({ KZT_PRODUCTION_SMOKE: "true" })
+    );
+  });
+
+  it("continues to reject a local web origin in normal production", () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProductionEnvironment,
+        WEB_ORIGIN: "http://127.0.0.1:3001"
+      })
+    ).toThrow("WEB_ORIGIN must be a non-local HTTP(S) origin");
   });
 
   it("rejects an invalid payment timeout", () => {
@@ -107,5 +132,45 @@ describe("validateEnvironment", () => {
         TRUST_PROXY_HOPS: "auto"
       })
     ).toThrow("TRUST_PROXY_HOPS must be a non-negative integer");
+  });
+
+  it("rejects an invalid production backup freshness window", () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProductionEnvironment,
+        SQLITE_RECOVERY_MAX_BACKUP_AGE_HOURS: "0"
+      })
+    ).toThrow(
+      "SQLITE_RECOVERY_MAX_BACKUP_AGE_HOURS must be an integer between 1 and 720"
+    );
+  });
+
+  it("rejects a non-strict SQLite auto-refresh switch", () => {
+    expect(() =>
+      validateEnvironment({
+        NODE_ENV: "test",
+        SQLITE_RECOVERY_AUTO_REFRESH_ENABLED: "1"
+      })
+    ).toThrow("SQLITE_RECOVERY_AUTO_REFRESH_ENABLED must be true or false");
+  });
+
+  it("rejects an invalid expected cloud-pet config fingerprint", () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProductionEnvironment,
+        [CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256]: "not-a-hash"
+      })
+    ).toThrow(
+      "CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256 must be 64 lowercase hexadecimal characters"
+    );
+  });
+
+  it("rejects an invalid production release id", () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProductionEnvironment,
+        [CLOUD_PET_RELEASE_ID]: "release with spaces"
+      })
+    ).toThrow("CLOUD_PET_RELEASE_ID");
   });
 });

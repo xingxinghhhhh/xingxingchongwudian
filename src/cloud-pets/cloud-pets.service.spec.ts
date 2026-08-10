@@ -152,7 +152,7 @@ describe("CloudPetsService", () => {
           timeline: {
             create: expect.arrayContaining([
               expect.objectContaining({ type: "growth_task" }),
-              expect.objectContaining({ type: "daily_diary" })
+              expect.objectContaining({ type: "care_daily_diary" })
             ])
           }
         }),
@@ -211,7 +211,7 @@ describe("CloudPetsService", () => {
       todayCompletedTaskKeys: expect.arrayContaining(["daily-care", "feed-care"])
     });
     expect(
-      updatedPet.timeline.filter((event) => event.type === "daily_diary")
+      updatedPet.timeline.filter((event) => event.type === "care_daily_diary")
     ).toHaveLength(1);
   });
 

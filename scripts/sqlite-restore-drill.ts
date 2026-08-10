@@ -1,6 +1,6 @@
 import {
   asSqliteRecoveryError,
-  runSqliteRestoreDrill
+  runSqliteRestoreDrillWithAttestation
 } from "../src/operations/sqlite-recovery";
 
 function readManifestPath(argv: string[]): string {
@@ -13,7 +13,7 @@ function readManifestPath(argv: string[]): string {
 async function main(): Promise<void> {
   try {
     const manifestPath = readManifestPath(process.argv.slice(2));
-    const result = await runSqliteRestoreDrill({
+    const result = await runSqliteRestoreDrillWithAttestation({
       manifestPath,
       keepTemporaryDirectory: process.env.KEEP_SQLITE_RESTORE_DRILL === "1"
     });

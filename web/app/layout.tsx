@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { getCloudPetWebRelease } from "./admin/cloud-pet-web-release";
 
 export const metadata: Metadata = {
   title: "奶盖和年糕的 AI 成长日记",
@@ -11,8 +12,16 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const webRelease = getCloudPetWebRelease();
+
   return (
     <html data-scroll-behavior="smooth" lang="zh-CN">
+      <head>
+        <meta
+          content={webRelease.id ?? "unidentified"}
+          name="cloud-pet-web-release-id"
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

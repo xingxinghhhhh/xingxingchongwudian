@@ -26,6 +26,7 @@ import { StaffModule } from "./staff/staff.module";
 import { getRateLimitTracker } from "./config/rate-limit-tracker";
 import { validateEnvironment } from "./config/environment";
 import { RequestContextMiddleware } from "./observability/request-context.middleware";
+import { OpsMetricsModule } from "./observability/ops-metrics.module";
 
 @Module({
   imports: [
@@ -59,7 +60,8 @@ import { RequestContextMiddleware } from "./observability/request-context.middle
     PersonalizationModule,
     ProductsModule,
     ReviewsModule,
-    StaffModule
+    StaffModule,
+    OpsMetricsModule
   ],
   controllers: [AppController]
 })

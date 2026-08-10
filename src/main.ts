@@ -1,11 +1,24 @@
 import { ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
+import { configureRequestBodyPolicy } from "./observability/request-body-policy";
 import { configureTrustProxy } from "./config/trust-proxy";
+import { getCloudPetConfigBaselineStatus } from "./config/cloud-pet-config-fingerprint";
+import { CLOUD_PET_RELEASE_ID } from "./config/cloud-pet-release";
+import { loadCloudPetReleaseMarker } from "./config/cloud-pet-release-marker";
+import {
+  initializeAndListenWithProductionGate,
+  ProductionStartupGateError
+} from "./config/production-startup-gate";
+import { PrismaMigrationCompatibilityService } from "./observability/prisma-migration-compatibility";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false
+  });
 
   configureTrustProxy(app);
   app.use(
@@ -14,6 +27,7 @@ async function bootstrap() {
       crossOriginResourcePolicy: { policy: "cross-origin" }
     })
   );
+  configureRequestBodyPolicy(app);
   app.setGlobalPrefix("api");
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? "http://localhost:3001",
@@ -28,7 +42,43 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port);
+  await initializeAndListenWithProductionGate(app, {
+    production: process.env.NODE_ENV === "production",
+    port,
+    getConfigBaselineStatus: () =>
+      getCloudPetConfigBaselineStatus(process.env),
+    getReleaseId: () =>
+      app.get(ConfigService).get<string>(CLOUD_PET_RELEASE_ID),
+    getBuildReleaseMarker: () => loadCloudPetReleaseMarker(),
+    getMigrationStatus: () =>
+      app
+        .get(PrismaMigrationCompatibilityService, { strict: false })
+        .getStatus().status
+  });
 }
 
-void bootstrap();
+void bootstrap().catch((error) => {
+  if (error instanceof ProductionStartupGateError) {
+    console.error(
+      JSON.stringify({
+        event: "production_startup_blocked",
+        reasonCode: error.code,
+        ...(error.configBaselineStatus
+          ? { configBaselineStatus: error.configBaselineStatus }
+          : {}),
+        ...(error.releaseStatus
+          ? { releaseStatus: error.releaseStatus }
+          : {}),
+        ...(error.buildMarkerStatus
+          ? { buildMarkerStatus: error.buildMarkerStatus }
+          : {}),
+        ...(error.migrationStatus
+          ? { migrationStatus: error.migrationStatus }
+          : {})
+      })
+    );
+  } else {
+    console.error("Application failed to start");
+  }
+  process.exitCode = 1;
+});

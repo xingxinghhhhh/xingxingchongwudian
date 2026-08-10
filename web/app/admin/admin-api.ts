@@ -52,6 +52,126 @@ export interface AdminDashboardMetrics {
   pendingCommunityReportCount?: number;
 }
 
+export interface AdminCloudPetOpsHealth {
+  timestamp: string;
+  status: "healthy" | "critical";
+  reasons: string[];
+  readiness: { ready: boolean };
+  http: {
+    scope: "process";
+    windowSeconds: number;
+    requestCount: number;
+    serverErrorCount: number;
+    serverErrorRate: number;
+    rateLimitedCount: number;
+  };
+  cloudPet: {
+    dailyDiary: {
+      date: string;
+      coveredCount: number;
+      missingCount: number;
+      coverageRate: number;
+    } | null;
+    communityModeration: { openReportCount: number } | null;
+  };
+}
+
+export interface AdminDeploymentReadiness {
+  status: "ready" | "attention";
+  runtime: {
+    production: boolean;
+  };
+  persistence: {
+    mode: "prisma_sqlite" | "memory" | "unknown";
+    databaseReady: boolean;
+  };
+  configuration: {
+    adminAuthConfigured: boolean;
+    memberWebhookConfigured: boolean;
+    corsConfigured: boolean;
+    trustedProxyConfigured: boolean;
+    requestBodyLimitConfigured: boolean;
+    opsMetricsConfigured: boolean;
+    recoveryStatusDirectoryConfigured: boolean;
+  };
+  configBaseline: {
+    status: "matched" | "unconfigured" | "mismatch";
+  };
+  release: {
+    status: "identified" | "unidentified";
+    id: string | null;
+  };
+  migrationCompatibility: {
+    status: "compatible" | "mismatch" | "unavailable";
+  };
+}
+
+export type AdminCloudPetLaunchReadinessAttentionCode =
+  | "API_NOT_READY"
+  | "CONFIG_BASELINE_UNCONFIGURED"
+  | "CONFIG_BASELINE_MISMATCH"
+  | "RELEASE_ID_UNCONFIGURED"
+  | "DATABASE_MIGRATION_NOT_READY"
+  | "RUNTIME_CRITICAL"
+  | "RECOVERY_NOT_VERIFIED"
+  | "BACKUP_STALE"
+  | "AUTO_RECOVERY_SUPPRESSED";
+
+export interface AdminCloudPetLaunchReadiness {
+  checkedAt: string;
+  status: "passed" | "needs_attention";
+  checks: {
+    runtime: "passed" | "failed";
+    dataProtection: "passed" | "failed";
+    automation: "passed" | "attention";
+  };
+  attentionItems: Array<{
+    code: AdminCloudPetLaunchReadinessAttentionCode;
+  }>;
+}
+
+export interface AdminSqliteRecoveryStatus {
+  autoRefreshEnabled: boolean;
+  autoRefreshRuntime: {
+    lastCheckedAt: string | null;
+    lastOutcome:
+      | "not_run_yet"
+      | "run_succeeded"
+      | "skipped_fresh"
+      | "skipped_ineligible"
+      | "skipped_busy"
+      | "skipped_suppressed"
+      | "run_failed";
+    reasonCode: string | null;
+    suppressionActive: boolean;
+    nextCheckAt: string | null;
+  };
+  status:
+    | "no_backup"
+    | "backup_unverified"
+    | "recoverable"
+    | "drill_failed"
+    | "unavailable";
+  freshness: "fresh" | "stale" | "unknown";
+  maxBackupAgeHours?: number;
+  latestBackup?: {
+    createdAt: string;
+    ageSeconds: number;
+  };
+  latestRestoreDrill?: {
+    checkedAt: string;
+    status: "passed" | "failed";
+    failureCode?: string;
+  };
+}
+
+export interface AdminSqliteRecoveryRunResult {
+  ok: true;
+  status: AdminSqliteRecoveryStatus["status"];
+  freshness: AdminSqliteRecoveryStatus["freshness"];
+  completedAt: string;
+}
+
 export interface MerchantAnalytics {
   revenue: {
     gmvCents: number;
@@ -766,6 +886,58 @@ export function getAdminCloudPetRetentionMetrics(
   return requestJson<AdminCloudPetRetentionMetrics>(
     "/admin/cloud-pets/retention-metrics",
     adminRequest(token),
+    fetcher
+  );
+}
+
+export function getCloudPetOpsHealth(token: string, fetcher: Fetcher = fetch) {
+  return requestJson<AdminCloudPetOpsHealth>(
+    "/admin/ops/cloud-pet-health",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function getAdminDeploymentReadiness(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminDeploymentReadiness>(
+    "/admin/ops/deployment-readiness",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function getAdminCloudPetLaunchReadiness(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminCloudPetLaunchReadiness>(
+    "/admin/ops/cloud-pet-launch-readiness",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function getAdminSqliteRecoveryStatus(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminSqliteRecoveryStatus>(
+    "/admin/ops/sqlite-recovery-status",
+    adminRequest(token),
+    fetcher
+  );
+}
+
+export function runAdminSqliteRecovery(
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<AdminSqliteRecoveryRunResult>(
+    "/admin/ops/sqlite-recovery/run",
+    jsonAdminRequest(token, {}, "POST"),
     fetcher
   );
 }

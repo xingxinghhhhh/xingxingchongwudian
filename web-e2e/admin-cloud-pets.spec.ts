@@ -83,8 +83,20 @@ test("admin report queue filters community reports by status, post, and member",
   });
 
   await loginAsAdmin(page, "owner");
+  const healthCard = page.getByTestId("admin-cloud-pet-ops-health");
+  const pendingReportsLink = healthCard.getByTestId(
+    "admin-health-pending-reports-link"
+  );
+  await expect(pendingReportsLink).toBeVisible();
+  await pendingReportsLink.click();
+  await expect(page).toHaveURL(
+    /\/admin\?reportStatus=pending_review#admin-community-reports/
+  );
 
   const reportSection = page.locator("#admin-community-reports");
+  await expect(
+    reportSection.getByTestId("admin-community-report-filter-status")
+  ).toHaveValue("pending_review");
   await expect(reportSection.getByText(target.reportNo)).toBeVisible();
   await expect(reportSection.getByText(other.reportNo)).toBeVisible();
 
@@ -138,6 +150,17 @@ test("owner can backfill a selected daily diary gap from the admin page", async 
   const petNo = ((await petResponse.json()) as { petNo: string }).petNo;
 
   await loginAsAdmin(page, "owner");
+  const healthCard = page.getByTestId("admin-cloud-pet-ops-health");
+  const diaryGapLink = healthCard.getByTestId("admin-health-diary-gap-link");
+  await expect(diaryGapLink).toBeVisible();
+  await expect(diaryGapLink).toHaveAttribute(
+    "href",
+    /\/admin\/pets\/daily-diary-coverage\?date=\d{4}-\d{2}-\d{2}/
+  );
+  await diaryGapLink.click();
+  await expect(page).toHaveURL(
+    /\/admin\/pets\/daily-diary-coverage\?date=\d{4}-\d{2}-\d{2}/
+  );
   await page.goto("/admin/pets/daily-diary-coverage");
   await expect(page).toHaveURL(/\/admin\/pets\/daily-diary-coverage/);
 

@@ -8,6 +8,10 @@ import { ProductListItem } from "../products/product.types";
 import { CreateCloudPetDto } from "./dto/create-cloud-pet.dto";
 import { CreateCloudPetDiaryNoteDto } from "./dto/create-cloud-pet-diary-note.dto";
 import { UpdateCloudPetHomepageDto } from "./dto/update-cloud-pet-homepage.dto";
+import {
+  DAILY_DIARY_EVENT_TYPES,
+  isCloudPetDiaryEventType
+} from "./cloud-pet-event-types";
 
 export interface CloudPetProfile {
   petNo: string;
@@ -517,6 +521,7 @@ export class CloudPetsService implements OnModuleInit {
 
     return {
       ...publicPet,
+      timeline: this.toPublicTimelineEvents(publicPet.timeline),
       bio: `${pet.name}是一只性格${pet.personality}的云养${speciesLabel}。`
     };
   }
@@ -1002,9 +1007,15 @@ export class CloudPetsService implements OnModuleInit {
   ): Promise<CloudPetHomepageArchive> {
     const pet = await this.getPet(petNo);
     const selectedType = eventType && eventType !== "all" ? eventType : null;
-    const items = selectedType
-      ? pet.timeline.filter((event) => event.type === selectedType)
+    const filteredItems = selectedType
+      ? pet.timeline.filter((event) =>
+          selectedType === "daily_diary"
+            ? isCloudPetDiaryEventType(event.type)
+            : event.type === selectedType
+        )
       : pet.timeline;
+    const items = this.toPublicTimelineEvents(filteredItems);
+    const publicTimeline = this.toPublicTimelineEvents(pet.timeline);
 
     return {
       petNo: pet.petNo,
@@ -1018,7 +1029,7 @@ export class CloudPetsService implements OnModuleInit {
       engagement: {
         homepageVisitCount: await this.countHomepageVisits(petNo)
       },
-      filters: this.buildArchiveFilters(pet.timeline),
+      filters: this.buildArchiveFilters(publicTimeline),
       items
     };
   }
@@ -1476,6 +1487,15 @@ export class CloudPetsService implements OnModuleInit {
     };
   }
 
+  private toPublicTimelineEvents(
+    timeline: CloudPetProfile["timeline"]
+  ): CloudPetProfile["timeline"] {
+    return timeline.map((event) => ({
+      ...event,
+      type: isCloudPetDiaryEventType(event.type) ? "daily_diary" : event.type
+    }));
+  }
+
   private buildHomepageProfile(pet: CloudPetRecord): CloudPetHomepageProfile {
     return {
       theme: this.getHomepageTheme(pet.homepageTheme),
@@ -1582,6 +1602,8 @@ export class CloudPetsService implements OnModuleInit {
       adoption: "初次相遇",
       growth_task: "成长任务",
       daily_diary: "成长日记",
+      care_daily_diary: "成长日记",
+      presence_daily_diary: "成长日记",
       owner_note: "主人手记"
     };
 
@@ -2037,7 +2059,7 @@ export class CloudPetsService implements OnModuleInit {
       : " 商品目录准备好后会刷新推荐。";
 
     return {
-      type: "daily_diary",
+      type: "care_daily_diary",
       title: pet.name + "的成长日记",
       body: `${pet.name}今天完成了“${task.title}”，获得 ${task.points} 成长积分。今日宠物商城奖励可使用 WELCOME20。${productSentence}`,
       createdAt
@@ -2060,7 +2082,7 @@ export class CloudPetsService implements OnModuleInit {
       : " 商品目录准备好后会刷新推荐。";
 
     return {
-      type: "daily_diary",
+      type: "presence_daily_diary",
       title: pet.name + "的成长日记",
       body: `${pet.name}在 ${date} 度过了安静的一天。今天没有完成新的成长任务，这条陪伴记录已补入日记。${productSentence}`,
       createdAt: this.createDiaryCreatedAt(date)
@@ -2119,12 +2141,14 @@ export class CloudPetsService implements OnModuleInit {
     date: string
   ) {
     return timeline.some(
-      (event) => event.type === "daily_diary" && this.toIsoDate(event.createdAt) === date
+      (event) =>
+        isCloudPetDiaryEventType(event.type) &&
+        this.toIsoDate(event.createdAt) === date
     );
   }
 
   private getLatestTimelineDailyDiaryDate(timeline: CloudPetProfile["timeline"]) {
-    const latestDiary = timeline.find((event) => event.type === "daily_diary");
+    const latestDiary = timeline.find((event) => isCloudPetDiaryEventType(event.type));
 
     return latestDiary ? this.toIsoDate(latestDiary.createdAt) : undefined;
   }
@@ -2209,7 +2233,7 @@ export class CloudPetsService implements OnModuleInit {
   private findMemoryDailyDiaryForToday(pet: CloudPetRecord) {
     const event = pet.timeline.find(
       (event) =>
-        event.type === "daily_diary" &&
+        isCloudPetDiaryEventType(event.type) &&
         this.toIsoDate(event.createdAt) === this.getTaskDate()
     );
 
@@ -2234,7 +2258,7 @@ export class CloudPetsService implements OnModuleInit {
     return this.prisma.virtualPetEvent.findFirst({
       where: {
         petId,
-        type: "daily_diary",
+        type: { in: [...DAILY_DIARY_EVENT_TYPES] },
         createdAt: {
           gte: start,
           lt: end
