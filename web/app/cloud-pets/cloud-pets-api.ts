@@ -160,6 +160,7 @@ export interface CommunityComment {
   authorName: string;
   body: string;
   status: "visible" | "hidden";
+  authorDeletedAt?: string;
   createdAt: string;
 }
 
@@ -411,6 +412,22 @@ export function commentOnCommunityPost(
   return requestJson<CommunityComment>(
     `/community/posts/${encodeURIComponent(postNo)}/comments`,
     jsonRequest(input, sessionToken),
+    fetcher
+  );
+}
+
+export function withdrawCommunityComment(
+  commentNo: string,
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityComment>(
+    `/community/comments/${encodeURIComponent(commentNo)}`,
+    {
+      cache: "no-store",
+      headers: { "X-Member-Token": sessionToken },
+      method: "DELETE"
+    },
     fetcher
   );
 }

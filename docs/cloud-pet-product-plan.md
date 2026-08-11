@@ -10,6 +10,7 @@ Cloud Pet is now treated as its own retention product line, separate from the pe
 - Backend coverage is stronger than the frontend experience.
 - The current frontend has enough API wiring to validate the loop, but it needs to become a coherent user-facing cloud pet workspace before it is launch-ready.
 - Community posts now have stable detail deep links at `/community/posts/:postNo`; Feed and public homepage entry points reopen the same visible post and comments after reload, while hidden or author-withdrawn posts remain inaccessible to user-facing reads.
+- Community comments now support member-authenticated author withdrawal through a soft `authorDeletedAt` state; withdrawn comments disappear from user-facing reads and counts while moderation evidence remains available.
 
 ## Gaps Before Launch
 

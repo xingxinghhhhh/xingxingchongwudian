@@ -148,6 +148,57 @@ test("member can withdraw their own community post from the cloud pet workspace"
   expect(feedBody.items.some((item) => item.body === communityBody)).toBe(false);
 });
 
+test("member can withdraw their own community comment from post detail", async ({
+  page
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Comment Withdraw Owner ${runId}`;
+  const phone = `136${runId}`;
+  const petName = `Comment Pet ${runId}`;
+  const postBody = `Comment detail post ${runId}`;
+  const commentBody = `Comment to withdraw ${runId}`;
+
+  await page.goto("/cloud-pets");
+  await verifyMemberInCloudPetWorkspace(page, { name: ownerName, phone });
+  await expect(page.getByText(phone)).toBeVisible();
+  await page.getByTestId("cloud-create-pet-name").fill(petName);
+  await page.getByTestId("cloud-create-species").selectOption("cat");
+  await page.getByTestId("cloud-create-personality").fill("Comment ownership UI coverage.");
+  await page.getByTestId("cloud-create-submit").click();
+  await expect(page.getByTestId("cloud-member-profile")).toBeVisible();
+  await expect(page.getByTestId("cloud-community-submit")).toBeEnabled();
+  await page.getByTestId("cloud-community-body").fill(postBody);
+  await page.getByTestId("cloud-community-submit").click();
+
+  const createdPost = page
+    .getByTestId("cloud-community-post")
+    .filter({ hasText: postBody });
+  await expect(createdPost).toBeVisible();
+  await createdPost.getByTestId("cloud-community-open-detail").click();
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(postBody);
+  await page.getByTestId("community-post-detail-comment-body").fill(commentBody);
+  await page.getByTestId("community-post-detail-comment-submit").click();
+  await expect(page.getByTestId("community-post-detail-comment")).toContainText(commentBody);
+
+  await page.reload();
+  const detailComment = page
+    .getByTestId("community-post-detail-comment")
+    .filter({ hasText: commentBody });
+  await expect(detailComment).toBeVisible();
+  await expect(detailComment.getByTestId("community-post-detail-comment-withdraw")).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.accept();
+  });
+  await detailComment.getByTestId("community-post-detail-comment-withdraw").click();
+  await expect(detailComment).toHaveCount(0);
+  await expect(page.getByTestId("community-post-detail-comments-empty")).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId("community-post-detail-comments-empty")).toBeVisible();
+});
+
 test("cloud pet workspace requires a live session after logout", async ({
   page,
   request

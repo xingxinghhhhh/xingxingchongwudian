@@ -43,6 +43,7 @@ export interface CommunityCommentResponse {
   authorName: string;
   body: string;
   status: CommunityPostStatus;
+  authorDeletedAt?: string;
   createdAt: string;
 }
 
@@ -177,7 +178,7 @@ export class CommunityService {
 
     const posts = await this.prisma.communityPost.findMany({
       where: { status: "visible", authorDeletedAt: null },
-      include: this.postInclude(),
+      include: this.visiblePostInclude(),
       orderBy: { createdAt: "desc" },
       take: 50
     });
@@ -235,7 +236,7 @@ export class CommunityService {
         authorDeletedAt: null,
         petNo: { in: followedPetNos }
       },
-      include: this.postInclude(),
+      include: this.visiblePostInclude(),
       orderBy: { createdAt: "desc" },
       take: 50
     });
@@ -304,7 +305,7 @@ export class CommunityService {
 
     const post = await this.prisma.communityPost.findFirst({
       where: { postNo, status: "visible", authorDeletedAt: null },
-      include: this.postInclude()
+      include: this.visiblePostInclude()
     });
 
     if (!post) {
@@ -376,6 +377,7 @@ export class CommunityService {
         authorName: dto.authorName,
         body: dto.body,
         status: "visible",
+        authorDeletedAt: undefined,
         createdAt: new Date().toISOString()
       } satisfies CommunityCommentResponse;
       this.comments.unshift(comment);
@@ -401,18 +403,66 @@ export class CommunityService {
     return this.toCommentResponse(comment);
   }
 
+  async withdrawComment(commentNo: string, memberPhone: string) {
+    if (!this.isDatabaseConfigured()) {
+      const comment = this.comments.find((item) => item.commentNo === commentNo);
+
+      if (!comment) {
+        throw new NotFoundException("Community comment not found");
+      }
+
+      if (comment.memberPhone !== memberPhone) {
+        throw new ForbiddenException(
+          "Only the comment author can withdraw this comment"
+        );
+      }
+
+      comment.authorDeletedAt ??= new Date().toISOString();
+      this.refreshMemoryPostMetrics(comment.postNo);
+      return comment;
+    }
+
+    const comment = await this.prisma.communityComment.findUnique({
+      where: { commentNo }
+    });
+
+    if (!comment) {
+      throw new NotFoundException("Community comment not found");
+    }
+
+    if (comment.memberPhone !== memberPhone) {
+      throw new ForbiddenException(
+        "Only the comment author can withdraw this comment"
+      );
+    }
+
+    const withdrawnComment = comment.authorDeletedAt
+      ? comment
+      : await this.prisma.communityComment.update({
+          where: { commentNo },
+          data: { authorDeletedAt: new Date() }
+        });
+
+    return this.toCommentResponse(withdrawnComment);
+  }
+
 
   async listComments(postNo: string): Promise<CommunityCommentResponse[]> {
     await this.ensurePost(postNo);
 
     if (!this.isDatabaseConfigured()) {
       return this.comments
-        .filter((comment) => comment.postNo === postNo && comment.status === "visible")
+        .filter(
+          (comment) =>
+            comment.postNo === postNo &&
+            comment.status === "visible" &&
+            !comment.authorDeletedAt
+        )
         .slice(0, 20);
     }
 
     const comments = await this.prisma.communityComment.findMany({
-      where: { postNo, status: "visible" },
+      where: { postNo, status: "visible", authorDeletedAt: null },
       orderBy: { createdAt: "desc" },
       take: 20
     });
@@ -744,6 +794,7 @@ export class CommunityService {
     authorName: string;
     body: string;
     status: CommunityPostStatus;
+    authorDeletedAt?: Date | string | null;
     createdAt: Date | string;
   }): CommunityCommentResponse {
     return {
@@ -753,6 +804,11 @@ export class CommunityService {
       authorName: comment.authorName,
       body: comment.body,
       status: comment.status,
+      authorDeletedAt: comment.authorDeletedAt
+        ? comment.authorDeletedAt instanceof Date
+          ? comment.authorDeletedAt.toISOString()
+          : comment.authorDeletedAt
+        : undefined,
       createdAt:
         comment.createdAt instanceof Date
           ? comment.createdAt.toISOString()
@@ -846,6 +902,20 @@ export class CommunityService {
     };
   }
 
+  private visiblePostInclude() {
+    return {
+      _count: {
+        select: {
+          likes: true,
+          comments: {
+            where: { status: "visible" as const, authorDeletedAt: null }
+          },
+          reports: true
+        }
+      }
+    };
+  }
+
   private refreshMemoryPostMetrics(postNo: string) {
     const post = this.posts.find((item) => item.postNo === postNo);
 
@@ -855,7 +925,10 @@ export class CommunityService {
 
     post.likeCount = this.countMemoryLikes(postNo);
     post.commentCount = this.comments.filter(
-      (comment) => comment.postNo === postNo
+      (comment) =>
+        comment.postNo === postNo &&
+        comment.status === "visible" &&
+        !comment.authorDeletedAt
     ).length;
     post.reportCount = this.reports.filter((report) => report.postNo === postNo)
       .length;

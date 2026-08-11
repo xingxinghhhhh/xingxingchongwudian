@@ -17,7 +17,8 @@ import {
   withdrawCommunityPost,
   updateCloudPetDiaryNote,
   recordCloudPetHomepageVisit,
-  updateCloudPetHomepage
+  updateCloudPetHomepage,
+  withdrawCommunityComment
 } from "./cloud-pets-api";
 
 describe("cloud pets api client", () => {
@@ -549,6 +550,29 @@ describe("cloud pets api client", () => {
     expect(listCommentsFetcher).toHaveBeenCalledWith(
       "http://localhost:3000/api/community/posts/POST001/comments",
       { cache: "no-store" }
+    );
+
+    const withdrawCommentFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        commentNo: "CMT001",
+        authorDeletedAt: "2026-08-11T00:00:00.000Z"
+      })
+    });
+    await expect(
+      withdrawCommunityComment(
+        "CMT001",
+        "member_community_003",
+        withdrawCommentFetcher
+      )
+    ).resolves.toMatchObject({ commentNo: "CMT001" });
+    expect(withdrawCommentFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/comments/CMT001",
+      {
+        cache: "no-store",
+        headers: { "X-Member-Token": "member_community_003" },
+        method: "DELETE"
+      }
     );
 
     await expect(

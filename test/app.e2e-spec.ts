@@ -5442,6 +5442,78 @@ describe("Pet toy shop API", () => {
       .expect(404);
   });
 
+  it("lets only the comment author withdraw a community comment", async () => {
+    const ownerPhone = "13900136776";
+    const ownerSession = await loginAsMember(ownerPhone, "Comment Withdraw Owner");
+    const otherSession = await loginAsMember("13900136777", "Other Comment Member");
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Comment Withdraw Owner",
+        ownerPhone,
+        name: "Comment Pet",
+        species: "cat",
+        personality: "keeps comment ownership explicit"
+      })
+      .expect(201);
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A post with a comment that can be withdrawn."
+      })
+      .expect(201);
+    const commentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "This comment belongs to the owner." })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", otherSession)
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Only the comment author can withdraw this comment");
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .expect(401);
+
+    const withdrawnResponse = await request(app.getHttpServer())
+      .delete(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+    expect(withdrawnResponse.body).toMatchObject({
+      commentNo: commentResponse.body.commentNo,
+      authorDeletedAt: expect.any(String)
+    });
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.authorDeletedAt).toBe(withdrawnResponse.body.authorDeletedAt);
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([]);
+      });
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.commentCount).toBe(0);
+      });
+  });
+
   it("requires member auth before community interactions", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")

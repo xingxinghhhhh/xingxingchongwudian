@@ -314,11 +314,13 @@ model CommunityComment {
   authorName  String
   body        String
   status      CommunityPostStatus @default(visible)
+  authorDeletedAt DateTime?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
   @@index([postNo])
   @@index([memberPhone])
+  @@index([authorDeletedAt])
 }
 
 model CommunityLike {

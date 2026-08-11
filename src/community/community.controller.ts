@@ -88,6 +88,18 @@ export class CommunityController {
     return this.communityService.withdrawPost(postNo, session.phone);
   }
 
+  @Delete("comments/:commentNo")
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async withdrawComment(
+    @Param("commentNo") commentNo: string,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.communityService.withdrawComment(commentNo, session.phone);
+  }
+
   @Get("posts/:postNo")
   async getPost(@Param("postNo") postNo: string) {
     return this.communityService.getPost(postNo);

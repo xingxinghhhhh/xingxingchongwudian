@@ -5,10 +5,12 @@ import { FormEvent, useEffect, useState } from "react";
 import type { CommunityComment, CommunityPost } from "../../../cloud-pets/cloud-pets-api";
 import {
   commentOnCommunityPost,
-  likeCommunityPost
+  likeCommunityPost,
+  withdrawCommunityComment
 } from "../../../cloud-pets/cloud-pets-api";
 
 const memberSessionKey = "kzt_member_session";
+const memberPhoneKey = "kzt_member_phone";
 
 interface CommunityPostDetailProps {
   post: CommunityPost;
@@ -23,12 +25,14 @@ export function CommunityPostDetail({
   const [comments, setComments] = useState(initialComments);
   const [commentBody, setCommentBody] = useState("");
   const [memberSession, setMemberSession] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<"like" | "comment" | null>(null);
+  const [memberPhone, setMemberPhone] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setMemberSession(window.localStorage.getItem(memberSessionKey));
+    setMemberPhone(window.localStorage.getItem(memberPhoneKey));
   }, []);
 
   async function handleLike() {
@@ -47,7 +51,9 @@ export function CommunityPostDetail({
     } catch (caught) {
       if (caught instanceof Error && caught.message === "Invalid member session") {
         window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
         setMemberSession(null);
+        setMemberPhone(null);
       }
       setError(caught instanceof Error ? caught.message : "点赞失败，请稍后重试");
     } finally {
@@ -89,9 +95,52 @@ export function CommunityPostDetail({
     } catch (caught) {
       if (caught instanceof Error && caught.message === "Invalid member session") {
         window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
         setMemberSession(null);
+        setMemberPhone(null);
       }
       setError(caught instanceof Error ? caught.message : "评论失败，请稍后重试");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleWithdrawComment(comment: CommunityComment) {
+    if (!memberSession) {
+      setError("请先同步会员后再撤回评论");
+      return;
+    }
+
+    if (!memberPhone || comment.memberPhone !== memberPhone) {
+      setError("只能撤回自己发布的评论");
+      return;
+    }
+
+    if (!window.confirm("确认撤回这条评论吗？")) {
+      return;
+    }
+
+    setBusyAction(`withdraw-comment-${comment.commentNo}`);
+    setError(null);
+
+    try {
+      await withdrawCommunityComment(comment.commentNo, memberSession);
+      setComments((current) =>
+        current.filter((item) => item.commentNo !== comment.commentNo)
+      );
+      setPost((current) => ({
+        ...current,
+        commentCount: Math.max(0, current.commentCount - 1)
+      }));
+      setStatus("评论已撤回");
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "Invalid member session") {
+        window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
+        setMemberSession(null);
+        setMemberPhone(null);
+      }
+      setError(caught instanceof Error ? caught.message : "撤回评论失败，请稍后重试");
     } finally {
       setBusyAction(null);
     }
@@ -169,6 +218,19 @@ export function CommunityPostDetail({
             <p data-testid="community-post-detail-comment" key={comment.commentNo}>
               <strong>{comment.authorName}</strong>
               <span>{comment.body}</span>
+              {memberSession && memberPhone && comment.memberPhone === memberPhone ? (
+                <button
+                  className="cloud-button cloud-button--small cloud-button--ghost"
+                  data-testid="community-post-detail-comment-withdraw"
+                  disabled={busyAction !== null}
+                  onClick={() => void handleWithdrawComment(comment)}
+                  type="button"
+                >
+                  {busyAction === `withdraw-comment-${comment.commentNo}`
+                    ? "撤回中…"
+                    : "撤回评论"}
+                </button>
+              ) : null}
             </p>
           ))
         ) : (
