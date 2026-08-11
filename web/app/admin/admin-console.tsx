@@ -98,6 +98,11 @@ import {
   getRiskLevelLabel,
   getStatusLabel
 } from "./admin-copy";
+import {
+  compareCloudPetRisk,
+  evaluateCloudPetRisk,
+  type CloudPetRiskReasonCode
+} from "./cloud-pet-risk";
 
 const defaultToken = "";
 
@@ -197,7 +202,7 @@ export function AdminConsole() {
     currentStaff?.permissions.includes("cloud_pets:write") ?? false;
   const filteredCloudPets = cloudPetFilters.riskLevel
     ? pets.filter(
-        (pet) => getCloudPetListRiskSummary(pet).highestLevel === cloudPetFilters.riskLevel
+        (pet) => evaluateCloudPetRisk(pet).highestLevel === cloudPetFilters.riskLevel
       )
     : pets;
   const displayedCloudPets = cloudPetFilters.sortBy === "risk_desc"
@@ -2707,11 +2712,11 @@ export function AdminConsole() {
                   {pet.communityPostCount} 条帖子{" / "}{pet.homepageVisitCount ?? 0} 次访问
                 </em>
                 <div className="admin-cloud-pet-list-risk" data-testid="admin-cloud-pet-list-risk">
-                  <span className={"admin-cloud-pet-list-risk__badge admin-cloud-pet-list-risk__badge--" + getCloudPetListRiskSummary(pet).highestLevel}>
-                    {getRiskLevelLabel(getCloudPetListRiskSummary(pet).highestLevel)}
+                  <span className={"admin-cloud-pet-list-risk__badge admin-cloud-pet-list-risk__badge--" + evaluateCloudPetRisk(pet).highestLevel}>
+                    {getRiskLevelLabel(evaluateCloudPetRisk(pet).highestLevel)}
                   </span>
-                  <span>{getCloudPetListRiskSummary(pet).count} 个风险信号</span>
-                  <small>{getCloudPetListRiskSummary(pet).summary}</small>
+                  <span>{evaluateCloudPetRisk(pet).count} 个风险信号</span>
+                  <small>{evaluateCloudPetRisk(pet).summary}</small>
                 </div>
                 <button
                   className="admin-button admin-button--small admin-button--ghost"
@@ -2911,18 +2916,15 @@ function getCloudPetOperationalSignals(
   const hasTodayDiary = detail.archive.items.some(
     (item) => item.type === "daily_diary" && item.createdAt.startsWith(todayKey)
   );
-  const signals: CloudPetOperationalSignal[] = [];
+  const baseSignals = new Map(
+    evaluateCloudPetRisk(detail.pet).reasons.map((reason) => [
+      reason.code,
+      getCloudPetBaseRiskSignal(detail, reason.code, reason.level, reason.label)
+    ])
+  );
+  const signals: Array<CloudPetOperationalSignal | undefined> = [];
 
-  if (!detail.pet.growth.isCareCompleteToday) {
-    signals.push({
-      key: "care-incomplete",
-      level: "high",
-      title: "今日照护未完成",
-      description: "今日成长任务尚未形成完整照护记录，需要及时跟进。",
-      actionHref: "#admin-cloud-pets",
-      actionLabel: "查看成长任务"
-    });
-  }
+  signals.push(baseSignals.get("care_incomplete_today"));
 
   if (!hasTodayDiary) {
     signals.push({
@@ -2946,41 +2948,16 @@ function getCloudPetOperationalSignals(
     });
   }
 
-  if (detail.pet.growth.careState === "needs_care") {
-    signals.push({
-      key: "needs-care-state",
-      level: "medium",
-      title: "照护状态需关注",
-      description: "当前照护分处于需要照护区间，建议检查任务完成情况。",
-      actionHref: "#admin-cloud-pets",
-      actionLabel: "查看照护配置"
-    });
-  }
+  signals.push(baseSignals.get("needs_care_state"));
+  signals.push(baseSignals.get("no_homepage_visits"));
+  signals.push(baseSignals.get("no_community_posts"));
 
-  if (detail.archive.engagement.homepageVisitCount === 0) {
-    signals.push({
-      key: "no-homepage-visits",
-      level: "medium",
-      title: "主页暂无访问",
-      description: "公开主页尚无访问记录，可检查分享入口和主页内容。",
-      actionHref: "/cloud-pets/" + detail.pet.petNo,
-      actionLabel: "打开主页"
-    });
-  }
+  const resolvedSignals = signals.filter(
+    (signal): signal is CloudPetOperationalSignal => Boolean(signal)
+  );
 
-  if (detail.community.postCount === 0) {
-    signals.push({
-      key: "no-community-posts",
-      level: "low",
-      title: "社区暂无内容",
-      description: "该宠物还没有社区动态，可安排内容运营跟进。",
-      actionHref: "#admin-community-posts",
-      actionLabel: "查看社区"
-    });
-  }
-
-  return signals.length > 0
-    ? signals
+  return resolvedSignals.length > 0
+    ? resolvedSignals
     : [
         {
           key: "healthy",
@@ -2991,12 +2968,50 @@ function getCloudPetOperationalSignals(
       ];
 }
 
+function getCloudPetBaseRiskSignal(
+  detail: AdminCloudPetOperationalDetail,
+  code: CloudPetRiskReasonCode,
+  level: "high" | "medium" | "low",
+  label: string
+): CloudPetOperationalSignal {
+  const common = { level, title: label } as const;
 
-type CloudPetListRiskSummary = {
-  count: number;
-  highestLevel: "high" | "medium" | "low";
-  summary: string;
-};
+  switch (code) {
+    case "care_incomplete_today":
+      return {
+        ...common,
+        key: "care-incomplete",
+        description: "今日成长任务尚未形成完整照护记录，需要及时跟进。",
+        actionHref: "#admin-cloud-pets",
+        actionLabel: "查看成长任务"
+      };
+    case "needs_care_state":
+      return {
+        ...common,
+        key: "needs-care-state",
+        description: "当前照护分处于需要照护区间，建议检查任务完成情况。",
+        actionHref: "#admin-cloud-pets",
+        actionLabel: "查看照护配置"
+      };
+    case "no_homepage_visits":
+      return {
+        ...common,
+        key: "no-homepage-visits",
+        description: "公开主页尚无访问记录，可检查分享入口和主页内容。",
+        actionHref: "/cloud-pets/" + detail.pet.petNo,
+        actionLabel: "打开主页"
+      };
+    case "no_community_posts":
+      return {
+        ...common,
+        key: "no-community-posts",
+        description: "该宠物还没有社区动态，可安排内容运营跟进。",
+        actionHref: "#admin-community-posts",
+        actionLabel: "查看社区"
+      };
+  }
+}
+
 
 function getSqliteRecoveryStatusLabel(
   status: AdminSqliteRecoveryStatus["status"]
@@ -3163,69 +3178,4 @@ function formatAgeSeconds(ageSeconds: number) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} 小时前`;
   return `${Math.floor(hours / 24)} 天前`;
-}
-
-function getCloudPetListRiskSummary(pet: AdminCloudPet): CloudPetListRiskSummary {
-  const signals: Array<{ level: "high" | "medium" | "low"; label: string }> = [];
-
-  if (!pet.growth.isCareCompleteToday) {
-    signals.push({ level: "high", label: "今日照护未完成" });
-  }
-
-  if (pet.growth.careState === "needs_care") {
-    signals.push({ level: "medium", label: "需要照护" });
-  }
-
-  if ((pet.homepageVisitCount ?? 0) === 0) {
-    signals.push({ level: "medium", label: "主页无访问" });
-  }
-
-  if (pet.communityPostCount === 0) {
-    signals.push({ level: "low", label: "社区无内容" });
-  }
-
-  if (signals.length === 0) {
-    return {
-      count: 0,
-      highestLevel: "low",
-      summary: "正常"
-    };
-  }
-
-  const highestLevel = signals.some((signal) => signal.level === "high")
-    ? "high"
-    : signals.some((signal) => signal.level === "medium")
-      ? "medium"
-      : "low";
-
-  return {
-    count: signals.length,
-    highestLevel,
-    summary: signals.map((signal) => signal.label).join(" / ")
-  };
-}
-
-
-function compareCloudPetRisk(left: AdminCloudPet, right: AdminCloudPet) {
-  const leftRisk = getCloudPetListRiskSummary(left);
-  const rightRisk = getCloudPetListRiskSummary(right);
-  const levelDelta = getCloudPetRiskWeight(rightRisk.highestLevel) - getCloudPetRiskWeight(leftRisk.highestLevel);
-
-  if (levelDelta !== 0) {
-    return levelDelta;
-  }
-
-  return rightRisk.count - leftRisk.count;
-}
-
-function getCloudPetRiskWeight(level: "high" | "medium" | "low") {
-  if (level === "high") {
-    return 3;
-  }
-
-  if (level === "medium") {
-    return 2;
-  }
-
-  return 1;
 }

@@ -348,3 +348,59 @@ test("owner can filter a cloud pet and inspect its operational detail", async ({
   await expect(detail).toContainText("主页访问：1");
   await expect(detail.getByTestId("admin-cloud-pet-risk-signals")).toBeVisible();
 });
+
+test("admin cloud pet risk reasons stay consistent between list and detail", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Risk Reason Owner ${runId}`;
+  const phone = `133${runId}`;
+  const petName = `Risk Reason Pet ${runId}`;
+  const member = await loginAsVerifiedMember(request, {
+    name: ownerName,
+    phone
+  });
+  const petResponse = await request.post(`${API_BASE}/cloud-pets`, {
+    data: {
+      ownerName,
+      ownerPhone: phone,
+      name: petName,
+      species: "cat",
+      personality: "Provides a deliberately incomplete care signal."
+    },
+    headers: { "X-Member-Token": member.sessionToken }
+  });
+  expect(petResponse.ok()).toBeTruthy();
+  const petNo = ((await petResponse.json()) as { petNo: string }).petNo;
+
+  await loginAsAdmin(page, "owner");
+  const cloudPetSection = page.locator("#admin-cloud-pets");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(petNo);
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-risk").selectOption("high");
+  await cloudPetSection.getByTestId("admin-cloud-pet-sort-risk").selectOption("risk_desc");
+
+  const filterResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/cloud-pets?") &&
+      response.url().includes(`q=${petNo}`)
+  );
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+  expect((await filterResponse).ok()).toBeTruthy();
+
+  const listItem = cloudPetSection.locator(
+    `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${petNo}"]`
+  );
+  await expect(listItem).toBeVisible();
+  const listRisk = listItem.getByTestId("admin-cloud-pet-list-risk");
+  await expect(listRisk).toContainText("今日照护未完成");
+  await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+
+  const detail = cloudPetSection.getByTestId("admin-cloud-pet-detail");
+  await expect(detail.getByTestId("admin-cloud-pet-risk-signals")).toContainText(
+    "今日照护未完成"
+  );
+});
