@@ -32,6 +32,7 @@ const cloudPetQueryKeys = [
   "riskReason",
   "riskSort"
 ] as const;
+const cloudPetSelectedPetQueryKey = "petNo";
 
 function isCloudPetSpecies(value: string | null): value is Exclude<CloudPetSpecies, ""> {
   return value === "cat" || value === "dog";
@@ -90,6 +91,26 @@ export function applyCloudPetFilterQuery(
   }
   if (filters.sortBy) {
     nextSearchParams.set("riskSort", filters.sortBy);
+  }
+
+  return nextSearchParams;
+}
+
+export function parseCloudPetSelectedPetNo(searchParams: URLSearchParams) {
+  const petNo = searchParams.get(cloudPetSelectedPetQueryKey)?.trim();
+  return petNo || null;
+}
+
+export function applyCloudPetSelectedPetNo(
+  searchParams: URLSearchParams,
+  petNo: string | null
+) {
+  const nextSearchParams = new URLSearchParams(searchParams);
+  nextSearchParams.delete(cloudPetSelectedPetQueryKey);
+
+  const normalizedPetNo = petNo?.trim();
+  if (normalizedPetNo) {
+    nextSearchParams.set(cloudPetSelectedPetQueryKey, normalizedPetNo);
   }
 
   return nextSearchParams;

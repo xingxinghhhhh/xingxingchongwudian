@@ -557,6 +557,7 @@ test("admin cloud pet structured filters restore from the URL", async ({
   await expect(listItem).toBeVisible();
   await listItem.getByTestId("admin-cloud-pet-detail-open").click();
   await expect(cloudPetSection.getByTestId("admin-cloud-pet-detail")).toContainText(petName);
+  expect(new URL(page.url()).searchParams.get("petNo")).toBe(petNo);
   expect(new URL(page.url()).searchParams.get("riskReason")).toBe(
     "care_incomplete_today"
   );
@@ -571,6 +572,7 @@ test("admin cloud pet structured filters restore from the URL", async ({
     cloudPetSection.getByTestId("admin-cloud-pet-filter-risk-reason")
   ).toHaveValue("care_incomplete_today");
   await expect(cloudPetSection.getByTestId("admin-cloud-pet-sort-risk")).toHaveValue("risk_desc");
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-detail")).toContainText(petName);
   await expect(
     cloudPetSection.locator(
       `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${petNo}"]`
@@ -586,4 +588,13 @@ test("admin cloud pet structured filters restore from the URL", async ({
   await expect(
     page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-filter-risk-reason")
   ).toHaveValue("care_incomplete_today");
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-detail")
+  ).toContainText(petName);
+  expect(new URL(page.url()).searchParams.get("petNo")).toBe(petNo);
+  await page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-detail-close").click();
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-detail")
+  ).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.get("petNo")).toBeNull();
 });

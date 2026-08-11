@@ -108,8 +108,10 @@ import {
 } from "./cloud-pet-risk";
 import {
   applyCloudPetFilterQuery,
+  applyCloudPetSelectedPetNo,
   defaultCloudPetStructuredFilters,
   parseCloudPetFilterQuery,
+  parseCloudPetSelectedPetNo,
   type CloudPetStructuredFilters
 } from "./cloud-pet-filter-query";
 
@@ -134,6 +136,23 @@ function replaceCloudPetFilterUrl(filters: CloudPetStructuredFilters) {
   const query = nextSearchParams.toString();
   const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history.replaceState({}, "", nextUrl);
+}
+
+function replaceCloudPetSelectedPetUrl(
+  petNo: string | null,
+  mode: "push" | "replace" = "replace"
+) {
+  const nextSearchParams = applyCloudPetSelectedPetNo(
+    new URLSearchParams(window.location.search),
+    petNo
+  );
+  const query = nextSearchParams.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  if (mode === "push") {
+    window.history.pushState({}, "", nextUrl);
+  } else {
+    window.history.replaceState({}, "", nextUrl);
+  }
 }
 
 function getCloudPetApiFilters(filters: CloudPetStructuredFilters, q = "") {
@@ -255,6 +274,9 @@ export function AdminConsole() {
     const initialCloudPetStructuredFilters = parseCloudPetFilterQuery(
       new URLSearchParams(window.location.search)
     );
+    const initialCloudPetSelectedPetNo = parseCloudPetSelectedPetNo(
+      new URLSearchParams(window.location.search)
+    );
     setToken(storedToken);
     setCloudPetFilters((current) => ({
       ...current,
@@ -269,12 +291,16 @@ export function AdminConsole() {
         storedToken,
         initialReportFilters ?? undefined,
         initialCloudPetStructuredFilters,
-        ""
+        "",
+        initialCloudPetSelectedPetNo
       );
     }
 
     const handleCloudPetFilterPopState = () => {
       const nextFilters = parseCloudPetFilterQuery(
+        new URLSearchParams(window.location.search)
+      );
+      const nextSelectedPetNo = parseCloudPetSelectedPetNo(
         new URLSearchParams(window.location.search)
       );
       setCloudPetFilters((current) => ({
@@ -284,9 +310,10 @@ export function AdminConsole() {
       }));
       setAppliedCloudPetStructuredFilters(nextFilters);
       setAppliedCloudPetSearch("");
-      setSelectedCloudPetDetail(null);
       if (storedToken) {
-        void loadCloudPetList(storedToken, nextFilters);
+        void loadCloudPetList(storedToken, nextFilters, nextSelectedPetNo);
+      } else {
+        setSelectedCloudPetDetail(null);
       }
     };
 
@@ -302,7 +329,8 @@ export function AdminConsole() {
       memberPhone: string;
     },
     initialCloudPetFilters = appliedCloudPetStructuredFilters,
-    initialCloudPetSearch = appliedCloudPetSearch
+    initialCloudPetSearch = appliedCloudPetSearch,
+    initialCloudPetSelectedPetNo: string | null = null
   ) {
     if (!nextToken) {
       setError("需要后台登录会话");
@@ -364,6 +392,14 @@ export function AdminConsole() {
       setCmsBlocks(nextCmsBlocks);
       setPets(nextPets);
       setCloudPetLastSuccessfulRefreshAt(new Date());
+      if (initialCloudPetSelectedPetNo) {
+        if (nextPets.some((pet) => pet.petNo === initialCloudPetSelectedPetNo)) {
+          await loadCloudPetDetail(initialCloudPetSelectedPetNo, false, nextToken);
+        } else {
+          setSelectedCloudPetDetail(null);
+          replaceCloudPetSelectedPetUrl(null);
+        }
+      }
       setPosts(nextPosts);
       setReports(nextReports);
       setProducts(nextProducts);
@@ -410,7 +446,8 @@ export function AdminConsole() {
 
   async function loadCloudPetList(
     nextToken: string,
-    nextFilters: CloudPetStructuredFilters
+    nextFilters: CloudPetStructuredFilters,
+    nextSelectedPetNo: string | null = null
   ) {
     try {
       const nextPets = await listAdminCloudPets(
@@ -419,6 +456,16 @@ export function AdminConsole() {
       );
       setPets(nextPets);
       setCloudPetLastSuccessfulRefreshAt(new Date());
+      if (nextSelectedPetNo) {
+        if (nextPets.some((pet) => pet.petNo === nextSelectedPetNo)) {
+          await loadCloudPetDetail(nextSelectedPetNo, false, nextToken);
+        } else {
+          setSelectedCloudPetDetail(null);
+          replaceCloudPetSelectedPetUrl(null);
+        }
+      } else {
+        setSelectedCloudPetDetail(null);
+      }
       setStatus(`云养宠筛选已恢复，共 ${nextPets.length} 条结果。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "云养宠筛选恢复失败");
@@ -1129,19 +1176,36 @@ export function AdminConsole() {
     }
   }
 
-  async function handleLoadCloudPetDetail(petNo: string) {
+  async function loadCloudPetDetail(
+    petNo: string,
+    updateUrl = false,
+    nextToken = token
+  ) {
     setBusyCloudPetNo(petNo);
     setError(null);
 
     try {
-      const detail = await getAdminCloudPetDetail(token, petNo);
+      const detail = await getAdminCloudPetDetail(nextToken, petNo);
       setSelectedCloudPetDetail(detail);
+      if (updateUrl) {
+        replaceCloudPetSelectedPetUrl(petNo, "push");
+      }
       setStatus(`${detail.pet.name} 的云养宠运营详情已加载。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "云养宠详情加载失败");
     } finally {
       setBusyCloudPetNo(null);
     }
+  }
+
+  async function handleLoadCloudPetDetail(petNo: string) {
+    await loadCloudPetDetail(petNo, true);
+  }
+
+  function handleClearCloudPetDetail() {
+    setSelectedCloudPetDetail(null);
+    replaceCloudPetSelectedPetUrl(null);
+    setStatus("云养宠详情已收起。");
   }
 
   async function handleRemoveCloudPetDiaryNote(petNo: string, noteId: string) {
@@ -2828,9 +2892,19 @@ export function AdminConsole() {
           </form>
           {selectedCloudPetDetail ? (
             <div className="admin-inventory-alerts" data-testid="admin-cloud-pet-detail">
-              <strong>
-                {selectedCloudPetDetail.pet.name} / {selectedCloudPetDetail.pet.petNo}
-              </strong>
+              <div className="admin-inline-actions">
+                <strong>
+                  {selectedCloudPetDetail.pet.name} / {selectedCloudPetDetail.pet.petNo}
+                </strong>
+                <button
+                  className="admin-button admin-button--small admin-button--ghost"
+                  data-testid="admin-cloud-pet-detail-close"
+                  onClick={handleClearCloudPetDetail}
+                  type="button"
+                >
+                  收起详情
+                </button>
+              </div>
               <span>
                 主人：{selectedCloudPetDetail.pet.ownerName} / {selectedCloudPetDetail.pet.ownerPhone}
               </span>
