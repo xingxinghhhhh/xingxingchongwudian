@@ -477,7 +477,89 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
       const cloudPetSection = adminPage.locator("#admin-cloud-pets");
       await cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics").waitFor({ state: "visible" });
 
+      async function filterAndRestoreRiskPet() {
+        const riskReasonFilter = cloudPetSection.getByTestId(
+          "admin-cloud-pet-filter-risk-reason"
+        );
+        await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(backfillPetNo);
+        await riskReasonFilter.selectOption("care_incomplete_today");
+
+        const filteredResponse = adminPage.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            response.request().method() === "GET" &&
+            url.pathname.endsWith("/api/admin/cloud-pets") &&
+            url.searchParams.get("q") === backfillPetNo
+          );
+        });
+        await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+        assertSmoke((await filteredResponse).ok(), "Admin risk-reason filter request failed");
+        assertSmoke(
+          new URL(adminPage.url()).searchParams.get("riskReason") === "care_incomplete_today",
+          "Admin risk-reason filter was not written to the URL"
+        );
+
+        const listItem = cloudPetSection.locator(
+          `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${backfillPetNo}"]`
+        );
+        await listItem.waitFor({ state: "visible" });
+        assertSmoke(
+          await cloudPetSection.getByTestId("admin-cloud-pet-list-item").count() === 1,
+          "Admin risk-reason filter did not isolate the backfill pet"
+        );
+        const detailResponse = adminPage.waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            new URL(response.url()).pathname.endsWith(
+              `/api/admin/cloud-pets/${encodeURIComponent(backfillPetNo)}/detail`
+            )
+        );
+        await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+        assertSmoke((await detailResponse).ok(), "Admin risk-reason detail request failed");
+
+        const detail = cloudPetSection.getByTestId("admin-cloud-pet-detail");
+        await detail.waitFor({ state: "visible" });
+        await waitForLocatorText(
+          detail,
+          (text) => text.includes(backfillPetNo),
+          "Admin risk-reason detail did not render the target pet"
+        );
+        const riskDetailText = (await detail.textContent()) ?? "";
+        assertSmoke(
+          riskDetailText.includes(backfillPetNo),
+          `Admin risk-reason detail opened the wrong pet; expected ${backfillPetNo}, got ${riskDetailText.slice(0, 300)}`
+        );
+        assertSmoke(
+          new URL(adminPage.url()).searchParams.get("petNo") === backfillPetNo,
+          "Admin risk-reason detail did not write petNo to the URL"
+        );
+
+        await adminPage.reload({ waitUntil: "domcontentloaded" });
+        await adminPage.getByTestId("admin-member-verification-metrics").waitFor({ state: "visible" });
+        await cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics").waitFor({ state: "visible" });
+        await riskReasonFilter.waitFor({ state: "visible" });
+        assertSmoke(
+          (await riskReasonFilter.inputValue()) === "care_incomplete_today",
+          "Admin risk-reason filter did not survive production reload"
+        );
+        await cloudPetSection.getByTestId("admin-cloud-pet-detail").waitFor({ state: "visible" });
+        await waitForLocatorText(
+          cloudPetSection.getByTestId("admin-cloud-pet-detail"),
+          (text) => text.includes(backfillPetNo),
+          "Admin risk-reason detail did not render after production reload"
+        );
+        assertSmoke(
+          ((await cloudPetSection.getByTestId("admin-cloud-pet-detail").textContent()) ?? "").includes(backfillPetNo),
+          "Admin risk-reason detail did not survive production reload"
+        );
+        assertSmoke(
+          new URL(adminPage.url()).searchParams.get("petNo") === backfillPetNo,
+          "Admin risk-reason petNo did not survive production reload"
+        );
+      }
+
       async function filterAndOpenAdminPet() {
+        await cloudPetSection.getByTestId("admin-cloud-pet-filter-risk-reason").selectOption("");
         await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(activePetNo);
         const filteredResponse = adminPage.waitForResponse((response) => {
           const url = new URL(response.url());
@@ -498,10 +580,23 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
           await cloudPetSection.getByTestId("admin-cloud-pet-list-item").count() === 1,
           "Admin petNo filter did not isolate the member-created pet"
         );
+        const detailResponse = adminPage.waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            new URL(response.url()).pathname.endsWith(
+              `/api/admin/cloud-pets/${encodeURIComponent(activePetNo)}/detail`
+            )
+        );
         await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+        assertSmoke((await detailResponse).ok(), "Admin detail request failed");
 
         const detail = cloudPetSection.getByTestId("admin-cloud-pet-detail");
         await detail.waitFor({ state: "visible" });
+        await waitForLocatorText(
+          detail,
+          (text) => text.includes(activePetNo),
+          "Admin detail did not render the member-created pet"
+        );
         const detailText = (await detail.textContent()) ?? "";
         assertSmoke(detailText.includes(activePetNo), "Admin detail opened the wrong pet");
         assertSmoke(
@@ -514,6 +609,7 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
           .waitFor({ state: "visible" });
       }
 
+      await filterAndRestoreRiskPet();
       await filterAndOpenAdminPet();
       await adminPage.reload({ waitUntil: "domcontentloaded" });
       await adminPage.getByTestId("admin-member-verification-metrics").waitFor({ state: "visible" });

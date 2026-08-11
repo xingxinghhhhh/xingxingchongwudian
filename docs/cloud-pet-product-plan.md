@@ -243,3 +243,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Admin 云养宠运营区现在支持手动刷新列表与当前详情，保留已应用的搜索和结构化筛选，并显示最近一次成功更新的本地时间；刷新失败不会清空既有数据。
 - Admin 云养宠单宠运营详情现在通过非敏感 petNo 写入 URL，可在刷新、历史导航和协作分享时恢复筛选上下文与当前详情；无效 petNo 会安全回退并清理参数。
 - Admin 云养宠单宠运营详情现在可按当前筛选与排序结果使用上一只/下一只快速巡检；详情暂时不在筛选结果时仍保留当前详情并禁用相邻导航。
+- Phase 7 production browser smoke 现在覆盖真实 Owner 会话下的风险原因筛选、petNo 详情 URL 写入与 hard reload 恢复，并继续执行原有日记补救和社区审核链路。
