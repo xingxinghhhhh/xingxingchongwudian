@@ -1054,6 +1054,16 @@ test("cloud pet workspace supports the daily care loop", async ({ page }) => {
   await expect(createdCommunityPost).toBeVisible();
   await expect(createdCommunityPost).toHaveAttribute("id", /community-post-/);
   await expect(createdCommunityPost.getByText("关联讨论")).toBeHidden();
+  const communityDetailLink = createdCommunityPost.getByTestId("cloud-community-open-detail");
+  await expect(communityDetailLink).toHaveAttribute("href", /\/community\/posts\//);
+  await communityDetailLink.click();
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(communityBody);
+  await expect(page.getByTestId("community-post-detail-comments-empty")).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(communityBody);
+  await page.goBack();
+  await expect(createdCommunityPost).toBeVisible();
   await createdCommunityPost.getByTestId("cloud-community-copy-link").click();
   await expect(page.getByTestId("cloud-workspace-status")).toContainText("社区动态链接");
   await expect(createdCommunityPost.getByTestId("cloud-community-comments-empty")).toBeVisible();
@@ -1119,7 +1129,7 @@ test("cloud pet workspace supports the daily care loop", async ({ page }) => {
   await expect(page.getByTestId("pet-public-community-engagement")).toContainText("2 次公开互动");
   await expect(page.getByTestId("pet-public-community-latest")).toContainText("最新动态");
   await expect(page.getByTestId("pet-public-community-join")).toHaveAttribute("href", "/cloud-pets#community");
-  await expect(page.getByTestId("pet-public-community-discussion").first()).toHaveAttribute("href", /#community-post-/);
+  await expect(page.getByTestId("pet-public-community-discussion").first()).toHaveAttribute("href", /\/community\/posts\/POST/);
   await expect(page.getByTestId("pet-public-community-post-date").first()).toContainText("发布于");
   await expect(page.getByTestId("pet-public-community-comment").first()).toContainText(commentBody);
   await expect(page.getByText(communityBody)).toBeVisible();

@@ -286,6 +286,34 @@ export class CommunityService {
     return this.withCommerceBridge(this.toResponse(withdrawnPost));
   }
 
+  async getPost(postNo: string): Promise<CommunityPostResponse> {
+    if (!this.isDatabaseConfigured()) {
+      const post = this.posts.find(
+        (item) =>
+          item.postNo === postNo &&
+          item.status === "visible" &&
+          !item.authorDeletedAt
+      );
+
+      if (!post) {
+        throw new NotFoundException("Community post not found");
+      }
+
+      return this.withCommerceBridge(post);
+    }
+
+    const post = await this.prisma.communityPost.findFirst({
+      where: { postNo, status: "visible", authorDeletedAt: null },
+      include: this.postInclude()
+    });
+
+    if (!post) {
+      throw new NotFoundException("Community post not found");
+    }
+
+    return this.withCommerceBridge(this.toResponse(post));
+  }
+
   async likePost(postNo: string, dto: AuthenticatedCommunityLikeInput) {
     await this.ensurePost(postNo);
 
@@ -788,7 +816,7 @@ export class CommunityService {
     if (!this.isDatabaseConfigured()) {
       const post = this.posts.find((item) => item.postNo === postNo);
 
-      if (!post || post.authorDeletedAt) {
+      if (!post || post.status !== "visible" || post.authorDeletedAt) {
         throw new NotFoundException("Community post not found");
       }
 
@@ -799,7 +827,7 @@ export class CommunityService {
       where: { postNo }
     });
 
-    if (!post || post.authorDeletedAt) {
+    if (!post || post.status !== "visible" || post.authorDeletedAt) {
       throw new NotFoundException("Community post not found");
     }
 

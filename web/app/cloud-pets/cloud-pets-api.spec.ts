@@ -6,6 +6,7 @@ import {
   createCommunityPost,
   followCloudPet,
   getCloudPet,
+  getCommunityPost,
   getCloudPetHomepageArchive,
   getCloudPetRecommendations,
   likeCommunityPost,
@@ -455,6 +456,26 @@ describe("cloud pets api client", () => {
         cache: "no-store",
         headers: { "X-Member-Token": "member_following_001" }
       }
+    );
+  });
+
+  it("loads a community post detail by its stable post number", async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        postNo: "POST_DETAIL",
+        petNo: "VP001",
+        body: "A stable discussion link"
+      })
+    });
+
+    await expect(getCommunityPost("POST_DETAIL", fetcher)).resolves.toMatchObject({
+      postNo: "POST_DETAIL",
+      body: "A stable discussion link"
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/posts/POST_DETAIL",
+      { cache: "no-store" }
     );
   });
 

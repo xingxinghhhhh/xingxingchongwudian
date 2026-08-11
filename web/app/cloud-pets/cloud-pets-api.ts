@@ -324,6 +324,17 @@ export async function listCommunityPosts(fetcher: Fetcher = fetch) {
   return response.items;
 }
 
+export function getCommunityPost(
+  postNo: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityPost>(
+    `/community/posts/${encodeURIComponent(postNo)}`,
+    { cache: "no-store" },
+    fetcher
+  );
+}
+
 export async function listFollowedCommunityPosts(
   sessionToken: string,
   fetcher: Fetcher = fetch

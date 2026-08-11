@@ -1887,6 +1887,13 @@ export function CloudPetStudio() {
                 <div className="admin-inline-actions">
                   <button className="cloud-button" data-testid="cloud-like-submit" disabled={!activePetFromMember || !memberSession || busyInteraction === `like-${post.postNo}`} onClick={() => void handleLike(post)} type="button">点赞</button>
                   <button className="cloud-button cloud-button--small cloud-button--ghost" data-testid="cloud-community-copy-link" onClick={() => void handleCopyCommunityPostLink(post)} type="button">复制讨论链接</button>
+                  <Link
+                    className="cloud-button cloud-button--small cloud-button--ghost"
+                    data-testid="cloud-community-open-detail"
+                    href={getCommunityPostHref(post.postNo)}
+                  >
+                    查看评论
+                  </Link>
                   {memberSession && memberPets.some((pet) => pet.petNo === post.petNo) ? (
                     <button
                       className="cloud-button cloud-button--small cloud-button--ghost"
@@ -2302,7 +2309,7 @@ function getPetHomepageHref(petNo: string) {
 }
 
 function getCommunityPostHref(postNo: string) {
-  return `/cloud-pets#community-post-${postNo}`;
+  return `/community/posts/${encodeURIComponent(postNo)}`;
 }
 
 function isInvalidMemberSessionError(caught: unknown) {

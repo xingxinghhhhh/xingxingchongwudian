@@ -374,7 +374,7 @@ export default async function PetHomepage({ params, searchParams }: PetHomepageP
                           <Link
                             className="pet-timeline__entry-link"
                             data-testid="pet-public-community-discussion"
-                            href={`/cloud-pets#community-post-${post.postNo}`}
+                            href={`/community/posts/${encodeURIComponent(post.postNo)}`}
                           >
                             打开讨论
                           </Link>

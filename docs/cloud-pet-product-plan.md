@@ -9,6 +9,7 @@ Cloud Pet is now treated as its own retention product line, separate from the pe
 - Cloud pet creation, pet profile loading, homepage editing, homepage archive, visit tracking, growth tasks, daily diary generation, community posting, likes, comments, follows, reports, and admin diary coverage recovery are already implemented.
 - Backend coverage is stronger than the frontend experience.
 - The current frontend has enough API wiring to validate the loop, but it needs to become a coherent user-facing cloud pet workspace before it is launch-ready.
+- Community posts now have stable detail deep links at `/community/posts/:postNo`; Feed and public homepage entry points reopen the same visible post and comments after reload, while hidden or author-withdrawn posts remain inaccessible to user-facing reads.
 
 ## Gaps Before Launch
 

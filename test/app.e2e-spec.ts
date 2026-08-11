@@ -5369,6 +5369,10 @@ describe("Pet toy shop API", () => {
       });
 
     await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(404);
+
+    await request(app.getHttpServer())
       .get("/api/admin/community/posts")
       .set("X-Admin-Token", "dev-admin-key")
       .expect(200)
@@ -5382,6 +5386,60 @@ describe("Pet toy shop API", () => {
           ])
         );
       });
+  });
+
+  it("returns visible community post details but blocks hidden posts", async () => {
+    const ownerPhone = "13900136775";
+    const ownerSession = await loginAsMember(ownerPhone, "Community Detail Owner");
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Community Detail Owner",
+        ownerPhone,
+        name: "Detail Pet",
+        species: "dog",
+        personality: "has a stable discussion page"
+      })
+      .expect(201);
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A community post with a stable detail page."
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "The discussion survives a reload." })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          body: "A community post with a stable detail page.",
+          commentCount: 1
+        });
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/posts/${postResponse.body.postNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "hidden" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(404);
   });
 
   it("requires member auth before community interactions", async () => {

@@ -88,6 +88,11 @@ export class CommunityController {
     return this.communityService.withdrawPost(postNo, session.phone);
   }
 
+  @Get("posts/:postNo")
+  async getPost(@Param("postNo") postNo: string) {
+    return this.communityService.getPost(postNo);
+  }
+
   @Post("posts/:postNo/likes")
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
