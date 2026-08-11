@@ -4266,6 +4266,125 @@ describe("Pet toy shop API", () => {
         expect(body.message).toBe("Pet does not belong to current member");
       });
   });
+
+  it("proves dual-member cloud-pet ownership isolation across private and public boundaries", async () => {
+    const runId = Date.now().toString().slice(-8);
+    const memberA = {
+      name: `Isolation Member A ${runId}`,
+      phone: `137${runId}`
+    };
+    const memberB = {
+      name: `Isolation Member B ${runId}`,
+      phone: `138${runId}`
+    };
+    const sessionA = await loginAsMember(memberA.phone, memberA.name);
+    const sessionB = await loginAsMember(memberB.phone, memberB.name);
+
+    expect(sessionA).not.toBe(sessionB);
+
+    async function createPet(
+      member: typeof memberA,
+      sessionToken: string,
+      name: string
+    ) {
+      const response = await request(app.getHttpServer())
+        .post("/api/cloud-pets")
+        .set("X-Member-Token", sessionToken)
+        .send({
+          ownerName: member.name,
+          ownerPhone: member.phone,
+          name,
+          species: "cat",
+          personality: "Verifies strict ownership boundaries between members"
+        })
+        .expect(201);
+
+      return response.body as { petNo: string; timeline: Array<{ body: string }> };
+    }
+
+    const petA = await createPet(memberA, sessionA, `Isolation Pet A ${runId}`);
+    const petB = await createPet(memberB, sessionB, `Isolation Pet B ${runId}`);
+
+    expect(petA.petNo).not.toBe(petB.petNo);
+
+    const memberAProfile = await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", sessionA)
+      .expect(200);
+    const memberBProfile = await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", sessionB)
+      .expect(200);
+
+    expect(memberAProfile.body.member).toMatchObject({
+      name: memberA.name,
+      phone: memberA.phone
+    });
+    expect(memberBProfile.body.member).toMatchObject({
+      name: memberB.name,
+      phone: memberB.phone
+    });
+    expect(memberAProfile.body.pets).toEqual(
+      expect.arrayContaining([expect.objectContaining({ petNo: petA.petNo })])
+    );
+    expect(memberAProfile.body.pets).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ petNo: petB.petNo })])
+    );
+    expect(memberBProfile.body.pets).toEqual(
+      expect.arrayContaining([expect.objectContaining({ petNo: petB.petNo })])
+    );
+    expect(memberBProfile.body.pets).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ petNo: petA.petNo })])
+    );
+
+    const crossMemberBody = `Cross-member note must be rejected ${runId}`;
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petB.petNo}/diary-notes`)
+      .set("X-Member-Token", sessionA)
+      .send({
+        title: "Rejected cross-member note",
+        body: crossMemberBody
+      })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Pet does not belong to current member");
+      });
+
+    const memberBAfterRejectedWrite = await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", sessionB)
+      .expect(200);
+    expect(memberBAfterRejectedWrite.body.pets[0].timeline).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ body: crossMemberBody })])
+    );
+
+    const ownMemberBody = `Member B own note ${runId}`;
+    await request(app.getHttpServer())
+      .post(`/api/cloud-pets/${petB.petNo}/diary-notes`)
+      .set("X-Member-Token", sessionB)
+      .send({
+        title: "Member B own note",
+        body: ownMemberBody
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.timeline).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "owner_note", body: ownMemberBody })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/cloud-pets/${petA.petNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.petNo).toBe(petA.petNo);
+        expect(body).not.toHaveProperty("ownerName");
+        expect(body).not.toHaveProperty("ownerPhone");
+      });
+  });
+
   it("returns cloud-pet growth level, progress, and care state", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")

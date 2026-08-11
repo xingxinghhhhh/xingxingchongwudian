@@ -265,6 +265,73 @@ test("cloud pet following feed is isolated when members switch", async ({
   );
 });
 
+test("cloud pet public homepage keeps cross-member owner view isolated", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const memberA = {
+    name: `Public Isolation A ${runId}`,
+    phone: `133${runId}`
+  };
+  const memberB = {
+    name: `Public Isolation B ${runId}`,
+    phone: `134${runId}`
+  };
+  const loginA = await loginAsVerifiedMember(request, memberA);
+  const loginB = await loginAsVerifiedMember(request, memberB);
+
+  expect(loginA.sessionToken).not.toBe(loginB.sessionToken);
+
+  async function createPet(
+    member: typeof memberA,
+    sessionToken: string,
+    name: string
+  ) {
+    const response = await request.post("http://localhost:3000/api/cloud-pets", {
+      data: {
+        ownerName: member.name,
+        ownerPhone: member.phone,
+        name,
+        species: "cat",
+        personality: "Public homepage cross-member isolation verification."
+      },
+      headers: { "X-Member-Token": sessionToken }
+    });
+    expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<{ petNo: string; name: string }>;
+  }
+
+  const petA = await createPet(memberA, loginA.sessionToken, `Public Pet A ${runId}`);
+  const petB = await createPet(memberB, loginB.sessionToken, `Public Pet B ${runId}`);
+
+  await isolateMemberAuthTestClient(page, memberB.phone);
+  await page.addInitScript(
+    ({ petNo, sessionToken }) => {
+      localStorage.setItem("kzt_member_session", sessionToken);
+      localStorage.setItem("kzt_active_cloud_pet", petNo);
+    },
+    { petNo: petB.petNo, sessionToken: loginB.sessionToken }
+  );
+
+  await page.goto(`/cloud-pets/${petA.petNo}`);
+  await expect(page.getByTestId("pet-public-profile")).toBeVisible();
+  await expect(page.getByTestId("pet-public-owner-view")).toHaveCount(0);
+  await expect(page.getByTestId("pet-public-owner-workspace")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(memberA.name);
+
+  await page.reload();
+  await expect(page.getByTestId("pet-public-profile")).toBeVisible();
+  await expect(page.getByTestId("pet-public-owner-view")).toHaveCount(0);
+
+  await page.goto(`/cloud-pets/${petB.petNo}`);
+  await expect(page.getByTestId("pet-public-owner-view")).toBeVisible();
+  await expect(page.getByTestId("pet-public-owner-workspace")).toHaveAttribute(
+    "href",
+    "/cloud-pets"
+  );
+});
+
 test("cloud pet workspace clears an invalid saved member session", async ({
   page
 }) => {
