@@ -192,6 +192,62 @@ test("owner can backfill a selected daily diary gap from the admin page", async 
   await expect(missingPet).toHaveCount(0);
 });
 
+test("admin cloud pet diary gap signal opens the existing coverage workflow", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Diary Signal Owner ${runId}`;
+  const phone = `134${runId}`;
+  const petName = `Gap Signal ${runId}`;
+  const member = await loginAsVerifiedMember(request, {
+    name: ownerName,
+    phone
+  });
+  const petResponse = await request.post(`${API_BASE}/cloud-pets`, {
+    data: {
+      ownerName,
+      ownerPhone: phone,
+      name: petName,
+      species: "cat",
+      personality: "Keeps the detail diary gap action connected to coverage."
+    },
+    headers: { "X-Member-Token": member.sessionToken }
+  });
+  expect(petResponse.ok()).toBeTruthy();
+  const petNo = ((await petResponse.json()) as { petNo: string }).petNo;
+
+  await loginAsAdmin(page, "owner");
+  const cloudPetSection = page.locator("#admin-cloud-pets");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(petNo);
+  const filterResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/cloud-pets?") &&
+      response.url().includes(`q=${petNo}`)
+  );
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+  expect((await filterResponse).ok()).toBeTruthy();
+
+  const listItem = cloudPetSection.locator(
+    `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${petNo}"]`
+  );
+  await expect(listItem).toBeVisible();
+  await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+
+  const riskSignals = cloudPetSection.getByTestId("admin-cloud-pet-risk-signals");
+  await expect(riskSignals).toContainText("今日日记缺失");
+  const diaryGapAction = riskSignals.getByRole("link", { name: "查看日记缺口" });
+  await expect(diaryGapAction).toHaveAttribute(
+    "href",
+    "/admin/pets/daily-diary-coverage"
+  );
+  await diaryGapAction.click();
+  await expect(page).toHaveURL(/\/admin\/pets\/daily-diary-coverage/);
+});
+
 test("owner can resolve a report and hide its public post", async ({
   page,
   request
