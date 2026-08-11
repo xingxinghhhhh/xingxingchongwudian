@@ -62,6 +62,7 @@ function statusLabel(status: CloudPetDailyDiaryBackfillResult["results"][number]
 export function DailyDiaryCoverageConsole() {
   const [token, setToken] = useState(defaultToken);
   const [date, setDate] = useState(todayIsoDate());
+  const [petNoFilter, setPetNoFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentStaff, setCurrentStaff] = useState<AdminStaffProfile | null>(null);
@@ -73,8 +74,11 @@ export function DailyDiaryCoverageConsole() {
 
   useEffect(() => {
     const storedToken = localStorage.getItem("kzt_admin_session") ?? defaultToken;
-    const searchDate = new URLSearchParams(window.location.search).get("date");
+    const searchParams = new URLSearchParams(window.location.search);
+    const searchDate = searchParams.get("date");
+    const searchPetNo = searchParams.get("petNo")?.trim() ?? "";
     setToken(storedToken);
+    setPetNoFilter(searchPetNo);
     if (searchDate) {
       setDate(searchDate);
       if (storedToken) {
@@ -177,6 +181,10 @@ export function DailyDiaryCoverageConsole() {
     localStorage.removeItem("kzt_admin_session");
     window.location.href = "/admin/login";
   }
+
+  const visibleMissingPets = (coverage?.missingPets ?? []).filter(
+    (pet) => !petNoFilter || pet.petNo === petNoFilter
+  );
 
   return (
     <div className="admin-console">
@@ -284,14 +292,19 @@ export function DailyDiaryCoverageConsole() {
           <span data-testid="admin-diary-selected-count">
             已选 {selectedPetIds.length} 只
           </span>
+          {petNoFilter ? (
+            <span data-testid="admin-diary-coverage-pet-filter">{petNoFilter}</span>
+          ) : null}
         </div>
 
-        {coverage && coverage.missingPets.length === 0 ? (
-          <p className="admin-muted">当前日期没有缺失日记。</p>
+        {coverage && visibleMissingPets.length === 0 ? (
+          <p className="admin-muted">
+            {petNoFilter ? "当前宠物在所选日期没有缺失日记。" : "当前日期没有缺失日记。"}
+          </p>
         ) : null}
 
         <div className="admin-list">
-          {(coverage?.missingPets ?? []).map((pet) => (
+          {visibleMissingPets.map((pet) => (
             <label
               className="admin-row"
               data-pet-no={pet.petNo}

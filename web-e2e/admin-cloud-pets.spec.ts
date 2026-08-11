@@ -242,10 +242,20 @@ test("admin cloud pet diary gap signal opens the existing coverage workflow", as
   const diaryGapAction = riskSignals.getByRole("link", { name: "查看日记缺口" });
   await expect(diaryGapAction).toHaveAttribute(
     "href",
-    "/admin/pets/daily-diary-coverage"
+    `/admin/pets/daily-diary-coverage?petNo=${petNo}`
   );
   await diaryGapAction.click();
-  await expect(page).toHaveURL(/\/admin\/pets\/daily-diary-coverage/);
+  await expect(page).toHaveURL(
+    new RegExp(`/admin/pets/daily-diary-coverage\\?petNo=${petNo}`)
+  );
+  await expect(
+    page.getByTestId("admin-diary-coverage-pet-filter")
+  ).toHaveText(petNo);
+  await expect(
+    page.locator(
+      `[data-testid="admin-diary-missing-pet"][data-pet-no="${petNo}"]`
+    )
+  ).toHaveCount(1);
 });
 
 test("admin cloud pet pending report signal opens its scoped report queue", async ({

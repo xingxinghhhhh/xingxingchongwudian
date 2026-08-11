@@ -3280,7 +3280,9 @@ function getCloudPetOperationalSignals(
       level: "high",
       title: "今日日记缺失",
       description: "今日尚未生成云养宠日记，可进入缺口页执行补救。",
-      actionHref: "/admin/pets/daily-diary-coverage",
+      actionHref:
+        "/admin/pets/daily-diary-coverage?petNo=" +
+        encodeURIComponent(detail.pet.petNo),
       actionLabel: "查看日记缺口"
     });
   }

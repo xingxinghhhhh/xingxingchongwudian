@@ -247,3 +247,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Phase 7 production browser smoke 现在还验证匿名主页访问改变真实运营数据后，已打开的 Admin 云宠页面可通过手动刷新吸收最新风险结果，同时保留被筛选移出的详情与 petNo 上下文。
 - Admin 云养宠详情的今日日记缺口信号现在有 E2E 覆盖，可直接进入既有日记 coverage/backfill 页面而不自动执行补救。
 - Admin 云养宠详情的唯一待处理举报现在会携带安全的 postNo 定位到既有社区举报筛选，多条举报仍保留通用入口且不自动处置。
+- Admin 云养宠详情的今日日记缺口现在会携带安全的 petNo 定位到既有 coverage 页面，只过滤展示目标宠物且不自动补救。
