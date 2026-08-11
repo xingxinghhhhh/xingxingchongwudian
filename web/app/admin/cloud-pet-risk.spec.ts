@@ -1,7 +1,8 @@
 import {
   compareCloudPetRisk,
   evaluateCloudPetRisk,
-  getCloudPetRiskReasonLabel
+  getCloudPetRiskReasonLabel,
+  matchesCloudPetRiskReason
 } from "./cloud-pet-risk";
 
 function createPet(overrides: Partial<Parameters<typeof evaluateCloudPetRisk>[0]> = {}) {
@@ -60,5 +61,17 @@ describe("cloud-pet risk evaluator", () => {
     const low = createPet();
 
     expect([low, medium, high].sort(compareCloudPetRisk)).toEqual([high, medium, low]);
+  });
+
+  it("filters by stable reason code without changing the evaluator", () => {
+    const pet = createPet({
+      growth: { isCareCompleteToday: false, careState: "steady" },
+      homepageVisitCount: 0
+    });
+
+    expect(matchesCloudPetRiskReason(pet, "")).toBe(true);
+    expect(matchesCloudPetRiskReason(pet, "care_incomplete_today")).toBe(true);
+    expect(matchesCloudPetRiskReason(pet, "no_homepage_visits")).toBe(true);
+    expect(matchesCloudPetRiskReason(pet, "no_community_posts")).toBe(false);
   });
 });

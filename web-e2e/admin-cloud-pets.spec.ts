@@ -381,6 +381,9 @@ test("admin cloud pet risk reasons stay consistent between list and detail", asy
   ).toBeVisible();
   await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(petNo);
   await cloudPetSection.getByTestId("admin-cloud-pet-filter-risk").selectOption("high");
+  await cloudPetSection
+    .getByTestId("admin-cloud-pet-filter-risk-reason")
+    .selectOption("care_incomplete_today");
   await cloudPetSection.getByTestId("admin-cloud-pet-sort-risk").selectOption("risk_desc");
 
   const filterResponse = page.waitForResponse(

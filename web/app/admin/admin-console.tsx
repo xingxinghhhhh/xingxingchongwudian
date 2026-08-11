@@ -101,6 +101,8 @@ import {
 import {
   compareCloudPetRisk,
   evaluateCloudPetRisk,
+  cloudPetRiskReasonOptions,
+  matchesCloudPetRiskReason,
   type CloudPetRiskReasonCode
 } from "./cloud-pet-risk";
 
@@ -189,6 +191,7 @@ export function AdminConsole() {
     species: "",
     careState: "",
     riskLevel: "",
+    riskReason: "" as CloudPetRiskReasonCode | "",
     sortBy: ""
   });
   const [reportFilters, setReportFilters] = useState({
@@ -200,11 +203,16 @@ export function AdminConsole() {
     currentStaff?.permissions.includes("customers:write") ?? false;
   const canManageCloudPets =
     currentStaff?.permissions.includes("cloud_pets:write") ?? false;
-  const filteredCloudPets = cloudPetFilters.riskLevel
-    ? pets.filter(
-        (pet) => evaluateCloudPetRisk(pet).highestLevel === cloudPetFilters.riskLevel
-      )
-    : pets;
+  const filteredCloudPets = pets.filter((pet) => {
+    const matchesRiskLevel =
+      !cloudPetFilters.riskLevel ||
+      evaluateCloudPetRisk(pet).highestLevel === cloudPetFilters.riskLevel;
+
+    return (
+      matchesRiskLevel &&
+      matchesCloudPetRiskReason(pet, cloudPetFilters.riskReason)
+    );
+  });
   const displayedCloudPets = cloudPetFilters.sortBy === "risk_desc"
     ? [...filteredCloudPets].sort(compareCloudPetRisk)
     : filteredCloudPets;
@@ -939,7 +947,14 @@ export function AdminConsole() {
       return;
     }
 
-    setCloudPetFilters({ q: "", species: "", careState: "", riskLevel: "", sortBy: "" });
+    setCloudPetFilters({
+      q: "",
+      species: "",
+      careState: "",
+      riskLevel: "",
+      riskReason: "",
+      sortBy: ""
+    });
     setError(null);
 
     try {
@@ -2571,6 +2586,26 @@ export function AdminConsole() {
                 <option value="high">高</option>
                 <option value="medium">中</option>
                 <option value="low">低</option>
+              </select>
+            </label>
+            <label>
+              风险原因
+              <select
+                data-testid="admin-cloud-pet-filter-risk-reason"
+                onChange={(event) =>
+                  setCloudPetFilters((current) => ({
+                    ...current,
+                    riskReason: event.target.value as CloudPetRiskReasonCode | ""
+                  }))
+                }
+                value={cloudPetFilters.riskReason}
+              >
+                <option value="">全部风险原因</option>
+                {cloudPetRiskReasonOptions.map((reason) => (
+                  <option key={reason.code} value={reason.code}>
+                    {reason.label}
+                  </option>
+                ))}
               </select>
             </label>
             <label>

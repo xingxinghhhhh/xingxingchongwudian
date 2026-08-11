@@ -237,3 +237,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Phase 7 ownership evidence now covers two real member sessions with isolated pet profiles, a rejected cross-member owner-note write, a successful owner write, and cross-member public homepage Visitor versus Owner views after reload.
 - Cloud-pet daily semantics now have one explicit UTC business-day helper for task dates, streak adjacency, diary presence, coverage/backfill, and owner-note quota ranges; UTC is the existing contract and is covered at the midnight boundary without changing diary types or persisted timestamps.
 - Admin 云养宠风险排序现在复用单一前端 evaluator 产出稳定 reason code；列表筛选/排序与单宠详情共享基础风险原因，今日日记缺失和待处理举报仍保留为详情专属运营信号。
+- Admin 云养宠列表新增按稳定风险原因筛选，支持与风险等级、文本、类型和照护状态组合使用，默认行为与原列表保持一致。

@@ -62,6 +62,11 @@ const reasonDefinitions: Array<{
   }
 ];
 
+export const cloudPetRiskReasonOptions = reasonDefinitions.map((definition) => ({
+  code: definition.code,
+  label: getCloudPetRiskReasonLabel(definition.code)
+}));
+
 export function getCloudPetRiskReasonLabel(code: CloudPetRiskReasonCode) {
   return reasonLabels[code];
 }
@@ -88,6 +93,16 @@ export function evaluateCloudPetRisk(
     highestLevel,
     summary: reasons.length > 0 ? reasons.map((reason) => reason.label).join(" / ") : "正常"
   };
+}
+
+export function matchesCloudPetRiskReason(
+  pet: CloudPetRiskInput,
+  selectedCode: CloudPetRiskReasonCode | ""
+) {
+  return (
+    selectedCode === "" ||
+    evaluateCloudPetRisk(pet).reasons.some((reason) => reason.code === selectedCode)
+  );
 }
 
 export function compareCloudPetRisk(
