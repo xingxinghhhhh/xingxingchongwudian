@@ -347,6 +347,30 @@ test("owner can filter a cloud pet and inspect its operational detail", async ({
   ).toContainText(postBody);
   await expect(detail).toContainText("主页访问：1");
   await expect(detail.getByTestId("admin-cloud-pet-risk-signals")).toBeVisible();
+
+  const publicHomepageLink = detail.getByTestId("admin-cloud-pet-public-homepage");
+  await expect(publicHomepageLink).toHaveAttribute("href", `/cloud-pets/${petNo}`);
+  await expect(publicHomepageLink).toHaveAttribute("target", "_blank");
+  await expect(publicHomepageLink).toHaveAttribute("rel", "noopener noreferrer");
+
+  const publicPagePromise = page.waitForEvent("popup");
+  await publicHomepageLink.click();
+  const publicPage = await publicPagePromise;
+  try {
+    await publicPage.getByTestId("pet-public-profile").waitFor({ state: "visible" });
+    await expect(publicPage.getByTestId("pet-public-pet-no")).toHaveText(petNo);
+    await expect(publicPage.locator("body")).not.toContainText(phone);
+    const publicPayloadResponse = await request.get(`${API_BASE}/cloud-pets/${petNo}`);
+    expect(publicPayloadResponse.ok()).toBeTruthy();
+    const publicPayload = await publicPayloadResponse.json();
+    expect(publicPayload).not.toHaveProperty("ownerName");
+    expect(publicPayload).not.toHaveProperty("ownerPhone");
+    await expect(page).toHaveURL(/species=dog/);
+    expect(new URL(page.url()).searchParams.get("petNo")).toBe(petNo);
+    await expect(detail).toContainText(petName);
+  } finally {
+    await publicPage.close();
+  }
 });
 
 test("admin cloud pet risk reasons stay consistent between list and detail", async ({

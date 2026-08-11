@@ -3031,7 +3031,10 @@ export function AdminConsole() {
               </div>
               <Link
                 className="admin-button admin-button--small admin-button--ghost"
+                data-testid="admin-cloud-pet-public-homepage"
                 href={`/cloud-pets/${selectedCloudPetDetail.pet.petNo}`}
+                rel="noopener noreferrer"
+                target="_blank"
               >
                 打开宠物主页
               </Link>
