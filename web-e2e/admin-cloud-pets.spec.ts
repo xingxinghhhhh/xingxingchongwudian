@@ -583,6 +583,10 @@ test("admin cloud pet risk reasons stay consistent between list and detail", asy
   await expect(detail.getByTestId("admin-cloud-pet-risk-signals")).toContainText(
     "今日照护未完成"
   );
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-copy-view")).toBeDisabled();
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-copy-hint")).toHaveText(
+    "清除文本搜索后可复制可恢复视图"
+  );
 });
 
 test("admin can refresh cloud pet operations after a member care update", async ({
@@ -733,6 +737,38 @@ test("admin cloud pet structured filters restore from the URL", async ({
   expect(new URL(page.url()).searchParams.get("riskReason")).toBe(
     "care_incomplete_today"
   );
+
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin
+  });
+  const copyViewButton = cloudPetSection.getByTestId("admin-cloud-pet-copy-view");
+  await expect(copyViewButton).toBeEnabled();
+  await copyViewButton.click();
+  await expect(copyViewButton).toHaveText("已复制");
+  const copiedUrl = await page.evaluate(() => navigator.clipboard.readText());
+  const copiedUrlObject = new URL(copiedUrl);
+  expect(copiedUrlObject.pathname).toBe("/admin/dashboard");
+  expect(copiedUrlObject.hash).toBe("#admin-cloud-pets");
+  expect(copiedUrlObject.searchParams.get("species")).toBe("cat");
+  expect(copiedUrlObject.searchParams.get("riskLevel")).toBe("high");
+  expect(copiedUrlObject.searchParams.get("riskReason")).toBe(
+    "care_incomplete_today"
+  );
+  expect(copiedUrlObject.searchParams.get("riskSort")).toBe("risk_desc");
+  expect(copiedUrlObject.searchParams.get("petNo")).toBe(petNo);
+  expect(copiedUrlObject.searchParams.has("q")).toBe(false);
+  expect(copiedUrlObject.searchParams.has("kzt_admin_session")).toBe(false);
+
+  await page.goto(copiedUrl);
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-filter-species")
+  ).toHaveValue("cat");
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-detail")
+  ).toContainText(petName);
 
   await page.reload();
   await expect(

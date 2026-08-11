@@ -109,6 +109,7 @@ import {
 import {
   applyCloudPetFilterQuery,
   applyCloudPetSelectedPetNo,
+  buildCloudPetSharePath,
   defaultCloudPetStructuredFilters,
   parseCloudPetFilterQuery,
   parseCloudPetSelectedPetNo,
@@ -249,6 +250,7 @@ export function AdminConsole() {
   const [appliedCloudPetStructuredFilters, setAppliedCloudPetStructuredFilters] =
     useState<CloudPetStructuredFilters>(defaultCloudPetStructuredFilters);
   const [appliedCloudPetSearch, setAppliedCloudPetSearch] = useState("");
+  const [cloudPetShareCopied, setCloudPetShareCopied] = useState(false);
   const [reportFilters, setReportFilters] = useState({
     status: "",
     postNo: "",
@@ -1164,6 +1166,34 @@ export function AdminConsole() {
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
     setStatus(`已导出当前 ${displayedCloudPets.length} 条云养宠运营结果。`);
+  }
+
+  async function handleCopyCloudPetShareLink() {
+    if (appliedCloudPetSearch.trim()) {
+      return;
+    }
+
+    if (!navigator.clipboard?.writeText) {
+      setError("当前浏览器不支持复制链接，请手动复制地址。");
+      return;
+    }
+
+    const sharePath = buildCloudPetSharePath(
+      window.location.pathname,
+      appliedCloudPetStructuredFilters,
+      selectedCloudPetDetail?.pet.petNo ?? null
+    );
+
+    try {
+      await navigator.clipboard.writeText(
+        new URL(sharePath, window.location.origin).toString()
+      );
+      setCloudPetShareCopied(true);
+      setStatus("链接已复制。");
+      window.setTimeout(() => setCloudPetShareCopied(false), 1200);
+    } catch {
+      setError("复制链接失败，请重试。");
+    }
   }
 
   async function handleRefreshCloudPets() {
@@ -2940,6 +2970,20 @@ export function AdminConsole() {
             >
               导出当前结果
             </button>
+            <button
+              className="admin-button admin-button--small admin-button--ghost"
+              data-testid="admin-cloud-pet-copy-view"
+              disabled={Boolean(appliedCloudPetSearch.trim())}
+              onClick={() => void handleCopyCloudPetShareLink()}
+              type="button"
+            >
+              {cloudPetShareCopied ? "已复制" : "复制安全链接"}
+            </button>
+            {appliedCloudPetSearch.trim() ? (
+              <span className="admin-muted" data-testid="admin-cloud-pet-copy-hint">
+                清除文本搜索后可复制可恢复视图
+              </span>
+            ) : null}
           </div>
           {selectedCloudPetDetail ? (
             <div className="admin-inventory-alerts" data-testid="admin-cloud-pet-detail">

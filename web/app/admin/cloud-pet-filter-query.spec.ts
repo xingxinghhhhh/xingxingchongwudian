@@ -1,6 +1,7 @@
 import {
   applyCloudPetFilterQuery,
   applyCloudPetSelectedPetNo,
+  buildCloudPetSharePath,
   defaultCloudPetStructuredFilters,
   parseCloudPetFilterQuery,
   parseCloudPetSelectedPetNo,
@@ -73,5 +74,35 @@ describe("cloud pet filter query", () => {
     expect(
       applyCloudPetSelectedPetNo(searchParams, null).toString()
     ).toBe("species=cat&other=keep");
+  });
+
+  it("builds a share path from only the cloud-pet URL allowlist", () => {
+    const filters: CloudPetStructuredFilters = {
+      species: "cat",
+      careState: "needs_care",
+      riskLevel: "high",
+      riskReason: "care_incomplete_today",
+      sortBy: "risk_desc"
+    };
+
+    const path = buildCloudPetSharePath("/admin", filters, " VP123 ");
+    const url = new URL(path, "https://merchant.example.test");
+
+    expect(url.pathname).toBe("/admin");
+    expect(url.hash).toBe("#admin-cloud-pets");
+    expect(url.searchParams.get("species")).toBe("cat");
+    expect(url.searchParams.get("careState")).toBe("needs_care");
+    expect(url.searchParams.get("riskLevel")).toBe("high");
+    expect(url.searchParams.get("riskReason")).toBe("care_incomplete_today");
+    expect(url.searchParams.get("riskSort")).toBe("risk_desc");
+    expect(url.searchParams.get("petNo")).toBe("VP123");
+    expect(url.searchParams.has("q")).toBe(false);
+    expect(url.searchParams.has("unknown")).toBe(false);
+  });
+
+  it("omits defaults and detail when building a general share path", () => {
+    expect(
+      buildCloudPetSharePath("/admin", defaultCloudPetStructuredFilters, null)
+    ).toBe("/admin#admin-cloud-pets");
   });
 });

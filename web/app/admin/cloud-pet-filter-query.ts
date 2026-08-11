@@ -115,3 +115,21 @@ export function applyCloudPetSelectedPetNo(
 
   return nextSearchParams;
 }
+
+export function buildCloudPetSharePath(
+  pathname: string,
+  filters: CloudPetStructuredFilters,
+  petNo: string | null
+) {
+  const filteredSearchParams = applyCloudPetFilterQuery(
+    new URLSearchParams(),
+    filters
+  );
+  const nextSearchParams = applyCloudPetSelectedPetNo(
+    filteredSearchParams,
+    petNo
+  );
+  const query = nextSearchParams.toString();
+
+  return `${pathname}${query ? `?${query}` : ""}#admin-cloud-pets`;
+}
