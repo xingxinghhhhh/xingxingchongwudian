@@ -287,6 +287,55 @@ export class CommunityService {
     return this.withCommerceBridge(this.toResponse(withdrawnPost));
   }
 
+  async updatePost(postNo: string, memberPhone: string, body: string) {
+    if (!this.isDatabaseConfigured()) {
+      const post = this.posts.find((item) => item.postNo === postNo);
+
+      if (!post) {
+        throw new NotFoundException("Community post not found");
+      }
+
+      const pet = await this.cloudPetsService.getPetRecord(post.petNo);
+
+      if (pet.ownerPhone !== memberPhone) {
+        throw new ForbiddenException("Only the post author can edit this post");
+      }
+
+      if (post.status !== "visible" || post.authorDeletedAt) {
+        throw new NotFoundException("Community post not found");
+      }
+
+      post.body = body;
+      return this.withCommerceBridge(post);
+    }
+
+    const post = await this.prisma.communityPost.findUnique({
+      where: { postNo }
+    });
+
+    if (!post) {
+      throw new NotFoundException("Community post not found");
+    }
+
+    const pet = await this.cloudPetsService.getPetRecord(post.petNo);
+
+    if (pet.ownerPhone !== memberPhone) {
+      throw new ForbiddenException("Only the post author can edit this post");
+    }
+
+    if (post.status !== "visible" || post.authorDeletedAt) {
+      throw new NotFoundException("Community post not found");
+    }
+
+    const updatedPost = await this.prisma.communityPost.update({
+      where: { postNo },
+      data: { body },
+      include: this.visiblePostInclude()
+    });
+
+    return this.withCommerceBridge(this.toResponse(updatedPost));
+  }
+
   async getPost(postNo: string): Promise<CommunityPostResponse> {
     if (!this.isDatabaseConfigured()) {
       const post = this.posts.find(

@@ -5514,6 +5514,78 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("lets only the owning member edit a visible community post", async () => {
+    const ownerPhone = "13900139801";
+    const otherPhone = "13900139802";
+    const ownerSession = await loginAsMember(ownerPhone, "Post Editor");
+    const otherSession = await loginAsMember(otherPhone, "Other Editor");
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Post Editor",
+        ownerPhone,
+        name: "Editable Community Pet",
+        species: "cat",
+        personality: "Can edit a community post"
+      })
+      .expect(201);
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "Original community post body"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/posts/${postResponse.body.postNo}`)
+      .set("X-Member-Token", otherSession)
+      .send({ body: "Other member edit" })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Only the post author can edit this post");
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/posts/${postResponse.body.postNo}`)
+      .send({ body: "Anonymous edit" })
+      .expect(401);
+
+    const updatedResponse = await request(app.getHttpServer())
+      .patch(`/api/community/posts/${postResponse.body.postNo}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Updated community post body" })
+      .expect(200);
+
+    expect(updatedResponse.body).toMatchObject({
+      postNo: postResponse.body.postNo,
+      body: "Updated community post body",
+      status: "visible"
+    });
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.body).toBe("Updated community post body");
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/posts/${postResponse.body.postNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/posts/${postResponse.body.postNo}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Restore attempt" })
+      .expect(404);
+  });
+
   it("requires member auth before community interactions", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")

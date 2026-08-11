@@ -377,6 +377,22 @@ export function withdrawCommunityPost(
   );
 }
 
+export function updateCommunityPost(
+  postNo: string,
+  input: { body: string },
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityPost>(
+    `/community/posts/${encodeURIComponent(postNo)}`,
+    {
+      ...jsonRequest(input, sessionToken),
+      method: "PATCH"
+    },
+    fetcher
+  );
+}
+
 export function likeCommunityPost(
   postNo: string,
   input: { memberPhone?: string; authorName?: string },

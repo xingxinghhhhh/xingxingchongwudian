@@ -199,6 +199,45 @@ test("member can withdraw their own community comment from post detail", async (
   await expect(page.getByTestId("community-post-detail-comments-empty")).toBeVisible();
 });
 
+test("member can edit their own community post from post detail", async ({
+  page
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Post Edit Owner ${runId}`;
+  const phone = `135${runId}`;
+  const petName = `Post Edit Pet ${runId}`;
+  const postBody = `Original editable post ${runId}`;
+  const updatedBody = `Updated editable post ${runId}`;
+
+  await page.goto("/cloud-pets");
+  await verifyMemberInCloudPetWorkspace(page, { name: ownerName, phone });
+  await page.getByTestId("cloud-create-pet-name").fill(petName);
+  await page.getByTestId("cloud-create-species").selectOption("cat");
+  await page.getByTestId("cloud-create-personality").fill("Post edit UI coverage.");
+  await page.getByTestId("cloud-create-submit").click();
+  await expect(page.getByTestId("cloud-community-submit")).toBeEnabled();
+  await page.getByTestId("cloud-community-body").fill(postBody);
+  await page.getByTestId("cloud-community-submit").click();
+
+  const createdPost = page
+    .getByTestId("cloud-community-post")
+    .filter({ hasText: postBody });
+  await expect(createdPost).toBeVisible();
+  await createdPost.getByTestId("cloud-community-open-detail").click();
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+  await expect(page.getByTestId("community-post-detail-edit")).toBeVisible();
+
+  await page.getByTestId("community-post-detail-edit").click();
+  await page.getByTestId("community-post-detail-edit-body").fill(updatedBody);
+  await page.getByTestId("community-post-detail-edit-save").click();
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(updatedBody);
+  await expect(page.getByTestId("community-post-detail-status")).toContainText("帖子已更新");
+
+  await page.reload();
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(updatedBody);
+  await expect(page.getByTestId("community-post-detail-edit")).toBeVisible();
+});
+
 test("cloud pet workspace requires a live session after logout", async ({
   page,
   request

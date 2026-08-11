@@ -7,6 +7,7 @@ import {
   Get,
   Headers,
   Param,
+  Patch,
   Post,
   UseGuards
 } from "@nestjs/common";
@@ -19,6 +20,7 @@ import { CreateCommunityFollowDto } from "./dto/create-community-follow.dto";
 import { CreateCommunityLikeDto } from "./dto/create-community-like.dto";
 import { CreateCommunityPostDto } from "./dto/create-community-post.dto";
 import { CreateCommunityReportDto } from "./dto/create-community-report.dto";
+import { UpdateCommunityPostDto } from "./dto/update-community-post.dto";
 
 @Controller("community")
 export class CommunityController {
@@ -74,6 +76,19 @@ export class CommunityController {
       memberPhone: session.phone,
       body
     });
+  }
+
+  @Patch("posts/:postNo")
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async updatePost(
+    @Param("postNo") postNo: string,
+    @Body() dto: UpdateCommunityPostDto,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.communityService.updatePost(postNo, session.phone, dto.body);
   }
 
   @Delete("posts/:postNo")

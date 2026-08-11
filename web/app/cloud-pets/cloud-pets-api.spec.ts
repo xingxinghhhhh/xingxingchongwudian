@@ -14,6 +14,7 @@ import {
   listCommunityPosts,
   listFollowedCommunityPosts,
   reportCommunityPost,
+  updateCommunityPost,
   withdrawCommunityPost,
   updateCloudPetDiaryNote,
   recordCloudPetHomepageVisit,
@@ -613,6 +614,31 @@ describe("cloud pets api client", () => {
         cache: "no-store",
         headers: { "X-Member-Token": "member_community_006" },
         method: "DELETE"
+      }
+    );
+
+    const updateFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ postNo: "POST001", body: "Updated post body" })
+    });
+    await expect(
+      updateCommunityPost(
+        "POST001",
+        { body: "Updated post body" },
+        "member_community_007",
+        updateFetcher
+      )
+    ).resolves.toMatchObject({ postNo: "POST001", body: "Updated post body" });
+    expect(updateFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/posts/POST001",
+      {
+        body: JSON.stringify({ body: "Updated post body" }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_community_007"
+        },
+        method: "PATCH"
       }
     );
   });

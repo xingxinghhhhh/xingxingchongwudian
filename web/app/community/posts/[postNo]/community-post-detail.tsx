@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { getMemberProfile } from "../../../member/member-api";
 import type { CommunityComment, CommunityPost } from "../../../cloud-pets/cloud-pets-api";
 import {
   commentOnCommunityPost,
   likeCommunityPost,
+  updateCommunityPost,
   withdrawCommunityComment
 } from "../../../cloud-pets/cloud-pets-api";
 
@@ -26,14 +28,37 @@ export function CommunityPostDetail({
   const [commentBody, setCommentBody] = useState("");
   const [memberSession, setMemberSession] = useState<string | null>(null);
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
+  const [canEdit, setCanEdit] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editBody, setEditBody] = useState(initialPost.body);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setMemberSession(window.localStorage.getItem(memberSessionKey));
-    setMemberPhone(window.localStorage.getItem(memberPhoneKey));
-  }, []);
+    const session = window.localStorage.getItem(memberSessionKey);
+    const phone = window.localStorage.getItem(memberPhoneKey);
+    setMemberSession(session);
+    setMemberPhone(phone);
+
+    if (!session || !phone) {
+      return;
+    }
+
+    void getMemberProfile(phone, session)
+      .then((profile) => {
+        setCanEdit(profile.pets.some((pet) => pet.petNo === initialPost.petNo));
+      })
+      .catch((caught) => {
+        if (caught instanceof Error && caught.message === "Invalid member session") {
+          window.localStorage.removeItem(memberSessionKey);
+          window.localStorage.removeItem(memberPhoneKey);
+          setMemberSession(null);
+          setMemberPhone(null);
+        }
+        setCanEdit(false);
+      });
+  }, [initialPost.petNo]);
 
   async function handleLike() {
     if (!memberSession) {
@@ -100,6 +125,60 @@ export function CommunityPostDetail({
         setMemberPhone(null);
       }
       setError(caught instanceof Error ? caught.message : "评论失败，请稍后重试");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  function handleStartEdit() {
+    setEditBody(post.body);
+    setIsEditing(true);
+    setError(null);
+  }
+
+  function handleCancelEdit() {
+    setEditBody(post.body);
+    setIsEditing(false);
+    setError(null);
+  }
+
+  async function handleEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!memberSession || !canEdit) {
+      setError("只能编辑自己发布的帖子");
+      return;
+    }
+
+    const body = editBody.trim();
+
+    if (!body) {
+      setError("请输入帖子内容");
+      return;
+    }
+
+    setBusyAction("edit");
+    setError(null);
+
+    try {
+      const updatedPost = await updateCommunityPost(
+        post.postNo,
+        { body },
+        memberSession
+      );
+      setPost(updatedPost);
+      setEditBody(updatedPost.body);
+      setIsEditing(false);
+      setStatus("帖子已更新");
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "Invalid member session") {
+        window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
+        setMemberSession(null);
+        setMemberPhone(null);
+        setCanEdit(false);
+      }
+      setError(caught instanceof Error ? caught.message : "编辑帖子失败，请稍后重试");
     } finally {
       setBusyAction(null);
     }
@@ -173,11 +252,54 @@ export function CommunityPostDetail({
         >
           复制链接
         </button>
+        {canEdit && !isEditing ? (
+          <button
+            className="cloud-button cloud-button--small cloud-button--ghost"
+            data-testid="community-post-detail-edit"
+            disabled={busyAction !== null}
+            onClick={handleStartEdit}
+            type="button"
+          >
+            编辑帖子
+          </button>
+        ) : null}
       </div>
 
-      <p className="community-post-detail__body" data-testid="community-post-detail-body">
-        {post.body}
-      </p>
+      {isEditing ? (
+        <form onSubmit={(event) => void handleEdit(event)}>
+          <textarea
+            className="community-post-detail__body"
+            data-testid="community-post-detail-edit-body"
+            maxLength={280}
+            onChange={(event) => setEditBody(event.target.value)}
+            rows={5}
+            value={editBody}
+          />
+          <div className="admin-inline-actions">
+            <button
+              className="cloud-button cloud-button--small"
+              data-testid="community-post-detail-edit-save"
+              disabled={busyAction !== null || !editBody.trim()}
+              type="submit"
+            >
+              {busyAction === "edit" ? "保存中…" : "保存修改"}
+            </button>
+            <button
+              className="cloud-button cloud-button--small cloud-button--ghost"
+              data-testid="community-post-detail-edit-cancel"
+              disabled={busyAction !== null}
+              onClick={handleCancelEdit}
+              type="button"
+            >
+              取消
+            </button>
+          </div>
+        </form>
+      ) : (
+        <p className="community-post-detail__body" data-testid="community-post-detail-body">
+          {post.body}
+        </p>
+      )}
       <p className="cloud-muted" data-testid="community-post-detail-metrics">
         {post.likeCount} 次点赞 · {post.commentCount} 条评论
       </p>
