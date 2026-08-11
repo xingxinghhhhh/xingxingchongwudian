@@ -20,6 +20,7 @@ import { CreateCommunityFollowDto } from "./dto/create-community-follow.dto";
 import { CreateCommunityLikeDto } from "./dto/create-community-like.dto";
 import { CreateCommunityPostDto } from "./dto/create-community-post.dto";
 import { CreateCommunityReportDto } from "./dto/create-community-report.dto";
+import { UpdateCommunityCommentDto } from "./dto/update-community-comment.dto";
 import { UpdateCommunityPostDto } from "./dto/update-community-post.dto";
 
 @Controller("community")
@@ -101,6 +102,19 @@ export class CommunityController {
     const session = await this.authService.getSession(sessionToken);
 
     return this.communityService.withdrawPost(postNo, session.phone);
+  }
+
+  @Patch("comments/:commentNo")
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async updateComment(
+    @Param("commentNo") commentNo: string,
+    @Body() dto: UpdateCommunityCommentDto,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.communityService.updateComment(commentNo, session.phone, dto.body);
   }
 
   @Delete("comments/:commentNo")

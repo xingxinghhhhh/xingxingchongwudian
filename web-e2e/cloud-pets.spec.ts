@@ -238,6 +238,59 @@ test("member can edit their own community post from post detail", async ({
   await expect(page.getByTestId("community-post-detail-edit")).toBeVisible();
 });
 
+test("member can edit their own community comment from post detail", async ({
+  page
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Comment Edit Owner ${runId}`;
+  const phone = `134${runId}`;
+  const petName = `Comment Edit Pet ${runId}`;
+  const postBody = `Comment edit post ${runId}`;
+  const commentBody = `Original comment ${runId}`;
+  const updatedCommentBody = `Updated comment ${runId}`;
+
+  await page.goto("/cloud-pets");
+  await verifyMemberInCloudPetWorkspace(page, { name: ownerName, phone });
+  await page.getByTestId("cloud-create-pet-name").fill(petName);
+  await page.getByTestId("cloud-create-species").selectOption("dog");
+  await page.getByTestId("cloud-create-personality").fill("Comment edit UI coverage.");
+  await page.getByTestId("cloud-create-submit").click();
+  await expect(page.getByTestId("cloud-community-submit")).toBeEnabled();
+  await page.getByTestId("cloud-community-body").fill(postBody);
+  await page.getByTestId("cloud-community-submit").click();
+
+  const createdPost = page
+    .getByTestId("cloud-community-post")
+    .filter({ hasText: postBody });
+  await expect(createdPost).toBeVisible();
+  await createdPost.getByTestId("cloud-community-open-detail").click();
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+  await page.getByTestId("community-post-detail-comment-body").fill(commentBody);
+  await page.getByTestId("community-post-detail-comment-submit").click();
+
+  await page.reload();
+  const detailComment = page
+    .getByTestId("community-post-detail-comment")
+    .filter({ hasText: commentBody });
+  await expect(detailComment).toBeVisible();
+  await expect(detailComment.getByTestId("community-post-detail-comment-edit")).toBeVisible();
+  await expect(detailComment.getByTestId("community-post-detail-comment-withdraw")).toBeVisible();
+
+  await detailComment.getByTestId("community-post-detail-comment-edit").click();
+  await page.getByTestId("community-post-detail-comment-edit-body").fill(updatedCommentBody);
+  await page.getByTestId("community-post-detail-comment-edit-save").click();
+  await expect(page.getByTestId("community-post-detail-comment")).toContainText(updatedCommentBody);
+  await expect(page.getByTestId("community-post-detail-status")).toContainText("评论已更新");
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+
+  await page.reload();
+  const updatedComment = page
+    .getByTestId("community-post-detail-comment")
+    .filter({ hasText: updatedCommentBody });
+  await expect(updatedComment).toBeVisible();
+  await expect(updatedComment.getByTestId("community-post-detail-comment-edit")).toBeVisible();
+});
+
 test("cloud pet workspace requires a live session after logout", async ({
   page,
   request

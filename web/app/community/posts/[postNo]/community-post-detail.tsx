@@ -7,6 +7,7 @@ import type { CommunityComment, CommunityPost } from "../../../cloud-pets/cloud-
 import {
   commentOnCommunityPost,
   likeCommunityPost,
+  updateCommunityComment,
   updateCommunityPost,
   withdrawCommunityComment
 } from "../../../cloud-pets/cloud-pets-api";
@@ -31,6 +32,8 @@ export function CommunityPostDetail({
   const [canEdit, setCanEdit] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editBody, setEditBody] = useState(initialPost.body);
+  const [editingCommentNo, setEditingCommentNo] = useState<string | null>(null);
+  const [editCommentBody, setEditCommentBody] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -225,6 +228,66 @@ export function CommunityPostDetail({
     }
   }
 
+  function handleStartEditComment(comment: CommunityComment) {
+    setEditingCommentNo(comment.commentNo);
+    setEditCommentBody(comment.body);
+    setError(null);
+  }
+
+  function handleCancelEditComment() {
+    setEditingCommentNo(null);
+    setEditCommentBody("");
+    setError(null);
+  }
+
+  async function handleEditComment(
+    event: FormEvent<HTMLFormElement>,
+    comment: CommunityComment
+  ) {
+    event.preventDefault();
+
+    if (!memberSession || !memberPhone || comment.memberPhone !== memberPhone) {
+      setError("只能编辑自己发布的评论");
+      return;
+    }
+
+    const body = editCommentBody.trim();
+
+    if (!body) {
+      setError("请输入评论内容");
+      return;
+    }
+
+    setBusyAction(`edit-comment-${comment.commentNo}`);
+    setError(null);
+
+    try {
+      const updatedComment = await updateCommunityComment(
+        comment.commentNo,
+        { body },
+        memberSession
+      );
+      setComments((current) =>
+        current.map((item) =>
+          item.commentNo === comment.commentNo ? updatedComment : item
+        )
+      );
+      setEditingCommentNo(null);
+      setEditCommentBody("");
+      setStatus("评论已更新");
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "Invalid member session") {
+        window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
+        setMemberSession(null);
+        setMemberPhone(null);
+      }
+      setError(caught instanceof Error ? caught.message : "编辑评论失败，请稍后重试");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleCopyLink() {
     setError(null);
 
@@ -337,10 +400,55 @@ export function CommunityPostDetail({
         <h2>评论</h2>
         {comments.length > 0 ? (
           comments.map((comment) => (
-            <p data-testid="community-post-detail-comment" key={comment.commentNo}>
+            <article data-testid="community-post-detail-comment" key={comment.commentNo}>
               <strong>{comment.authorName}</strong>
-              <span>{comment.body}</span>
+              {editingCommentNo === comment.commentNo ? (
+                <form onSubmit={(event) => void handleEditComment(event, comment)}>
+                  <textarea
+                    data-testid="community-post-detail-comment-edit-body"
+                    maxLength={280}
+                    onChange={(event) => setEditCommentBody(event.target.value)}
+                    rows={3}
+                    value={editCommentBody}
+                  />
+                  <div className="admin-inline-actions">
+                    <button
+                      className="cloud-button cloud-button--small"
+                      data-testid="community-post-detail-comment-edit-save"
+                      disabled={busyAction !== null || !editCommentBody.trim()}
+                      type="submit"
+                    >
+                      {busyAction === `edit-comment-${comment.commentNo}`
+                        ? "保存中…"
+                        : "保存评论"}
+                    </button>
+                    <button
+                      className="cloud-button cloud-button--small cloud-button--ghost"
+                      data-testid="community-post-detail-comment-edit-cancel"
+                      disabled={busyAction !== null}
+                      onClick={handleCancelEditComment}
+                      type="button"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <span>{comment.body}</span>
+              )}
               {memberSession && memberPhone && comment.memberPhone === memberPhone ? (
+                <div className="admin-inline-actions">
+                  {editingCommentNo !== comment.commentNo ? (
+                    <button
+                      className="cloud-button cloud-button--small cloud-button--ghost"
+                      data-testid="community-post-detail-comment-edit"
+                      disabled={busyAction !== null}
+                      onClick={() => handleStartEditComment(comment)}
+                      type="button"
+                    >
+                      编辑评论
+                    </button>
+                  ) : null}
                 <button
                   className="cloud-button cloud-button--small cloud-button--ghost"
                   data-testid="community-post-detail-comment-withdraw"
@@ -352,8 +460,9 @@ export function CommunityPostDetail({
                     ? "撤回中…"
                     : "撤回评论"}
                 </button>
+                </div>
               ) : null}
-            </p>
+            </article>
           ))
         ) : (
           <p className="community-comments__empty" data-testid="community-post-detail-comments-empty">

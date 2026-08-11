@@ -5586,6 +5586,101 @@ describe("Pet toy shop API", () => {
       .expect(404);
   });
 
+  it("lets only the comment author edit a visible community comment", async () => {
+    const ownerPhone = "13900139811";
+    const ownerSession = await loginAsMember(ownerPhone, "Comment Editor");
+    const otherSession = await loginAsMember("13900139812", "Other Comment Editor");
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Comment Editor",
+        ownerPhone,
+        name: "Editable Comment Pet",
+        species: "dog",
+        personality: "Can edit a community comment"
+      })
+      .expect(201);
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A post with an editable comment."
+      })
+      .expect(201);
+
+    const commentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Original comment body" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", otherSession)
+      .send({ body: "Other member edit" })
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.message).toBe("Only the comment author can edit this comment");
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .send({ body: "Anonymous edit" })
+      .expect(401);
+
+    const updatedResponse = await request(app.getHttpServer())
+      .patch(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Updated comment body" })
+      .expect(200);
+
+    expect(updatedResponse.body).toMatchObject({
+      commentNo: commentResponse.body.commentNo,
+      body: "Updated comment body",
+      status: "visible"
+    });
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items[0].commentNo).toBe(commentResponse.body.commentNo);
+        expect(body.items[0].body).toBe("Updated comment body");
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/comments/${commentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Restore comment attempt" })
+      .expect(404);
+
+    const secondCommentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Comment blocked by withdrawn post" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/posts/${postResponse.body.postNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/community/comments/${secondCommentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "Parent restore attempt" })
+      .expect(404);
+  });
+
   it("requires member auth before community interactions", async () => {
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")

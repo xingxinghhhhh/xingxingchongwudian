@@ -1,0 +1,10 @@
+import { Transform } from "class-transformer";
+import { IsNotEmpty, IsString, MaxLength } from "class-validator";
+
+export class UpdateCommunityCommentDto {
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(280)
+  body!: string;
+}

@@ -448,6 +448,22 @@ export function withdrawCommunityComment(
   );
 }
 
+export function updateCommunityComment(
+  commentNo: string,
+  input: { body: string },
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityComment>(
+    `/community/comments/${encodeURIComponent(commentNo)}`,
+    {
+      ...jsonRequest(input, sessionToken),
+      method: "PATCH"
+    },
+    fetcher
+  );
+}
+
 export function followCloudPet(
   petNo: string,
   input: { followerPhone?: string; followerName?: string },

@@ -12,6 +12,7 @@ Cloud Pet is now treated as its own retention product line, separate from the pe
 - Community posts now have stable detail deep links at `/community/posts/:postNo`; Feed and public homepage entry points reopen the same visible post and comments after reload, while hidden or author-withdrawn posts remain inaccessible to user-facing reads.
 - Community comments now support member-authenticated author withdrawal through a soft `authorDeletedAt` state; withdrawn comments disappear from user-facing reads and counts while moderation evidence remains available.
 - Community post authors can now edit the body of their own visible posts from the stable detail page; the MemberSession ownership check rejects other members and withdrawn/hidden posts remain non-editable.
+- Community comment authors can now edit their own visible comments from the stable detail page; comment identity, thread associations, withdrawal semantics, and parent-post visibility remain intact.
 
 ## Gaps Before Launch
 

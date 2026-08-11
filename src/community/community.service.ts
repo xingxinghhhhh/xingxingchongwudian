@@ -495,6 +495,69 @@ export class CommunityService {
     return this.toCommentResponse(withdrawnComment);
   }
 
+  async updateComment(commentNo: string, memberPhone: string, body: string) {
+    if (!this.isDatabaseConfigured()) {
+      const comment = this.comments.find((item) => item.commentNo === commentNo);
+
+      if (!comment) {
+        throw new NotFoundException("Community comment not found");
+      }
+
+      if (comment.memberPhone !== memberPhone) {
+        throw new ForbiddenException("Only the comment author can edit this comment");
+      }
+
+      const post = this.posts.find((item) => item.postNo === comment.postNo);
+
+      if (
+        !post ||
+        post.status !== "visible" ||
+        post.authorDeletedAt ||
+        comment.status !== "visible" ||
+        comment.authorDeletedAt
+      ) {
+        throw new NotFoundException("Community comment not found");
+      }
+
+      comment.body = body;
+      return comment;
+    }
+
+    const comment = await this.prisma.communityComment.findUnique({
+      where: { commentNo }
+    });
+
+    if (!comment) {
+      throw new NotFoundException("Community comment not found");
+    }
+
+    if (comment.memberPhone !== memberPhone) {
+      throw new ForbiddenException("Only the comment author can edit this comment");
+    }
+
+    const post = await this.prisma.communityPost.findUnique({
+      where: { postNo: comment.postNo },
+      select: { status: true, authorDeletedAt: true }
+    });
+
+    if (
+      !post ||
+      post.status !== "visible" ||
+      post.authorDeletedAt ||
+      comment.status !== "visible" ||
+      comment.authorDeletedAt
+    ) {
+      throw new NotFoundException("Community comment not found");
+    }
+
+    const updatedComment = await this.prisma.communityComment.update({
+      where: { commentNo },
+      data: { body }
+    });
+
+    return this.toCommentResponse(updatedComment);
+  }
+
 
   async listComments(postNo: string): Promise<CommunityCommentResponse[]> {
     await this.ensurePost(postNo);
