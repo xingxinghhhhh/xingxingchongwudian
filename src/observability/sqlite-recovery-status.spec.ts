@@ -65,11 +65,13 @@ describe("SQLite recovery status projection", () => {
   let directory: string;
 
   beforeEach(async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-08-09T01:00:00.000Z"));
     directory = await mkdtemp(join(tmpdir(), "sqlite-recovery-status-jest-"));
   });
 
   afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
+    jest.useRealTimers();
   });
 
   it("returns unavailable when no fixed status directory is configured", async () => {
