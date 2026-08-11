@@ -17,6 +17,7 @@ import {
 } from "../cloud-pets-api";
 import { getProductTitleLabel } from "../../shop/shop-copy";
 import { HomepageVisitTracker } from "./homepage-visit-tracker";
+import { PublicPetViewer } from "./public-pet-viewer";
 
 interface PetHomepageProps {
   params: Promise<{
@@ -251,9 +252,7 @@ export default async function PetHomepage({ params, searchParams }: PetHomepageP
                 <strong>亲密 {pet.stats.intimacy}</strong>
               </div>
               <div className="pet-homepage-actions">
-                <Link className="cloud-link-button" href="/cloud-pets">
-                  回互动工作台
-                </Link>
+                <PublicPetViewer petNo={pet.petNo} />
                 <Link className="cloud-link-button cloud-link-button--light" href="/shop">
                   去商城挑礼物
                 </Link>

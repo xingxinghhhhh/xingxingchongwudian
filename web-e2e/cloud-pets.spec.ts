@@ -92,6 +92,15 @@ test("cloud pet workspace guides a synced member without pets into first pet cre
   await expect(page.getByTestId("pet-public-share-url")).toContainText("/cloud-pets/");
   await expect(page.getByTestId("pet-public-visit-count")).toContainText("次主页访问");
   await expect(page.getByTestId("pet-public-create-own")).toHaveAttribute("href", "/cloud-pets");
+  await expect(page.getByTestId("pet-public-owner-view")).toBeVisible();
+  await expect(page.getByTestId("pet-public-owner-workspace")).toHaveAttribute("href", "/cloud-pets");
+  const publicPetUrl = page.url();
+  await page.getByTestId("pet-public-owner-workspace").click();
+  await expect(page).toHaveURL(/\/cloud-pets$/);
+  await page.getByTestId("cloud-member-logout").click();
+  await expect(page.getByTestId("cloud-member-profile")).toHaveCount(0);
+  await page.goto(publicPetUrl);
+  await expect(page.getByTestId("pet-public-owner-view")).toHaveCount(0);
 });
 
 test("cloud pet workspace requires a live session after logout", async ({
@@ -768,6 +777,8 @@ test("public homepage deduplicates daily visits from the same browser", async ({
   expect((await firstVisit).status()).toBe(201);
   await expect(page.locator("body")).not.toContainText(ownerName);
   await expect(page.locator("body")).not.toContainText(phone);
+  await expect(page.getByTestId("pet-public-owner-view")).toHaveCount(0);
+  await expect(page.getByTestId("pet-public-owner-workspace")).toHaveCount(0);
   const firstVisitorId = await page.evaluate(() =>
     localStorage.getItem("kzt_homepage_visitor")
   );
