@@ -267,6 +267,11 @@ export function AdminConsole() {
   const displayedCloudPets = cloudPetFilters.sortBy === "risk_desc"
     ? [...filteredCloudPets].sort(compareCloudPetRisk)
     : filteredCloudPets;
+  const selectedCloudPetIndex = selectedCloudPetDetail
+    ? displayedCloudPets.findIndex(
+        (pet) => pet.petNo === selectedCloudPetDetail.pet.petNo
+      )
+    : -1;
 
   useEffect(() => {
     const storedToken = localStorage.getItem("kzt_admin_session") ?? defaultToken;
@@ -1200,6 +1205,17 @@ export function AdminConsole() {
 
   async function handleLoadCloudPetDetail(petNo: string) {
     await loadCloudPetDetail(petNo, true);
+  }
+
+  function handleNavigateCloudPet(direction: -1 | 1) {
+    if (selectedCloudPetIndex < 0) {
+      return;
+    }
+
+    const nextPet = displayedCloudPets[selectedCloudPetIndex + direction];
+    if (nextPet) {
+      void handleLoadCloudPetDetail(nextPet.petNo);
+    }
   }
 
   function handleClearCloudPetDetail() {
@@ -2896,6 +2912,34 @@ export function AdminConsole() {
                 <strong>
                   {selectedCloudPetDetail.pet.name} / {selectedCloudPetDetail.pet.petNo}
                 </strong>
+                <div className="admin-inline-actions" data-testid="admin-cloud-pet-detail-navigation">
+                  <button
+                    className="admin-button admin-button--small admin-button--ghost"
+                    data-testid="admin-cloud-pet-previous"
+                    disabled={selectedCloudPetIndex <= 0}
+                    onClick={() => handleNavigateCloudPet(-1)}
+                    type="button"
+                  >
+                    上一只
+                  </button>
+                  <span data-testid="admin-cloud-pet-position">
+                    {selectedCloudPetIndex >= 0
+                      ? `第 ${selectedCloudPetIndex + 1} / ${displayedCloudPets.length} 只`
+                      : "当前宠物不在筛选结果中"}
+                  </span>
+                  <button
+                    className="admin-button admin-button--small admin-button--ghost"
+                    data-testid="admin-cloud-pet-next"
+                    disabled={
+                      selectedCloudPetIndex < 0 ||
+                      selectedCloudPetIndex >= displayedCloudPets.length - 1
+                    }
+                    onClick={() => handleNavigateCloudPet(1)}
+                    type="button"
+                  >
+                    下一只
+                  </button>
+                </div>
                 <button
                   className="admin-button admin-button--small admin-button--ghost"
                   data-testid="admin-cloud-pet-detail-close"

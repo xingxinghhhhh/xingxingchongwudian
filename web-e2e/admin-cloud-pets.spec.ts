@@ -598,3 +598,73 @@ test("admin cloud pet structured filters restore from the URL", async ({
   ).toHaveCount(0);
   expect(new URL(page.url()).searchParams.get("petNo")).toBeNull();
 });
+
+test("admin can patrol adjacent cloud pet details in the rendered order", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const member = await loginAsVerifiedMember(request, {
+    name: `Patrol Owner ${runId}`,
+    phone: `135${runId}`
+  });
+
+  for (const [index, name] of ["Patrol First", "Patrol Second", "Patrol Third"].entries()) {
+    const petResponse = await request.post(`${API_BASE}/cloud-pets`, {
+      data: {
+        ownerName: `Patrol Owner ${runId}`,
+        ownerPhone: `135${runId}`,
+        name: `${name} ${runId}`,
+        species: "cat",
+        personality: `Provides adjacent detail patrol fixture ${index}.`
+      },
+      headers: { "X-Member-Token": member.sessionToken }
+    });
+    expect(petResponse.ok()).toBeTruthy();
+  }
+
+  await loginAsAdmin(page, "owner");
+  const cloudPetSection = page.locator("#admin-cloud-pets");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+
+  const listItems = cloudPetSection.getByTestId("admin-cloud-pet-list-item");
+  await expect.poll(() => listItems.count()).toBeGreaterThan(2);
+  const firstListItem = listItems.nth(0);
+  const secondListItem = listItems.nth(1);
+  const firstPetNo = await firstListItem.getAttribute("data-pet-no");
+  const secondPetNo = await secondListItem.getAttribute("data-pet-no");
+  expect(firstPetNo).toBeTruthy();
+  expect(secondPetNo).toBeTruthy();
+
+  await firstListItem.getByTestId("admin-cloud-pet-detail-open").click();
+  const detail = cloudPetSection.getByTestId("admin-cloud-pet-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail.getByTestId("admin-cloud-pet-position")).toHaveText(
+    /^第 1 \/ \d+ 只$/
+  );
+  await expect(
+    detail.getByTestId("admin-cloud-pet-previous")
+  ).toBeDisabled();
+  await expect(detail.getByTestId("admin-cloud-pet-next")).toBeEnabled();
+  expect(new URL(page.url()).searchParams.get("petNo")).toBe(firstPetNo);
+
+  const nextDetailResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/admin/cloud-pets/${secondPetNo}/detail`) &&
+      response.ok()
+  );
+  await detail.getByTestId("admin-cloud-pet-next").click();
+  await nextDetailResponse;
+  await expect(detail.getByTestId("admin-cloud-pet-position")).toHaveText(
+    /^第 2 \/ \d+ 只$/
+  );
+  expect(new URL(page.url()).searchParams.get("petNo")).toBe(secondPetNo);
+
+  await detail.getByTestId("admin-cloud-pet-previous").click();
+  await expect(detail.getByTestId("admin-cloud-pet-position")).toHaveText(
+    /^第 1 \/ \d+ 只$/
+  );
+  expect(new URL(page.url()).searchParams.get("petNo")).toBe(firstPetNo);
+});
