@@ -413,6 +413,87 @@ test("admin cloud pet risk reasons stay consistent between list and detail", asy
   );
 });
 
+test("admin can refresh cloud pet operations after a member care update", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Refresh Owner ${runId}`;
+  const phone = `135${runId}`;
+  const petName = `Refresh Pet ${runId}`;
+  const member = await loginAsVerifiedMember(request, {
+    name: ownerName,
+    phone
+  });
+  const headers = { "X-Member-Token": member.sessionToken };
+  const petResponse = await request.post(`${API_BASE}/cloud-pets`, {
+    data: {
+      ownerName,
+      ownerPhone: phone,
+      name: petName,
+      species: "cat",
+      personality: "Provides a manual-refresh operational sample."
+    },
+    headers
+  });
+  expect(petResponse.ok()).toBeTruthy();
+  const petNo = ((await petResponse.json()) as { petNo: string }).petNo;
+
+  await loginAsAdmin(page, "owner");
+  const cloudPetSection = page.locator("#admin-cloud-pets");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-last-refresh")
+  ).toContainText("最近更新：");
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(petNo);
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-risk").selectOption("high");
+  await cloudPetSection
+    .getByTestId("admin-cloud-pet-filter-risk-reason")
+    .selectOption("care_incomplete_today");
+
+  const filterResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/cloud-pets?") &&
+      response.url().includes(`q=${petNo}`)
+  );
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+  expect((await filterResponse).ok()).toBeTruthy();
+
+  const listItem = cloudPetSection.locator(
+    `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${petNo}"]`
+  );
+  await expect(listItem).toBeVisible();
+
+  const careResponse = await request.post(
+    `${API_BASE}/cloud-pets/${petNo}/growth-tasks/daily-care/complete`,
+    { headers }
+  );
+  expect(careResponse.ok()).toBeTruthy();
+
+  const refreshResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/cloud-pets?") &&
+      response.url().includes(`q=${petNo}`)
+  );
+  await cloudPetSection.getByTestId("admin-cloud-pet-refresh").click();
+  expect((await refreshResponse).ok()).toBeTruthy();
+
+  await expect(listItem).toHaveCount(0);
+  await expect(
+    cloudPetSection
+      .getByTestId("admin-cloud-pet-filter-risk-reason")
+      .locator('option[value="care_incomplete_today"]')
+  ).toHaveText("今日照护未完成（0）");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-filter-q")
+  ).toHaveValue(petNo);
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-last-refresh")
+  ).toContainText("最近更新：");
+});
+
 test("admin cloud pet structured filters restore from the URL", async ({
   page,
   request

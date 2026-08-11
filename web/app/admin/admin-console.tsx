@@ -136,8 +136,9 @@ function replaceCloudPetFilterUrl(filters: CloudPetStructuredFilters) {
   window.history.replaceState({}, "", nextUrl);
 }
 
-function getCloudPetApiFilters(filters: CloudPetStructuredFilters) {
+function getCloudPetApiFilters(filters: CloudPetStructuredFilters, q = "") {
   return {
+    q: q.trim() || undefined,
     species: filters.species || undefined,
     careState: filters.careState || undefined
   };
@@ -198,6 +199,9 @@ export function AdminConsole() {
   const [busyDiaryNoteId, setBusyDiaryNoteId] = useState<string | null>(null);
   const [selectedCloudPetDetail, setSelectedCloudPetDetail] =
     useState<AdminCloudPetOperationalDetail | null>(null);
+  const [cloudPetRefreshing, setCloudPetRefreshing] = useState(false);
+  const [cloudPetLastSuccessfulRefreshAt, setCloudPetLastSuccessfulRefreshAt] =
+    useState<Date | null>(null);
   const [isGeneratingDailyDiaries, setIsGeneratingDailyDiaries] = useState(false);
   const [dailyDiaryGeneration, setDailyDiaryGeneration] =
     useState<CloudPetDailyDiaryGenerationResult | null>(null);
@@ -220,6 +224,7 @@ export function AdminConsole() {
   });
   const [appliedCloudPetStructuredFilters, setAppliedCloudPetStructuredFilters] =
     useState<CloudPetStructuredFilters>(defaultCloudPetStructuredFilters);
+  const [appliedCloudPetSearch, setAppliedCloudPetSearch] = useState("");
   const [reportFilters, setReportFilters] = useState({
     status: "",
     postNo: "",
@@ -263,7 +268,8 @@ export function AdminConsole() {
       void loadAdminData(
         storedToken,
         initialReportFilters ?? undefined,
-        initialCloudPetStructuredFilters
+        initialCloudPetStructuredFilters,
+        ""
       );
     }
 
@@ -277,6 +283,7 @@ export function AdminConsole() {
         ...nextFilters
       }));
       setAppliedCloudPetStructuredFilters(nextFilters);
+      setAppliedCloudPetSearch("");
       setSelectedCloudPetDetail(null);
       if (storedToken) {
         void loadCloudPetList(storedToken, nextFilters);
@@ -294,7 +301,8 @@ export function AdminConsole() {
       postNo: string;
       memberPhone: string;
     },
-    initialCloudPetFilters = appliedCloudPetStructuredFilters
+    initialCloudPetFilters = appliedCloudPetStructuredFilters,
+    initialCloudPetSearch = appliedCloudPetSearch
   ) {
     if (!nextToken) {
       setError("需要后台登录会话");
@@ -329,7 +337,10 @@ export function AdminConsole() {
         getMerchantAnalytics(nextToken),
         listAdminCustomers(nextToken),
         listAdminCmsBlocks(nextToken),
-        listAdminCloudPets(nextToken, getCloudPetApiFilters(initialCloudPetFilters)),
+        listAdminCloudPets(
+          nextToken,
+          getCloudPetApiFilters(initialCloudPetFilters, initialCloudPetSearch)
+        ),
         listAdminCommunityPosts(nextToken),
         listAdminCommunityReports(nextToken, initialReportFilters),
         listAdminProducts(nextToken),
@@ -352,6 +363,7 @@ export function AdminConsole() {
       setCustomers(nextCustomers);
       setCmsBlocks(nextCmsBlocks);
       setPets(nextPets);
+      setCloudPetLastSuccessfulRefreshAt(new Date());
       setPosts(nextPosts);
       setReports(nextReports);
       setProducts(nextProducts);
@@ -406,6 +418,7 @@ export function AdminConsole() {
         getCloudPetApiFilters(nextFilters)
       );
       setPets(nextPets);
+      setCloudPetLastSuccessfulRefreshAt(new Date());
       setStatus(`云养宠筛选已恢复，共 ${nextPets.length} 条结果。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "云养宠筛选恢复失败");
@@ -1032,11 +1045,12 @@ export function AdminConsole() {
 
     try {
       const filteredPets = await listAdminCloudPets(token, {
-        q: cloudPetFilters.q,
-        ...getCloudPetApiFilters(nextStructuredFilters)
+        ...getCloudPetApiFilters(nextStructuredFilters),
+        q: cloudPetFilters.q
       });
       setPets(filteredPets);
       setAppliedCloudPetStructuredFilters(nextStructuredFilters);
+      setAppliedCloudPetSearch(cloudPetFilters.q);
       replaceCloudPetFilterUrl(nextStructuredFilters);
       setStatus(`云养宠筛选已应用，共 ${filteredPets.length} 条结果。`);
     } catch (caught) {
@@ -1059,6 +1073,7 @@ export function AdminConsole() {
       sortBy: ""
     });
     setAppliedCloudPetStructuredFilters(defaultCloudPetStructuredFilters);
+    setAppliedCloudPetSearch("");
     replaceCloudPetFilterUrl(defaultCloudPetStructuredFilters);
     setError(null);
 
@@ -1068,11 +1083,52 @@ export function AdminConsole() {
         getCloudPetApiFilters(defaultCloudPetStructuredFilters)
       );
       setPets(allPets);
+      setCloudPetLastSuccessfulRefreshAt(new Date());
       setStatus("云养宠筛选已清除。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "云养宠筛选重置失败");
     }
   }
+
+  async function handleRefreshCloudPets() {
+    if (!token || cloudPetRefreshing) {
+      return;
+    }
+
+    setCloudPetRefreshing(true);
+    setError(null);
+
+    try {
+      const nextPets = await listAdminCloudPets(
+        token,
+        getCloudPetApiFilters(
+          appliedCloudPetStructuredFilters,
+          appliedCloudPetSearch
+        )
+      );
+      setPets(nextPets);
+      setCloudPetLastSuccessfulRefreshAt(new Date());
+
+      if (selectedCloudPetDetail) {
+        try {
+          const nextDetail = await getAdminCloudPetDetail(
+            token,
+            selectedCloudPetDetail.pet.petNo
+          );
+          setSelectedCloudPetDetail(nextDetail);
+        } catch {
+          setError("云养宠列表已刷新，但详情更新失败，请稍后重试。");
+        }
+      }
+
+      setStatus(`云养宠数据已刷新，共 ${nextPets.length} 条结果。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "云养宠数据刷新失败");
+    } finally {
+      setCloudPetRefreshing(false);
+    }
+  }
+
   async function handleLoadCloudPetDetail(petNo: string) {
     setBusyCloudPetNo(petNo);
     setError(null);
@@ -2480,6 +2536,24 @@ export function AdminConsole() {
           <p className="section__kicker">云养宠</p>
           <h2>云养宠档案</h2>
           <div className="admin-inline-actions">
+            <button
+              className="admin-button admin-button--small admin-button--ghost"
+              data-testid="admin-cloud-pet-refresh"
+              disabled={cloudPetRefreshing}
+              onClick={() => void handleRefreshCloudPets()}
+              type="button"
+            >
+              {cloudPetRefreshing ? "刷新中..." : "刷新云养宠数据"}
+            </button>
+            {cloudPetLastSuccessfulRefreshAt ? (
+              <span data-testid="admin-cloud-pet-last-refresh">
+                最近更新：{cloudPetLastSuccessfulRefreshAt.toLocaleTimeString("zh-CN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit"
+                })}
+              </span>
+            ) : null}
             <button
               className="admin-button"
               disabled={isGeneratingDailyDiaries}
