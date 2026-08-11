@@ -45,7 +45,8 @@ import {
 } from "../member/member-api";
 import {
   isCloudPetDiaryEvent,
-  resolveCloudPetDiaryDisplay
+  resolveCloudPetDiaryDisplay,
+  shouldShowTodayCareDiaryCta
 } from "./diary-display";
 import { getGrowthTaskCopy } from "./cloud-pet-copy";
 import { getProductTitleLabel } from "../shop/shop-copy";
@@ -207,6 +208,19 @@ export function CloudPetStudio() {
       ) ?? null,
     [activePetFromMember, todayDateKey]
   );
+  const todayCareDiary = useMemo(
+    () =>
+      activePetFromMember?.timeline.find(
+        (event) =>
+          event.type === "care_daily_diary" &&
+          event.createdAt.startsWith(todayDateKey)
+      ) ?? null,
+    [activePetFromMember, todayDateKey]
+  );
+  const showTodayCareDiaryCta = shouldShowTodayCareDiaryCta({
+    completedTaskCount: activePetFromMember?.growth.todayCompletedTaskCount ?? 0,
+    diaryType: todayCareDiary?.type ?? null
+  });
   const hasTodayCommunityPost = useMemo(
     () =>
       activePetFromMember
@@ -408,6 +422,11 @@ export function CloudPetStudio() {
 
     void activatePet(pet, { resetScopedState: true });
     setStatus(`已切换到 ${pet.name}，今日照顾、日记和主页已更新。`);
+  }
+
+  function handleViewTodayDiary() {
+    setDiaryFilter("daily_diary");
+    setSelectedDiaryDate(null);
   }
 
   function handleWorkspaceRetry() {
@@ -1345,6 +1364,19 @@ export function CloudPetStudio() {
                   <a className="cloud-link-button cloud-link-button--compact" data-testid="cloud-start-care-from-diary" href="#cloud-daily-care">去完成照顾</a>
                 </div>
               )}
+              {showTodayCareDiaryCta ? (
+                <div className="cloud-diary-actions" data-testid="cloud-care-diary-cta">
+                  <strong>今日照护已完成，已写入今日日记</strong>
+                  <a
+                    className="cloud-link-button cloud-link-button--compact"
+                    data-testid="cloud-view-today-diary"
+                    href="#cloud-diary-archive"
+                    onClick={handleViewTodayDiary}
+                  >
+                    查看今日日记
+                  </a>
+                </div>
+              ) : null}
             </article>
             {latestDailyDiary ? (
               <article className="cloud-diary-highlight" data-testid="cloud-latest-diary">
@@ -1392,7 +1424,7 @@ export function CloudPetStudio() {
                 </ol>
               </div>
             ) : null}
-            <section className="cloud-diary-archive" data-testid="cloud-diary-archive">
+            <section className="cloud-diary-archive" data-testid="cloud-diary-archive" id="cloud-diary-archive">
               <div>
                 <p className="section__kicker">照护归档</p>
                 <h3>近期照护日记</h3>
@@ -1446,7 +1478,7 @@ export function CloudPetStudio() {
                     const isEditing = editingDiaryNoteId === diaryNoteId;
 
                     return (
-                      <li data-testid="cloud-diary-entry" key={diaryNoteId}>
+                      <li data-diary-type={diary.type} data-testid="cloud-diary-entry" key={diaryNoteId}>
                         <strong>{diary.title}</strong>
                         <span>{new Date(diary.createdAt).toLocaleDateString("zh-CN")}</span>
                         <span data-testid="cloud-diary-entry-source">{diaryDisplay.label}</span>

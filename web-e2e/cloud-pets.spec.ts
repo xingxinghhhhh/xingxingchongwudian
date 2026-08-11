@@ -593,6 +593,7 @@ test("cloud pet workspace switches pets without stale scoped data", async ({
   );
   await expect(page.getByTestId("cloud-today-completed-count")).toHaveText("0");
   await expect(page.getByTestId("cloud-today-diary-missing")).toBeVisible();
+  await expect(page.getByTestId("cloud-care-diary-cta")).toHaveCount(0);
   await expect(page.getByTestId("cloud-recommendations-panel")).toHaveAttribute(
     "data-pet-no",
     secondPet.petNo
@@ -926,6 +927,16 @@ test("cloud pet workspace supports the daily care loop", async ({ page }) => {
   await expect(dailyCareButton).toBeEnabled();
   await dailyCareButton.click();
   await expect(page.getByTestId("cloud-today-completed-count")).toHaveText("1");
+  await expect(page.getByTestId("cloud-care-diary-cta")).toBeVisible();
+  await page.getByTestId("cloud-view-today-diary").click();
+  await expect(page).toHaveURL(/#cloud-diary-archive$/);
+  await expect(page.getByTestId("cloud-diary-filter-daily")).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await expect(
+    page.locator('[data-testid="cloud-diary-entry"][data-diary-type="care_daily_diary"]')
+  ).toBeVisible();
   const feedCareButton = page.getByTestId("cloud-task-complete-feed-care");
   await expect(feedCareButton).toBeEnabled();
   await feedCareButton.click();
@@ -938,6 +949,12 @@ test("cloud pet workspace supports the daily care loop", async ({ page }) => {
   await expect(page.getByTestId("cloud-latest-diary")).toBeVisible();
   await expect(page.getByTestId("cloud-diary-archive")).toBeVisible();
   await expect(page.getByTestId("cloud-diary-entry")).toHaveCount(1);
+  await expect(page.getByTestId("cloud-care-diary-cta")).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId("cloud-care-diary-cta")).toBeVisible();
+  await expect(
+    page.locator('[data-testid="cloud-diary-entry"][data-diary-type="care_daily_diary"]')
+  ).toBeVisible();
   await expect(page.getByTestId("cloud-diary-entry-source").first()).toHaveText("照顾记录");
   await expect(page.getByTestId("cloud-diary-entry-open-daily_diary").first()).toHaveAttribute("href", /archive=daily_diary#diary-/);
   await page.getByTestId("cloud-diary-entry-copy-daily_diary").first().click();

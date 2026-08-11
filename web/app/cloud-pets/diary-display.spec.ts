@@ -1,6 +1,7 @@
 import {
   isCloudPetDiaryEvent,
-  resolveCloudPetDiaryDisplay
+  resolveCloudPetDiaryDisplay,
+  shouldShowTodayCareDiaryCta
 } from "./diary-display";
 
 describe("cloud pet diary display", () => {
@@ -33,5 +34,38 @@ describe("cloud pet diary display", () => {
     expect(isCloudPetDiaryEvent("care_daily_diary")).toBe(true);
     expect(isCloudPetDiaryEvent("presence_daily_diary")).toBe(true);
     expect(isCloudPetDiaryEvent("growth_task")).toBe(false);
+  });
+
+  it("only enables the today-care diary CTA for a real care diary and task completion", () => {
+    expect(
+      shouldShowTodayCareDiaryCta({
+        completedTaskCount: 1,
+        diaryType: "care_daily_diary"
+      })
+    ).toBe(true);
+    expect(
+      shouldShowTodayCareDiaryCta({
+        completedTaskCount: 0,
+        diaryType: "care_daily_diary"
+      })
+    ).toBe(false);
+    expect(
+      shouldShowTodayCareDiaryCta({
+        completedTaskCount: 1,
+        diaryType: "presence_daily_diary"
+      })
+    ).toBe(false);
+    expect(
+      shouldShowTodayCareDiaryCta({
+        completedTaskCount: 1,
+        diaryType: "owner_note"
+      })
+    ).toBe(false);
+    expect(
+      shouldShowTodayCareDiaryCta({
+        completedTaskCount: 1,
+        diaryType: "daily_diary"
+      })
+    ).toBe(false);
   });
 });

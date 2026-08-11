@@ -12,6 +12,13 @@ export function isCloudPetDiaryEvent(type: string) {
   ].includes(type);
 }
 
+export function shouldShowTodayCareDiaryCta(input: {
+  completedTaskCount: number;
+  diaryType: string | null;
+}) {
+  return input.completedTaskCount > 0 && input.diaryType === "care_daily_diary";
+}
+
 export function resolveCloudPetDiaryDisplay(type: string): CloudPetDiaryDisplay {
   if (type === "owner_note") {
     return { label: "主人手记", representsCareCompletion: false };

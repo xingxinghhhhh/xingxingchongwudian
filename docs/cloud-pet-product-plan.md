@@ -250,3 +250,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Admin 云养宠详情的今日日记缺口现在会携带安全的 petNo 定位到既有 coverage 页面，只过滤展示目标宠物且不自动补救。
 - Admin 云养宠运营区现在可将当前筛选与风险排序后的结果导出为 UTF-8 安全 CSV，仅包含运营白名单字段并防护公式注入，不包含会员身份信息。
 - Admin 云养宠运营区现在可复制仅包含结构化筛选、排序和 petNo 的安全恢复链接；自由文本搜索生效时复制入口会禁用，不会泄露私有搜索词或后台会话信息。
+- 会员云养宠工作台现在会在真实任务生成 care_daily_diary 后提供“查看今日日记”入口；点击会复用既有日记筛选并定位归档，presence、owner note 和 legacy 日记不会误触发该提示。
