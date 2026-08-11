@@ -28,6 +28,8 @@ export type CloudPetRiskEvaluation = {
   summary: string;
 };
 
+export type CloudPetRiskReasonCounts = Record<CloudPetRiskReasonCode, number>;
+
 const reasonLabels: Record<CloudPetRiskReasonCode, string> = {
   care_incomplete_today: "今日照护未完成",
   needs_care_state: "需要照护",
@@ -103,6 +105,22 @@ export function matchesCloudPetRiskReason(
     selectedCode === "" ||
     evaluateCloudPetRisk(pet).reasons.some((reason) => reason.code === selectedCode)
   );
+}
+
+export function getCloudPetRiskReasonCounts(
+  pets: CloudPetRiskInput[]
+): CloudPetRiskReasonCounts {
+  const counts = Object.fromEntries(
+    reasonDefinitions.map((definition) => [definition.code, 0])
+  ) as CloudPetRiskReasonCounts;
+
+  for (const pet of pets) {
+    for (const reason of evaluateCloudPetRisk(pet).reasons) {
+      counts[reason.code] += 1;
+    }
+  }
+
+  return counts;
 }
 
 export function compareCloudPetRisk(

@@ -381,6 +381,11 @@ test("admin cloud pet risk reasons stay consistent between list and detail", asy
   ).toBeVisible();
   await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(petNo);
   await cloudPetSection.getByTestId("admin-cloud-pet-filter-risk").selectOption("high");
+  await expect(
+    cloudPetSection
+      .getByTestId("admin-cloud-pet-filter-risk-reason")
+      .locator('option[value="care_incomplete_today"]')
+  ).toHaveText("今日照护未完成（1）");
   await cloudPetSection
     .getByTestId("admin-cloud-pet-filter-risk-reason")
     .selectOption("care_incomplete_today");

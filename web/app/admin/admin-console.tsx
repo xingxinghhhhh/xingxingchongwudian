@@ -101,6 +101,7 @@ import {
 import {
   compareCloudPetRisk,
   evaluateCloudPetRisk,
+  getCloudPetRiskReasonCounts,
   cloudPetRiskReasonOptions,
   matchesCloudPetRiskReason,
   type CloudPetRiskReasonCode
@@ -203,16 +204,17 @@ export function AdminConsole() {
     currentStaff?.permissions.includes("customers:write") ?? false;
   const canManageCloudPets =
     currentStaff?.permissions.includes("cloud_pets:write") ?? false;
-  const filteredCloudPets = pets.filter((pet) => {
+  const filteredCloudPetsByRiskLevel = pets.filter((pet) => {
     const matchesRiskLevel =
       !cloudPetFilters.riskLevel ||
       evaluateCloudPetRisk(pet).highestLevel === cloudPetFilters.riskLevel;
 
-    return (
-      matchesRiskLevel &&
-      matchesCloudPetRiskReason(pet, cloudPetFilters.riskReason)
-    );
+    return matchesRiskLevel;
   });
+  const riskReasonCounts = getCloudPetRiskReasonCounts(filteredCloudPetsByRiskLevel);
+  const filteredCloudPets = filteredCloudPetsByRiskLevel.filter((pet) =>
+    matchesCloudPetRiskReason(pet, cloudPetFilters.riskReason)
+  );
   const displayedCloudPets = cloudPetFilters.sortBy === "risk_desc"
     ? [...filteredCloudPets].sort(compareCloudPetRisk)
     : filteredCloudPets;
@@ -2603,7 +2605,7 @@ export function AdminConsole() {
                 <option value="">全部风险原因</option>
                 {cloudPetRiskReasonOptions.map((reason) => (
                   <option key={reason.code} value={reason.code}>
-                    {reason.label}
+                    {reason.label}（{riskReasonCounts[reason.code]}）
                   </option>
                 ))}
               </select>

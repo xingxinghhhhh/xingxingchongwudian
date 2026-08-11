@@ -1,6 +1,7 @@
 import {
   compareCloudPetRisk,
   evaluateCloudPetRisk,
+  getCloudPetRiskReasonCounts,
   getCloudPetRiskReasonLabel,
   matchesCloudPetRiskReason
 } from "./cloud-pet-risk";
@@ -73,5 +74,26 @@ describe("cloud-pet risk evaluator", () => {
     expect(matchesCloudPetRiskReason(pet, "care_incomplete_today")).toBe(true);
     expect(matchesCloudPetRiskReason(pet, "no_homepage_visits")).toBe(true);
     expect(matchesCloudPetRiskReason(pet, "no_community_posts")).toBe(false);
+  });
+
+  it("counts overlapping reasons from the same evaluator", () => {
+    const counts = getCloudPetRiskReasonCounts([
+      createPet({
+        growth: { isCareCompleteToday: false, careState: "steady" },
+        homepageVisitCount: 0
+      }),
+      createPet({
+        growth: { isCareCompleteToday: true, careState: "needs_care" },
+        homepageVisitCount: 0,
+        communityPostCount: 0
+      })
+    ]);
+
+    expect(counts).toEqual({
+      care_incomplete_today: 1,
+      needs_care_state: 1,
+      no_homepage_visits: 2,
+      no_community_posts: 1
+    });
   });
 });

@@ -238,3 +238,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Cloud-pet daily semantics now have one explicit UTC business-day helper for task dates, streak adjacency, diary presence, coverage/backfill, and owner-note quota ranges; UTC is the existing contract and is covered at the midnight boundary without changing diary types or persisted timestamps.
 - Admin 云养宠风险排序现在复用单一前端 evaluator 产出稳定 reason code；列表筛选/排序与单宠详情共享基础风险原因，今日日记缺失和待处理举报仍保留为详情专属运营信号。
 - Admin 云养宠列表新增按稳定风险原因筛选，支持与风险等级、文本、类型和照护状态组合使用，默认行为与原列表保持一致。
+- Admin 风险原因筛选选项现在显示当前运营范围内的命中数量；统计复用同一 evaluator，允许一只宠物同时计入多个原因，不新增后端聚合接口。
