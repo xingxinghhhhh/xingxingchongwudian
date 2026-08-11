@@ -609,7 +609,122 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
           .waitFor({ state: "visible" });
       }
 
+      async function refreshAfterAnonymousPetVisit() {
+        const riskReasonFilter = cloudPetSection.getByTestId(
+          "admin-cloud-pet-filter-risk-reason"
+        );
+        await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(backfillPetNo);
+        await riskReasonFilter.selectOption("no_homepage_visits");
+
+        const filteredResponse = adminPage.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            response.request().method() === "GET" &&
+            url.pathname.endsWith("/api/admin/cloud-pets") &&
+            url.searchParams.get("q") === backfillPetNo
+          );
+        });
+        await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+        assertSmoke((await filteredResponse).ok(), "Admin no-visit filter request failed");
+        assertSmoke(
+          new URL(adminPage.url()).searchParams.get("riskReason") === "no_homepage_visits",
+          "Admin no-visit filter was not written to the URL"
+        );
+
+        const listItem = cloudPetSection.locator(
+          `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${backfillPetNo}"]`
+        );
+        await listItem.waitFor({ state: "visible" });
+        const detailResponse = adminPage.waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            new URL(response.url()).pathname.endsWith(
+              `/api/admin/cloud-pets/${encodeURIComponent(backfillPetNo)}/detail`
+            )
+        );
+        await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+        assertSmoke((await detailResponse).ok(), "Admin no-visit detail request failed");
+
+        const detail = cloudPetSection.getByTestId("admin-cloud-pet-detail");
+        await detail.waitFor({ state: "visible" });
+        await waitForLocatorText(
+          detail,
+          (text) => text.includes(backfillPetNo),
+          "Admin no-visit detail did not render the target pet"
+        );
+        assertSmoke(
+          ((await detail.getByTestId("admin-cloud-pet-risk-signals").textContent()) ?? "").includes(
+            "公开主页尚无访问记录"
+          ),
+          "Admin no-visit detail did not show the expected risk"
+        );
+
+        const visitorContext = await browser.newContext({
+          viewport: { width: 390, height: 844 },
+          isMobile: true
+        });
+        const visitorPage = await visitorContext.newPage();
+        try {
+          const visitResponse = visitorPage.waitForResponse(
+            (response) =>
+              response.request().method() === "POST" &&
+              new URL(response.url()).pathname.endsWith(
+                `/api/cloud-pets/${encodeURIComponent(backfillPetNo)}/homepage/visits`
+              )
+          );
+          await visitorPage.goto(`${webBaseUrl}/cloud-pets/${backfillPetNo}`, {
+            waitUntil: "domcontentloaded"
+          });
+          await visitorPage.getByTestId("pet-public-profile").waitFor({ state: "visible" });
+          assertSmoke((await visitResponse).ok(), "Anonymous Pet B homepage visit failed");
+          await visitorPage.getByTestId("pet-public-pet-no").waitFor({ state: "visible" });
+        } finally {
+          await visitorContext.close();
+        }
+
+        const refreshedListResponse = adminPage.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            response.request().method() === "GET" &&
+            url.pathname.endsWith("/api/admin/cloud-pets") &&
+            url.searchParams.get("q") === backfillPetNo
+          );
+        });
+        const refreshedDetailResponse = adminPage.waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            new URL(response.url()).pathname.endsWith(
+              `/api/admin/cloud-pets/${encodeURIComponent(backfillPetNo)}/detail`
+            )
+        );
+        await cloudPetSection.getByTestId("admin-cloud-pet-refresh").click();
+        assertSmoke((await refreshedListResponse).ok(), "Admin manual refresh list request failed");
+        assertSmoke((await refreshedDetailResponse).ok(), "Admin manual refresh detail request failed");
+        await waitForLocatorCount(
+          cloudPetSection.getByTestId("admin-cloud-pet-list-item"),
+          (count) => count === 0,
+          "Admin no-visit filter did not remove the visited pet after refresh"
+        );
+        await waitForLocatorText(
+          detail.getByTestId("admin-cloud-pet-risk-signals"),
+          (text) => !text.includes("公开主页尚无访问记录"),
+          "Admin detail did not absorb the visited state after manual refresh"
+        );
+        assertSmoke(
+          ((await detail.getByTestId("admin-cloud-pet-risk-signals").textContent()) ?? "").includes(
+            "公开主页尚无访问记录"
+          ) === false,
+          "Admin detail retained the stale no-visit risk after manual refresh"
+        );
+        assertSmoke(
+          new URL(adminPage.url()).searchParams.get("riskReason") === "no_homepage_visits" &&
+            new URL(adminPage.url()).searchParams.get("petNo") === backfillPetNo,
+          "Admin manual refresh did not preserve the no-visit detail URL"
+        );
+      }
+
       await filterAndRestoreRiskPet();
+      await refreshAfterAnonymousPetVisit();
       await filterAndOpenAdminPet();
       await adminPage.reload({ waitUntil: "domcontentloaded" });
       await adminPage.getByTestId("admin-member-verification-metrics").waitFor({ state: "visible" });

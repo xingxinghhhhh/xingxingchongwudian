@@ -791,7 +791,11 @@ export class AdminController {
     const ownerNoteEntries = archive.items.filter((item) => item.type === "owner_note");
 
     return {
-      pet,
+      pet: {
+        ...pet,
+        communityPostCount: petPosts.length,
+        homepageVisitCount: archive.engagement.homepageVisitCount
+      },
       archive,
       community: {
         posts: petPosts,
