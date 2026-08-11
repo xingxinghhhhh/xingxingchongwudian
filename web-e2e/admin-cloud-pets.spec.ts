@@ -248,6 +248,71 @@ test("admin cloud pet diary gap signal opens the existing coverage workflow", as
   await expect(page).toHaveURL(/\/admin\/pets\/daily-diary-coverage/);
 });
 
+test("admin cloud pet pending report signal opens its scoped report queue", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const target = await seedCommunityReport(request, {
+    ownerName: `Scoped Report Owner ${runId}`,
+    phone: `139${runId}`,
+    petName: `Report ${runId}`,
+    reason: `Scoped report ${runId}`
+  });
+
+  await loginAsAdmin(page, "owner");
+  const cloudPetSection = page.locator("#admin-cloud-pets");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-q").fill(target.petNo);
+  const filterResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/cloud-pets?") &&
+      response.url().includes(`q=${target.petNo}`)
+  );
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+  expect((await filterResponse).ok()).toBeTruthy();
+
+  const listItem = cloudPetSection.locator(
+    `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${target.petNo}"]`
+  );
+  await expect(listItem).toBeVisible();
+  await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+
+  const riskSignals = cloudPetSection.getByTestId("admin-cloud-pet-risk-signals");
+  await expect(riskSignals).toContainText("社区举报待处理");
+  const reportAction = riskSignals.getByRole("link", { name: "处理举报" });
+  await expect(reportAction).toHaveAttribute(
+    "href",
+    `/admin?reportStatus=pending_review&reportPostNo=${target.postNo}#admin-community-reports`
+  );
+
+  const reportsResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/community/reports?") &&
+      response.url().includes(`postNo=${target.postNo}`)
+  );
+  await reportAction.click();
+  expect((await reportsResponse).ok()).toBeTruthy();
+  await expect(page).toHaveURL(
+    new RegExp(`/admin\\?reportStatus=pending_review&reportPostNo=${target.postNo}#admin-community-reports`)
+  );
+
+  const reportSection = page.locator("#admin-community-reports");
+  await expect(
+    reportSection.getByTestId("admin-community-report-filter-status")
+  ).toHaveValue("pending_review");
+  await expect(
+    reportSection.getByTestId("admin-community-report-filter-post")
+  ).toHaveValue(target.postNo);
+  await expect(
+    reportSection.locator(
+      `[data-testid="admin-community-report-item"][data-report-no="${target.reportNo}"]`
+    )
+  ).toBeVisible();
+});
+
 test("owner can resolve a report and hide its public post", async ({
   page,
   request

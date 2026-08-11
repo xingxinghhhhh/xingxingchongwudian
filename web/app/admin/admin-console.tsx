@@ -122,9 +122,13 @@ function getInitialCommunityReportFilters() {
     return null;
   }
 
-  return new URLSearchParams(window.location.search).get("reportStatus") ===
-    "pending_review"
-    ? { status: "pending_review" as const, postNo: "", memberPhone: "" }
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.get("reportStatus") === "pending_review"
+    ? {
+        status: "pending_review" as const,
+        postNo: searchParams.get("reportPostNo")?.trim() ?? "",
+        memberPhone: ""
+      }
     : null;
 }
 
@@ -3282,12 +3286,16 @@ function getCloudPetOperationalSignals(
   }
 
   if (detail.community.pendingReportCount > 0) {
+    const pendingReportPostNos = detail.community.pendingReportPostNos ?? [];
+    const actionHref = pendingReportPostNos.length === 1
+      ? `/admin?reportStatus=pending_review&reportPostNo=${encodeURIComponent(pendingReportPostNos[0])}#admin-community-reports`
+      : "#admin-community-reports";
     signals.push({
       key: "pending-report",
       level: "high",
       title: "社区举报待处理",
       description: "该宠物关联的社区内容存在待处理举报。",
-      actionHref: "#admin-community-reports",
+      actionHref,
       actionLabel: "处理举报"
     });
   }

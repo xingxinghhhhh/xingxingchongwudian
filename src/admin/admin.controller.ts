@@ -785,6 +785,13 @@ export class AdminController {
     const petPosts = posts.filter((post) => post.petNo === pet.petNo);
     const petPostNos = new Set(petPosts.map((post) => post.postNo));
     const petReports = reports.filter((report) => petPostNos.has(report.postNo));
+    const pendingReportPostNos = Array.from(
+      new Set(
+        petReports
+          .filter((report) => report.status === "pending_review")
+          .map((report) => report.postNo)
+      )
+    ).sort();
     const diaryEntries = archive.items.filter(
       (item) => isCloudPetDiaryEventType(item.type) || item.type === "owner_note"
     );
@@ -805,7 +812,8 @@ export class AdminController {
         reportCount: petReports.length,
         pendingReportCount: petReports.filter(
           (report) => report.status === "pending_review"
-        ).length
+        ).length,
+        pendingReportPostNos
       },
       diary: {
         entryCount: diaryEntries.length,

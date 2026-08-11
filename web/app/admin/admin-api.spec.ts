@@ -1182,7 +1182,15 @@ describe("admin api client", () => {
       json: async () => ({
         pet: { petNo: "VP_DETAIL", name: "Detail Pet" },
         archive: { engagement: { homepageVisitCount: 3 }, items: [] },
-        community: { posts: [], postCount: 0, likeCount: 0, commentCount: 0, reportCount: 0, pendingReportCount: 0 },
+        community: {
+          posts: [],
+          postCount: 0,
+          likeCount: 0,
+          commentCount: 0,
+          reportCount: 0,
+          pendingReportCount: 0,
+          pendingReportPostNos: []
+        },
         diary: { entryCount: 0 }
       })
     });

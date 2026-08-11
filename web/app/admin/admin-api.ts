@@ -357,6 +357,7 @@ export interface AdminCloudPetOperationalDetail {
     commentCount: number;
     reportCount: number;
     pendingReportCount: number;
+    pendingReportPostNos: string[];
   };
   diary: {
     entryCount: number;

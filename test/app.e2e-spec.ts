@@ -2217,6 +2217,25 @@ describe("Pet toy shop API", () => {
       })
       .expect(201);
 
+    const secondPostResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        authorName: "Detail Owner",
+        body: "A second report target should remain visible in the detail projection."
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${secondPostResponse.body.postNo}/reports`)
+      .set("X-Member-Token", ownerSession)
+      .send({
+        reporterName: "Detail Owner",
+        reason: "Needs a second merchant review"
+      })
+      .expect(201);
+
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/diary-notes`)
       .set("X-Member-Token", ownerSession)
@@ -2246,13 +2265,20 @@ describe("Pet toy shop API", () => {
         });
         expect(body.archive.engagement.homepageVisitCount).toBeGreaterThanOrEqual(1);
         expect(body.community).toMatchObject({
-          postCount: 1,
-          reportCount: 1,
-          pendingReportCount: 1
+          postCount: 2,
+          reportCount: 2,
+          pendingReportCount: 2,
+          pendingReportPostNos: [
+            postResponse.body.postNo,
+            secondPostResponse.body.postNo
+          ].sort()
         });
-        expect(body.community.posts).toEqual([
-          expect.objectContaining({ postNo: postResponse.body.postNo })
-        ]);
+        expect(body.community.posts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ postNo: postResponse.body.postNo }),
+            expect.objectContaining({ postNo: secondPostResponse.body.postNo })
+          ])
+        );
         expect(body.diary.entryCount).toBeGreaterThanOrEqual(1);
         expect(body.diary.latestEntry).toEqual(
           expect.objectContaining({ title: "Owner field note" })
