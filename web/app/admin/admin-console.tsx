@@ -106,6 +106,12 @@ import {
   matchesCloudPetRiskReason,
   type CloudPetRiskReasonCode
 } from "./cloud-pet-risk";
+import {
+  applyCloudPetFilterQuery,
+  defaultCloudPetStructuredFilters,
+  parseCloudPetFilterQuery,
+  type CloudPetStructuredFilters
+} from "./cloud-pet-filter-query";
 
 const defaultToken = "";
 
@@ -118,6 +124,23 @@ function getInitialCommunityReportFilters() {
     "pending_review"
     ? { status: "pending_review" as const, postNo: "", memberPhone: "" }
     : null;
+}
+
+function replaceCloudPetFilterUrl(filters: CloudPetStructuredFilters) {
+  const nextSearchParams = applyCloudPetFilterQuery(
+    new URLSearchParams(window.location.search),
+    filters
+  );
+  const query = nextSearchParams.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  window.history.replaceState({}, "", nextUrl);
+}
+
+function getCloudPetApiFilters(filters: CloudPetStructuredFilters) {
+  return {
+    species: filters.species || undefined,
+    careState: filters.careState || undefined
+  };
 }
 
 export function AdminConsole() {
@@ -195,6 +218,8 @@ export function AdminConsole() {
     riskReason: "" as CloudPetRiskReasonCode | "",
     sortBy: ""
   });
+  const [appliedCloudPetStructuredFilters, setAppliedCloudPetStructuredFilters] =
+    useState<CloudPetStructuredFilters>(defaultCloudPetStructuredFilters);
   const [reportFilters, setReportFilters] = useState({
     status: "",
     postNo: "",
@@ -222,13 +247,44 @@ export function AdminConsole() {
   useEffect(() => {
     const storedToken = localStorage.getItem("kzt_admin_session") ?? defaultToken;
     const initialReportFilters = getInitialCommunityReportFilters();
+    const initialCloudPetStructuredFilters = parseCloudPetFilterQuery(
+      new URLSearchParams(window.location.search)
+    );
     setToken(storedToken);
+    setCloudPetFilters((current) => ({
+      ...current,
+      ...initialCloudPetStructuredFilters
+    }));
+    setAppliedCloudPetStructuredFilters(initialCloudPetStructuredFilters);
     if (initialReportFilters) {
       setReportFilters(initialReportFilters);
     }
     if (storedToken) {
-      void loadAdminData(storedToken, initialReportFilters ?? undefined);
+      void loadAdminData(
+        storedToken,
+        initialReportFilters ?? undefined,
+        initialCloudPetStructuredFilters
+      );
     }
+
+    const handleCloudPetFilterPopState = () => {
+      const nextFilters = parseCloudPetFilterQuery(
+        new URLSearchParams(window.location.search)
+      );
+      setCloudPetFilters((current) => ({
+        ...current,
+        q: "",
+        ...nextFilters
+      }));
+      setAppliedCloudPetStructuredFilters(nextFilters);
+      setSelectedCloudPetDetail(null);
+      if (storedToken) {
+        void loadCloudPetList(storedToken, nextFilters);
+      }
+    };
+
+    window.addEventListener("popstate", handleCloudPetFilterPopState);
+    return () => window.removeEventListener("popstate", handleCloudPetFilterPopState);
   }, []);
 
   async function loadAdminData(
@@ -237,7 +293,8 @@ export function AdminConsole() {
       status: "pending_review";
       postNo: string;
       memberPhone: string;
-    }
+    },
+    initialCloudPetFilters = appliedCloudPetStructuredFilters
   ) {
     if (!nextToken) {
       setError("需要后台登录会话");
@@ -272,7 +329,7 @@ export function AdminConsole() {
         getMerchantAnalytics(nextToken),
         listAdminCustomers(nextToken),
         listAdminCmsBlocks(nextToken),
-        listAdminCloudPets(nextToken),
+        listAdminCloudPets(nextToken, getCloudPetApiFilters(initialCloudPetFilters)),
         listAdminCommunityPosts(nextToken),
         listAdminCommunityReports(nextToken, initialReportFilters),
         listAdminProducts(nextToken),
@@ -337,6 +394,35 @@ export function AdminConsole() {
 
       setError(caught instanceof Error ? caught.message : "后台数据加载失败");
     }
+  }
+
+  async function loadCloudPetList(
+    nextToken: string,
+    nextFilters: CloudPetStructuredFilters
+  ) {
+    try {
+      const nextPets = await listAdminCloudPets(
+        nextToken,
+        getCloudPetApiFilters(nextFilters)
+      );
+      setPets(nextPets);
+      setStatus(`云养宠筛选已恢复，共 ${nextPets.length} 条结果。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "云养宠筛选恢复失败");
+    }
+  }
+
+  function updateLiveCloudPetFilter<Key extends keyof CloudPetStructuredFilters>(
+    key: Key,
+    value: CloudPetStructuredFilters[Key]
+  ) {
+    const nextFilters = {
+      ...appliedCloudPetStructuredFilters,
+      [key]: value
+    } as CloudPetStructuredFilters;
+    setAppliedCloudPetStructuredFilters(nextFilters);
+    setCloudPetFilters((current) => ({ ...current, [key]: value }));
+    replaceCloudPetFilterUrl(nextFilters);
   }
 
   async function handleLogout() {
@@ -923,20 +1009,35 @@ export function AdminConsole() {
 
     setError(null);
 
+    const nextStructuredFilters: CloudPetStructuredFilters = {
+      species:
+        cloudPetFilters.species === "cat" || cloudPetFilters.species === "dog"
+          ? cloudPetFilters.species
+          : "",
+      careState:
+        cloudPetFilters.careState === "needs_care" ||
+        cloudPetFilters.careState === "steady" ||
+        cloudPetFilters.careState === "thriving"
+          ? cloudPetFilters.careState
+          : "",
+      riskLevel:
+        cloudPetFilters.riskLevel === "high" ||
+        cloudPetFilters.riskLevel === "medium" ||
+        cloudPetFilters.riskLevel === "low"
+          ? cloudPetFilters.riskLevel
+          : "",
+      riskReason: cloudPetFilters.riskReason,
+      sortBy: cloudPetFilters.sortBy === "risk_desc" ? "risk_desc" : ""
+    };
+
     try {
       const filteredPets = await listAdminCloudPets(token, {
         q: cloudPetFilters.q,
-        species: cloudPetFilters.species === "cat" || cloudPetFilters.species === "dog"
-          ? cloudPetFilters.species
-          : undefined,
-        careState:
-          cloudPetFilters.careState === "needs_care" ||
-          cloudPetFilters.careState === "steady" ||
-          cloudPetFilters.careState === "thriving"
-            ? cloudPetFilters.careState
-            : undefined
+        ...getCloudPetApiFilters(nextStructuredFilters)
       });
       setPets(filteredPets);
+      setAppliedCloudPetStructuredFilters(nextStructuredFilters);
+      replaceCloudPetFilterUrl(nextStructuredFilters);
       setStatus(`云养宠筛选已应用，共 ${filteredPets.length} 条结果。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "云养宠筛选失败");
@@ -957,10 +1058,15 @@ export function AdminConsole() {
       riskReason: "",
       sortBy: ""
     });
+    setAppliedCloudPetStructuredFilters(defaultCloudPetStructuredFilters);
+    replaceCloudPetFilterUrl(defaultCloudPetStructuredFilters);
     setError(null);
 
     try {
-      const allPets = await listAdminCloudPets(token);
+      const allPets = await listAdminCloudPets(
+        token,
+        getCloudPetApiFilters(defaultCloudPetStructuredFilters)
+      );
       setPets(allPets);
       setStatus("云养宠筛选已清除。");
     } catch (caught) {
@@ -2580,7 +2686,10 @@ export function AdminConsole() {
               <select
                 data-testid="admin-cloud-pet-filter-risk"
                 onChange={(event) =>
-                  setCloudPetFilters((current) => ({ ...current, riskLevel: event.target.value }))
+                  updateLiveCloudPetFilter(
+                    "riskLevel",
+                    event.target.value as CloudPetStructuredFilters["riskLevel"]
+                  )
                 }
                 value={cloudPetFilters.riskLevel}
               >
@@ -2595,10 +2704,10 @@ export function AdminConsole() {
               <select
                 data-testid="admin-cloud-pet-filter-risk-reason"
                 onChange={(event) =>
-                  setCloudPetFilters((current) => ({
-                    ...current,
-                    riskReason: event.target.value as CloudPetRiskReasonCode | ""
-                  }))
+                  updateLiveCloudPetFilter(
+                    "riskReason",
+                    event.target.value as CloudPetRiskReasonCode | ""
+                  )
                 }
                 value={cloudPetFilters.riskReason}
               >
@@ -2615,7 +2724,10 @@ export function AdminConsole() {
               <select
                 data-testid="admin-cloud-pet-sort-risk"
                 onChange={(event) =>
-                  setCloudPetFilters((current) => ({ ...current, sortBy: event.target.value }))
+                  updateLiveCloudPetFilter(
+                    "sortBy",
+                    event.target.value as CloudPetStructuredFilters["sortBy"]
+                  )
                 }
                 value={cloudPetFilters.sortBy}
               >

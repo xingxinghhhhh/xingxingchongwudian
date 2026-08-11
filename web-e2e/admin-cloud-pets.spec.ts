@@ -412,3 +412,97 @@ test("admin cloud pet risk reasons stay consistent between list and detail", asy
     "今日照护未完成"
   );
 });
+
+test("admin cloud pet structured filters restore from the URL", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `URL Filter Owner ${runId}`;
+  const phone = `134${runId}`;
+  const petName = `URL Filter Pet ${runId}`;
+  const member = await loginAsVerifiedMember(request, {
+    name: ownerName,
+    phone
+  });
+  const petResponse = await request.post(`${API_BASE}/cloud-pets`, {
+    data: {
+      ownerName,
+      ownerPhone: phone,
+      name: petName,
+      species: "cat",
+      personality: "Provides a stable structured-filter URL fixture."
+    },
+    headers: { "X-Member-Token": member.sessionToken }
+  });
+  expect(petResponse.ok()).toBeTruthy();
+  const petNo = ((await petResponse.json()) as { petNo: string }).petNo;
+
+  await loginAsAdmin(page, "owner");
+  const cloudPetSection = page.locator("#admin-cloud-pets");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-species").selectOption("cat");
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-risk").selectOption("high");
+  await cloudPetSection
+    .getByTestId("admin-cloud-pet-filter-risk-reason")
+    .selectOption("care_incomplete_today");
+  await cloudPetSection.getByTestId("admin-cloud-pet-sort-risk").selectOption("risk_desc");
+
+  const filterResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/admin/cloud-pets?") &&
+      response.url().includes("species=cat")
+  );
+  await cloudPetSection.getByTestId("admin-cloud-pet-filter-apply").click();
+  expect((await filterResponse).ok()).toBeTruthy();
+  await expect(page).toHaveURL(/species=cat/);
+
+  const filteredUrl = new URL(page.url());
+  expect(filteredUrl.searchParams.get("species")).toBe("cat");
+  expect(filteredUrl.searchParams.get("riskLevel")).toBe("high");
+  expect(filteredUrl.searchParams.get("riskReason")).toBe("care_incomplete_today");
+  expect(filteredUrl.searchParams.get("riskSort")).toBe("risk_desc");
+  await expect(
+    cloudPetSection
+      .getByTestId("admin-cloud-pet-filter-risk-reason")
+      .locator('option[value="care_incomplete_today"]')
+  ).toHaveText(/今日照护未完成（[1-9]\d*）/);
+
+  const listItem = cloudPetSection.locator(
+    `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${petNo}"]`
+  );
+  await expect(listItem).toBeVisible();
+  await listItem.getByTestId("admin-cloud-pet-detail-open").click();
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-detail")).toContainText(petName);
+  expect(new URL(page.url()).searchParams.get("riskReason")).toBe(
+    "care_incomplete_today"
+  );
+
+  await page.reload();
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-filter-species")).toHaveValue("cat");
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-filter-risk")).toHaveValue("high");
+  await expect(
+    cloudPetSection.getByTestId("admin-cloud-pet-filter-risk-reason")
+  ).toHaveValue("care_incomplete_today");
+  await expect(cloudPetSection.getByTestId("admin-cloud-pet-sort-risk")).toHaveValue("risk_desc");
+  await expect(
+    cloudPetSection.locator(
+      `[data-testid="admin-cloud-pet-list-item"][data-pet-no="${petNo}"]`
+    )
+  ).toBeVisible();
+
+  await page.evaluate(() => window.history.pushState({}, "", "/admin"));
+  await page.goBack();
+  await expect(page).toHaveURL(/riskReason=care_incomplete_today/);
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-retention-metrics")
+  ).toBeVisible();
+  await expect(
+    page.locator("#admin-cloud-pets").getByTestId("admin-cloud-pet-filter-risk-reason")
+  ).toHaveValue("care_incomplete_today");
+});
