@@ -12,6 +12,11 @@ import {
   DAILY_DIARY_EVENT_TYPES,
   isCloudPetDiaryEventType
 } from "./cloud-pet-event-types";
+import {
+  addCloudPetBusinessDays,
+  getCloudPetBusinessDateKey,
+  getCloudPetBusinessDayRange
+} from "./cloud-pet-business-day";
 
 export interface CloudPetProfile {
   petNo: string;
@@ -2002,13 +2007,14 @@ export class CloudPetsService implements OnModuleInit {
   }
 
   private async assertOwnerDiaryNoteQuotaForDatabase(petId: string) {
+    const { start, end } = getCloudPetBusinessDayRange(this.getTaskDate());
     const ownerNoteCountToday = await this.prisma.virtualPetEvent.count({
       where: {
         petId,
         type: "owner_note",
         createdAt: {
-          gte: this.createDiaryCreatedAt(this.getTaskDate()),
-          lt: this.createDiaryCreatedAt(this.addDays(this.getTaskDate(), 1))
+          gte: start,
+          lt: end
         }
       }
     });
@@ -2251,9 +2257,7 @@ export class CloudPetsService implements OnModuleInit {
   }
 
   private async findDailyDiaryForToday(petId: string) {
-    const start = new Date(this.getTaskDate() + "T00:00:00.000Z");
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 1);
+    const { start, end } = getCloudPetBusinessDayRange(this.getTaskDate());
 
     return this.prisma.virtualPetEvent.findFirst({
       where: {
@@ -2270,7 +2274,7 @@ export class CloudPetsService implements OnModuleInit {
   }
 
   private toIsoDate(value: Date | string) {
-    return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10);
+    return getCloudPetBusinessDateKey(value);
   }
 
   private reserveTaskCompletion(completionKey: string) {
@@ -2293,13 +2297,11 @@ export class CloudPetsService implements OnModuleInit {
     return createdAt instanceof Date ? createdAt.toISOString() : createdAt;
   }
   private addDays(date: string, dayDelta: number) {
-    const next = new Date(date + "T00:00:00.000Z");
-    next.setUTCDate(next.getUTCDate() + dayDelta);
-    return next.toISOString().slice(0, 10);
+    return addCloudPetBusinessDays(date, dayDelta);
   }
 
   private getTaskDate() {
-    return new Date().toISOString().slice(0, 10);
+    return getCloudPetBusinessDateKey();
   }
 
   private isUniqueConstraintError(error: unknown) {

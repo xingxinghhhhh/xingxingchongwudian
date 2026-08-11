@@ -9,6 +9,10 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { OrdersService } from "../orders/orders.service";
 import { PersonalizationService } from "../personalization/personalization.service";
 import { ReviewsService } from "../reviews/reviews.service";
+import {
+  addCloudPetBusinessDays,
+  getCloudPetBusinessDateKey
+} from "../cloud-pets/cloud-pet-business-day";
 
 export interface TaskActivityCalendarDay {
   date: string;
@@ -268,12 +272,10 @@ export class MembersService {
 
   private buildRecentCalendar(groupedTasks: Map<string, Set<string>>) {
     const days: TaskActivityCalendarDay[] = [];
-    const today = new Date(this.getTodayDate());
+    const today = this.getTodayDate();
 
     for (let offset = 13; offset >= 0; offset -= 1) {
-      const date = new Date(today);
-      date.setUTCDate(today.getUTCDate() - offset);
-      const dateKey = date.toISOString().slice(0, 10);
+      const dateKey = addCloudPetBusinessDays(today, -offset);
       const taskKeys = Array.from(groupedTasks.get(dateKey) ?? []);
 
       days.push({
@@ -288,11 +290,11 @@ export class MembersService {
 
   private countCurrentStreak(groupedTasks: Map<string, Set<string>>) {
     let streak = 0;
-    const cursor = new Date(this.getTodayDate());
+    let cursor = this.getTodayDate();
 
-    while (groupedTasks.has(cursor.toISOString().slice(0, 10))) {
+    while (groupedTasks.has(cursor)) {
       streak += 1;
-      cursor.setUTCDate(cursor.getUTCDate() - 1);
+      cursor = addCloudPetBusinessDays(cursor, -1);
     }
 
     return streak;
@@ -301,19 +303,17 @@ export class MembersService {
   private countLongestStreak(activeDates: string[]) {
     let longest = 0;
     let current = 0;
-    let previousTime = 0;
+    let previousDate: string | undefined;
 
     activeDates.forEach((dateKey) => {
-      const currentTime = new Date(dateKey).getTime();
-
-      if (previousTime === 0 || currentTime - previousTime === 24 * 60 * 60 * 1000) {
+      if (!previousDate || addCloudPetBusinessDays(previousDate, 1) === dateKey) {
         current += 1;
       } else {
         current = 1;
       }
 
       longest = Math.max(longest, current);
-      previousTime = currentTime;
+      previousDate = dateKey;
     });
 
     return longest;
@@ -330,6 +330,6 @@ export class MembersService {
   }
 
   private getTodayDate() {
-    return new Date().toISOString().slice(0, 10);
+    return getCloudPetBusinessDateKey();
   }
 }

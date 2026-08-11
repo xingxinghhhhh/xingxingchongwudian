@@ -188,6 +188,33 @@ describe("CloudPetsService", () => {
     });
     expect(prisma.virtualPet.update).not.toHaveBeenCalled();
   });
+
+  it("uses a UTC midnight range for database owner-note quotas", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-08-11T23:59:59.999Z"));
+    const count = jest.fn().mockResolvedValue(0);
+    const service = new CloudPetsService(
+      createConfigService("mysql://user:pass@localhost:3306/shop"),
+      { virtualPetEvent: { count } } as never,
+      createProductsService() as never
+    );
+
+    try {
+      await (service as any).assertOwnerDiaryNoteQuotaForDatabase("pet_internal_1");
+      expect(count).toHaveBeenCalledWith({
+        where: {
+          petId: "pet_internal_1",
+          type: "owner_note",
+          createdAt: {
+            gte: new Date("2026-08-11T00:00:00.000Z"),
+            lt: new Date("2026-08-12T00:00:00.000Z")
+          }
+        }
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("supports multiple daily care actions without duplicating the generated diary", async () => {
     const service = new CloudPetsService(
       createConfigService(),
@@ -213,6 +240,93 @@ describe("CloudPetsService", () => {
     expect(
       updatedPet.timeline.filter((event) => event.type === "care_daily_diary")
     ).toHaveLength(1);
+  });
+
+  it("keeps task idempotence within a UTC day and resets it at midnight", async () => {
+    jest.useFakeTimers();
+
+    try {
+      const service = new CloudPetsService(
+        createConfigService(),
+        {} as never,
+        createProductsService() as never
+      );
+
+      jest.setSystemTime(new Date("2026-08-11T23:59:59.999Z"));
+      const pet = await service.createPet({
+        ownerName: "Boundary Owner",
+        ownerPhone: "13600136011",
+        name: "Boundary Pet",
+        species: "dog",
+        personality: "tests UTC midnight"
+      });
+      await service.completeGrowthTask(pet.petNo, "daily-care");
+      await expect(
+        service.completeGrowthTask(pet.petNo, "daily-care")
+      ).rejects.toMatchObject({ status: 409 });
+
+      jest.setSystemTime(new Date("2026-08-12T00:00:00.000Z"));
+      await service.completeGrowthTask(pet.petNo, "daily-care");
+
+      const updatedPet = await service.getPet(pet.petNo);
+      expect(updatedPet.growth).toMatchObject({
+        todayCompletedTaskCount: 1,
+        careStreakDays: 2,
+        lastCareDate: "2026-08-12"
+      });
+      expect(
+        updatedPet.timeline.filter((event) => event.type === "care_daily_diary")
+      ).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("uses the same UTC boundary for coverage and presence backfill", async () => {
+    jest.useFakeTimers();
+
+    try {
+      const service = new CloudPetsService(
+        createConfigService(),
+        {} as never,
+        createProductsService() as never
+      );
+
+      jest.setSystemTime(new Date("2026-08-11T23:59:59.999Z"));
+      const pet = await service.createPet({
+        ownerName: "Coverage Owner",
+        ownerPhone: "13600136012",
+        name: "Coverage Pet",
+        species: "cat",
+        personality: "tests diary coverage"
+      });
+      await service.completeGrowthTask(pet.petNo, "daily-care");
+
+      await expect(
+        service.getDailyDiaryCoverage("2026-08-11")
+      ).resolves.toMatchObject({ coveredCount: 1, missingCount: 0 });
+      await expect(
+        service.getDailyDiaryCoverage("2026-08-12")
+      ).resolves.toMatchObject({ coveredCount: 0, missingCount: 1 });
+
+      jest.setSystemTime(new Date("2026-08-12T00:00:00.000Z"));
+      const result = await service.backfillDailyDiaryCoverage({
+        date: "2026-08-12",
+        mode: "selected",
+        petIds: [pet.petNo]
+      });
+      expect(result).toMatchObject({ successCount: 1, skippedCount: 0 });
+
+      const afterBackfill = await service.getPet(pet.petNo);
+      expect(afterBackfill.growth.todayCompletedTaskCount).toBe(0);
+      expect(
+        afterBackfill.timeline.filter(
+          (event) => event.type === "presence_daily_diary"
+        )
+      ).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("calculates daily care streak from unique completed dates", async () => {
