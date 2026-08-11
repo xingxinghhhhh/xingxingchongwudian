@@ -114,6 +114,7 @@ import {
   parseCloudPetSelectedPetNo,
   type CloudPetStructuredFilters
 } from "./cloud-pet-filter-query";
+import { buildCloudPetCsv } from "./cloud-pet-export";
 
 const defaultToken = "";
 
@@ -1144,6 +1145,25 @@ export function AdminConsole() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "云养宠筛选重置失败");
     }
+  }
+
+  function handleExportCloudPets() {
+    if (displayedCloudPets.length === 0) {
+      return;
+    }
+
+    const csv = buildCloudPetCsv(displayedCloudPets);
+    const downloadUrl = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8" })
+    );
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `cloud-pets-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+    setStatus(`已导出当前 ${displayedCloudPets.length} 条云养宠运营结果。`);
   }
 
   async function handleRefreshCloudPets() {
@@ -2910,6 +2930,17 @@ export function AdminConsole() {
               重置
             </button>
           </form>
+          <div className="admin-inline-actions">
+            <button
+              className="admin-button admin-button--small admin-button--ghost"
+              data-testid="admin-cloud-pet-export"
+              disabled={displayedCloudPets.length === 0}
+              onClick={handleExportCloudPets}
+              type="button"
+            >
+              导出当前结果
+            </button>
+          </div>
           {selectedCloudPetDetail ? (
             <div className="admin-inventory-alerts" data-testid="admin-cloud-pet-detail">
               <div className="admin-inline-actions">

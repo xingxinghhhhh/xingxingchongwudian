@@ -1,4 +1,5 @@
 ﻿import { expect, test, type APIRequestContext } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { loginAsAdmin } from "./helpers/admin";
 import { loginAsVerifiedMember } from "./helpers/member-auth";
 
@@ -465,6 +466,22 @@ test("owner can filter a cloud pet and inspect its operational detail", async ({
   await expect(
     cloudPetSection.getByTestId("admin-cloud-pet-list-item")
   ).toHaveCount(1);
+
+  const exportButton = cloudPetSection.getByTestId("admin-cloud-pet-export");
+  await expect(exportButton).toBeEnabled();
+  const downloadPromise = page.waitForEvent("download");
+  await exportButton.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^cloud-pets-\d{4}-\d{2}-\d{2}\.csv$/);
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const csv = await readFile(downloadPath!, "utf8");
+  expect(csv).toContain("宠物编号");
+  expect(csv).toContain(petNo);
+  expect(csv).not.toContain(phone);
+  expect(csv).not.toContain(ownerName);
+  expect(csv.replace(/^\uFEFF/, "").trimEnd().split("\r\n")).toHaveLength(2);
+
   await listItem.getByTestId("admin-cloud-pet-detail-open").click();
 
   const detail = cloudPetSection.getByTestId("admin-cloud-pet-detail");
