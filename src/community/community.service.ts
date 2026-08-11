@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CloudPetsService } from "../cloud-pets/cloud-pets.service";
 import { PrismaService } from "../database/prisma.service";
@@ -21,6 +21,7 @@ export interface CommunityPostResponse {
   likeCount: number;
   commentCount: number;
   reportCount: number;
+  authorDeletedAt?: string;
   createdAt: string;
   commerceBridge?: {
     ctaHref: string;
@@ -76,6 +77,7 @@ interface CommunityPostRecord extends CommunityPostResponse {
 }
 type AuthenticatedCommunityPostInput = CreateCommunityPostDto & {
   authorName: string;
+  memberPhone: string;
 };
 
 type AuthenticatedCommunityLikeInput = CreateCommunityLikeDto & {
@@ -129,6 +131,7 @@ export class CommunityService {
         likeCount: 0,
         commentCount: 0,
         reportCount: 0,
+        authorDeletedAt: undefined,
         createdAt: new Date().toISOString()
       };
       this.posts.unshift(post);
@@ -166,12 +169,14 @@ export class CommunityService {
   async listPosts(): Promise<CommunityPostResponse[]> {
     if (!this.isDatabaseConfigured()) {
       return this.withCommerceBridges(
-        this.posts.filter((post) => post.status === "visible")
+        this.posts.filter(
+          (post) => post.status === "visible" && !post.authorDeletedAt
+        )
       );
     }
 
     const posts = await this.prisma.communityPost.findMany({
-      where: { status: "visible" },
+      where: { status: "visible", authorDeletedAt: null },
       include: this.postInclude(),
       orderBy: { createdAt: "desc" },
       take: 50
@@ -206,7 +211,10 @@ export class CommunityService {
 
       return this.withCommerceBridges(
         this.posts.filter(
-          (post) => post.status === "visible" && followedPetNos.has(post.petNo)
+          (post) =>
+            post.status === "visible" &&
+            !post.authorDeletedAt &&
+            followedPetNos.has(post.petNo)
         )
       );
     }
@@ -224,6 +232,7 @@ export class CommunityService {
     const posts = await this.prisma.communityPost.findMany({
       where: {
         status: "visible",
+        authorDeletedAt: null,
         petNo: { in: followedPetNos }
       },
       include: this.postInclude(),
@@ -232,6 +241,49 @@ export class CommunityService {
     });
 
     return this.withCommerceBridges(posts.map((post) => this.toResponse(post)));
+  }
+
+  async withdrawPost(postNo: string, memberPhone: string) {
+    if (!this.isDatabaseConfigured()) {
+      const post = this.posts.find((item) => item.postNo === postNo);
+
+      if (!post) {
+        throw new NotFoundException("Community post not found");
+      }
+
+      const pet = await this.cloudPetsService.getPetRecord(post.petNo);
+
+      if (pet.ownerPhone !== memberPhone) {
+        throw new ForbiddenException("Only the post author can withdraw this post");
+      }
+
+      post.authorDeletedAt ??= new Date().toISOString();
+      return this.withCommerceBridge(post);
+    }
+
+    const post = await this.prisma.communityPost.findUnique({
+      where: { postNo }
+    });
+
+    if (!post) {
+      throw new NotFoundException("Community post not found");
+    }
+
+    const pet = await this.cloudPetsService.getPetRecord(post.petNo);
+
+    if (pet.ownerPhone !== memberPhone) {
+      throw new ForbiddenException("Only the post author can withdraw this post");
+    }
+
+    const withdrawnPost = post.authorDeletedAt
+      ? post
+      : await this.prisma.communityPost.update({
+          where: { postNo },
+          data: { authorDeletedAt: new Date() },
+          include: this.postInclude()
+        });
+
+    return this.withCommerceBridge(this.toResponse(withdrawnPost));
   }
 
   async likePost(postNo: string, dto: AuthenticatedCommunityLikeInput) {
@@ -599,6 +651,7 @@ export class CommunityService {
     likeCount?: number;
     commentCount?: number;
     reportCount?: number;
+    authorDeletedAt?: Date | string | null;
     createdAt: Date | string;
   }): CommunityPostResponse {
     return {
@@ -611,6 +664,11 @@ export class CommunityService {
       likeCount: post._count?.likes ?? post.likeCount ?? 0,
       commentCount: post._count?.comments ?? post.commentCount ?? 0,
       reportCount: post._count?.reports ?? post.reportCount ?? 0,
+      authorDeletedAt: post.authorDeletedAt
+        ? post.authorDeletedAt instanceof Date
+          ? post.authorDeletedAt.toISOString()
+          : post.authorDeletedAt
+        : undefined,
       createdAt:
         post.createdAt instanceof Date
           ? post.createdAt.toISOString()
@@ -730,7 +788,7 @@ export class CommunityService {
     if (!this.isDatabaseConfigured()) {
       const post = this.posts.find((item) => item.postNo === postNo);
 
-      if (!post) {
+      if (!post || post.authorDeletedAt) {
         throw new NotFoundException("Community post not found");
       }
 
@@ -741,7 +799,7 @@ export class CommunityService {
       where: { postNo }
     });
 
-    if (!post) {
+    if (!post || post.authorDeletedAt) {
       throw new NotFoundException("Community post not found");
     }
 

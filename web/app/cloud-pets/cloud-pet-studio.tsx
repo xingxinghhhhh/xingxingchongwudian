@@ -30,6 +30,7 @@ import {
   listCommunityPosts,
   listFollowedCommunityPosts,
   reportCommunityPost,
+  withdrawCommunityPost,
   updateCloudPetDiaryNote,
   updateCloudPetHomepage
 } from "./cloud-pets-api";
@@ -968,6 +969,44 @@ export function CloudPetStudio() {
     }
   }
 
+  async function handleWithdraw(post: CommunityPost) {
+    if (!memberSession) {
+      setError("请先同步会员后再撤回社区动态");
+      return;
+    }
+
+    if (!memberPets.some((pet) => pet.petNo === post.petNo)) {
+      setError("只能撤回自己发布的社区动态");
+      return;
+    }
+
+    if (!window.confirm("确认撤回这条社区动态吗？")) {
+      return;
+    }
+
+    setBusyInteraction(`withdraw-${post.postNo}`);
+    setError(null);
+
+    try {
+      await withdrawCommunityPost(post.postNo, memberSession);
+      setPosts((current) => current.filter((item) => item.postNo !== post.postNo));
+      setFollowedPosts((current) =>
+        current.filter((item) => item.postNo !== post.postNo)
+      );
+      setCommentsByPost((current) => {
+        const next = { ...current };
+        delete next[post.postNo];
+        return next;
+      });
+      setStatus("社区动态已撤回");
+      await refreshCommunity(memberSession);
+    } catch (caught) {
+      handleMemberActionError(caught, "撤回社区动态失败");
+    } finally {
+      setBusyInteraction(null);
+    }
+  }
+
   async function handleFollowPet(pet: CloudPetProfile) {
     if (!memberSession) {
       setError("请先同步会员后再关注宠物。");
@@ -1848,6 +1887,17 @@ export function CloudPetStudio() {
                 <div className="admin-inline-actions">
                   <button className="cloud-button" data-testid="cloud-like-submit" disabled={!activePetFromMember || !memberSession || busyInteraction === `like-${post.postNo}`} onClick={() => void handleLike(post)} type="button">点赞</button>
                   <button className="cloud-button cloud-button--small cloud-button--ghost" data-testid="cloud-community-copy-link" onClick={() => void handleCopyCommunityPostLink(post)} type="button">复制讨论链接</button>
+                  {memberSession && memberPets.some((pet) => pet.petNo === post.petNo) ? (
+                    <button
+                      className="cloud-button cloud-button--small cloud-button--ghost"
+                      data-testid="cloud-community-withdraw"
+                      disabled={busyInteraction === `withdraw-${post.postNo}`}
+                      onClick={() => void handleWithdraw(post)}
+                      type="button"
+                    >
+                      {busyInteraction === `withdraw-${post.postNo}` ? "撤回中…" : "撤回动态"}
+                    </button>
+                  ) : null}
                   <select
                     className="cloud-report-select"
                     data-testid="cloud-report-reason"

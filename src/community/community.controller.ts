@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Headers,
@@ -70,8 +71,21 @@ export class CommunityController {
     return this.communityService.createPost({
       ...dto,
       authorName: session.name,
+      memberPhone: session.phone,
       body
     });
+  }
+
+  @Delete("posts/:postNo")
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async withdrawPost(
+    @Param("postNo") postNo: string,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    const session = await this.authService.getSession(sessionToken);
+
+    return this.communityService.withdrawPost(postNo, session.phone);
   }
 
   @Post("posts/:postNo/likes")

@@ -103,6 +103,51 @@ test("cloud pet workspace guides a synced member without pets into first pet cre
   await expect(page.getByTestId("pet-public-owner-view")).toHaveCount(0);
 });
 
+test("member can withdraw their own community post from the cloud pet workspace", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Withdraw Owner ${runId}`;
+  const phone = `135${runId}`;
+  const petName = `Withdraw Pet ${runId}`;
+  const communityBody = `Withdrawable community update ${runId}`;
+
+  await page.goto("/cloud-pets");
+  await verifyMemberInCloudPetWorkspace(page, { name: ownerName, phone });
+  await expect(page.getByText(phone)).toBeVisible();
+  await page.getByTestId("cloud-create-pet-name").fill(petName);
+  await page.getByTestId("cloud-create-species").selectOption("cat");
+  await page.getByTestId("cloud-create-personality").fill("Member withdrawal UI coverage.");
+  await page.getByTestId("cloud-create-submit").click();
+
+  await expect(page.getByTestId("cloud-member-profile")).toBeVisible();
+  await expect(page.getByTestId("cloud-community-submit")).toBeEnabled();
+  await expect(page.getByTestId("cloud-community-body")).toBeEnabled();
+  await page.getByTestId("cloud-community-body").fill(communityBody);
+  await page.getByTestId("cloud-community-submit").click();
+
+  const createdPost = page
+    .getByTestId("cloud-community-post")
+    .filter({ hasText: communityBody });
+  await expect(createdPost).toBeVisible();
+  await expect(createdPost.getByTestId("cloud-community-withdraw")).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.accept();
+  });
+  await createdPost.getByTestId("cloud-community-withdraw").click();
+  await expect(createdPost).toHaveCount(0);
+
+  const feedResponse = await request.get("http://localhost:3000/api/community/posts");
+  expect(feedResponse.ok()).toBeTruthy();
+  const feedBody = (await feedResponse.json()) as {
+    items: Array<{ body: string }>;
+  };
+  expect(feedBody.items.some((item) => item.body === communityBody)).toBe(false);
+});
+
 test("cloud pet workspace requires a live session after logout", async ({
   page,
   request

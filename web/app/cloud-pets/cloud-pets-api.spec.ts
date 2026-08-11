@@ -13,6 +13,7 @@ import {
   listCommunityPosts,
   listFollowedCommunityPosts,
   reportCommunityPost,
+  withdrawCommunityPost,
   updateCloudPetDiaryNote,
   recordCloudPetHomepageVisit,
   updateCloudPetHomepage
@@ -549,6 +550,26 @@ describe("cloud pets api client", () => {
         reportFetcher
       )
     ).resolves.toMatchObject({ status: "pending_review" });
+
+    const withdrawFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        postNo: "POST001",
+        authorDeletedAt: "2026-08-11T00:00:00.000Z"
+      })
+    });
+
+    await expect(
+      withdrawCommunityPost("POST001", "member_community_006", withdrawFetcher)
+    ).resolves.toMatchObject({ postNo: "POST001" });
+    expect(withdrawFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/posts/POST001",
+      {
+        cache: "no-store",
+        headers: { "X-Member-Token": "member_community_006" },
+        method: "DELETE"
+      }
+    );
   });
   it("loads product recommendations for a cloud pet", async () => {
     const fetcher = jest.fn().mockResolvedValue({

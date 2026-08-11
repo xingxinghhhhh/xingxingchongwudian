@@ -132,6 +132,7 @@ export interface CommunityPost {
   likeCount: number;
   commentCount: number;
   reportCount: number;
+  authorDeletedAt?: string;
   createdAt: string;
   commerceBridge?: {
     ctaHref: string;
@@ -344,6 +345,22 @@ export function createCommunityPost(
   return requestJson<CommunityPost>(
     "/community/posts",
     jsonRequest(input, sessionToken),
+    fetcher
+  );
+}
+
+export function withdrawCommunityPost(
+  postNo: string,
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityPost>(
+    `/community/posts/${encodeURIComponent(postNo)}`,
+    {
+      cache: "no-store",
+      headers: { "X-Member-Token": sessionToken },
+      method: "DELETE"
+    },
     fetcher
   );
 }

@@ -294,11 +294,14 @@ model CommunityPost {
   authorName String
   body       String
   status     CommunityPostStatus @default(visible)
+  authorDeletedAt DateTime?
   comments   CommunityComment[]
   likes      CommunityLike[]
   reports    CommunityReport[]
   createdAt  DateTime            @default(now())
   updatedAt  DateTime            @updatedAt
+
+  @@index([authorDeletedAt])
 }
 
 model CommunityComment {
