@@ -539,12 +539,30 @@ describe("cloud pets api client", () => {
         {
           memberPhone: "13600136788",
           authorName: "Community Owner",
-          body: "Nice post"
+          body: "Nice post",
+          parentCommentNo: "CMT_PARENT"
         },
         "member_community_003",
         commentFetcher
       )
     ).resolves.toMatchObject({ status: "visible" });
+    expect(commentFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/posts/POST001/comments",
+      {
+        body: JSON.stringify({
+          memberPhone: "13600136788",
+          authorName: "Community Owner",
+          body: "Nice post",
+          parentCommentNo: "CMT_PARENT"
+        }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_community_003"
+        },
+        method: "POST"
+      }
+    );
     await expect(
       listCommunityComments("POST001", listCommentsFetcher)
     ).resolves.toEqual([

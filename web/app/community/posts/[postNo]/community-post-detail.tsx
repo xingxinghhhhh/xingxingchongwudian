@@ -30,6 +30,7 @@ export function CommunityPostDetail({
   const [post, setPost] = useState(initialPost);
   const [comments, setComments] = useState(initialComments);
   const [commentBody, setCommentBody] = useState("");
+  const [replyingToCommentNo, setReplyingToCommentNo] = useState<string | null>(null);
   const [memberSession, setMemberSession] = useState<string | null>(null);
   const [memberPhone, setMemberPhone] = useState<string | null>(null);
   const [canEdit, setCanEdit] = useState(false);
@@ -178,11 +179,12 @@ export function CommunityPostDetail({
 
     setBusyAction("comment");
     setError(null);
+    const parentCommentNo = replyingToCommentNo ?? undefined;
 
     try {
       const comment = await commentOnCommunityPost(
         post.postNo,
-        { body },
+        { body, parentCommentNo },
         memberSession
       );
       setComments((current) => [comment, ...current]);
@@ -191,7 +193,8 @@ export function CommunityPostDetail({
         commentCount: current.commentCount + 1
       }));
       setCommentBody("");
-      setStatus("评论已发布");
+      setReplyingToCommentNo(null);
+      setStatus(parentCommentNo ? "回复已发布" : "评论已发布");
     } catch (caught) {
       if (caught instanceof Error && caught.message === "Invalid member session") {
         window.localStorage.removeItem(memberSessionKey);
@@ -282,6 +285,9 @@ export function CommunityPostDetail({
       setComments((current) =>
         current.filter((item) => item.commentNo !== comment.commentNo)
       );
+      if (replyingToCommentNo === comment.commentNo) {
+        setReplyingToCommentNo(null);
+      }
       setPost((current) => ({
         ...current,
         commentCount: Math.max(0, current.commentCount - 1)
@@ -370,6 +376,18 @@ export function CommunityPostDetail({
       setStatus(`讨论链接：${window.location.href}`);
     }
   }
+
+  const orderedComments = comments
+    .filter((comment) => !comment.parentCommentNo)
+    .flatMap((comment) => [
+      comment,
+      ...comments
+        .filter((reply) => reply.parentCommentNo === comment.commentNo)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    ]);
+  const replyingToComment = replyingToCommentNo
+    ? comments.find((comment) => comment.commentNo === replyingToCommentNo)
+    : undefined;
 
   return (
     <article className="community-post community-post-detail" data-testid="community-post-detail">
@@ -492,10 +510,16 @@ export function CommunityPostDetail({
 
       <section className="community-comments" data-testid="community-post-detail-comments">
         <h2>评论</h2>
-        {comments.length > 0 ? (
-          comments.map((comment) => (
+        {orderedComments.length > 0 ? (
+          orderedComments.map((comment) => (
             <article
+              className={
+                comment.parentCommentNo
+                  ? "community-post-detail-comment community-post-detail-comment--reply"
+                  : "community-post-detail-comment"
+              }
               data-comment-no={comment.commentNo}
+              data-parent-comment-no={comment.parentCommentNo}
               data-testid="community-post-detail-comment"
               key={comment.commentNo}
             >
@@ -535,6 +559,20 @@ export function CommunityPostDetail({
                 <span>{comment.body}</span>
               )}
               <div className="admin-inline-actions">
+                {!comment.parentCommentNo ? (
+                  <button
+                    className="cloud-button cloud-button--small cloud-button--ghost"
+                    data-testid="community-post-detail-comment-reply"
+                    disabled={!memberSession || busyAction !== null}
+                    onClick={() => {
+                      setReplyingToCommentNo(comment.commentNo);
+                      setError(null);
+                    }}
+                    type="button"
+                  >
+                    回复
+                  </button>
+                ) : null}
                 <select
                   className="cloud-report-select"
                   data-testid="community-post-detail-comment-report-reason"
@@ -594,6 +632,20 @@ export function CommunityPostDetail({
           </p>
         )}
 
+        {replyingToComment ? (
+          <div data-testid="community-post-detail-reply-context">
+            <span>正在回复 {replyingToComment.authorName}</span>
+            <button
+              className="cloud-button cloud-button--small cloud-button--ghost"
+              data-testid="community-post-detail-reply-cancel"
+              disabled={busyAction !== null}
+              onClick={() => setReplyingToCommentNo(null)}
+              type="button"
+            >
+              取消回复
+            </button>
+          </div>
+        ) : null}
         <form onSubmit={(event) => void handleComment(event)}>
           <label>
             评论内容

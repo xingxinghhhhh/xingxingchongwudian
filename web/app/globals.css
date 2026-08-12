@@ -3177,6 +3177,10 @@ h2 {
   padding-top: 0.8rem;
 }
 
+.community-post-detail-comment--reply {
+  margin-left: 1.5rem;
+}
+
 .community-comments p {
   background: #f8fafc;
   border-radius: 8px;

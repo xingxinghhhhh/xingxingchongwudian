@@ -39,6 +39,7 @@ export interface CommunityPostResponse {
 export interface CommunityCommentResponse {
   commentNo: string;
   postNo: string;
+  parentCommentNo?: string;
   memberPhone?: string;
   authorName: string;
   body: string;
@@ -419,12 +420,19 @@ export class CommunityService {
     dto: AuthenticatedCommunityCommentInput
   ): Promise<CommunityCommentResponse> {
     await this.ensurePost(postNo);
+    const parentCommentNo = dto.parentCommentNo?.trim() || undefined;
+
+    if (parentCommentNo) {
+      await this.ensureReplyParent(postNo, parentCommentNo);
+    }
+
     const commentNo = this.createCommentNo();
 
     if (!this.isDatabaseConfigured()) {
       const comment = {
         commentNo,
         postNo,
+        parentCommentNo,
         memberPhone: dto.memberPhone,
         authorName: dto.authorName,
         body: dto.body,
@@ -446,6 +454,7 @@ export class CommunityService {
         commentNo,
         postId: post.id,
         postNo,
+        parentCommentNo,
         memberPhone: dto.memberPhone,
         authorName: dto.authorName,
         body: dto.body
@@ -566,7 +575,7 @@ export class CommunityService {
     await this.ensurePost(postNo);
 
     if (!this.isDatabaseConfigured()) {
-      return this.comments
+      const comments = this.comments
         .filter(
           (comment) =>
             comment.postNo === postNo &&
@@ -574,6 +583,8 @@ export class CommunityService {
             !comment.authorDeletedAt
         )
         .slice(0, 20);
+
+      return this.filterVisibleCommentReplies(comments);
     }
 
     const comments = await this.prisma.communityComment.findMany({
@@ -582,7 +593,9 @@ export class CommunityService {
       take: 20
     });
 
-    return comments.map((comment) => this.toCommentResponse(comment));
+    return this.filterVisibleCommentReplies(
+      comments.map((comment) => this.toCommentResponse(comment))
+    );
   }
 
   async followPet(petNo: string, dto: AuthenticatedCommunityFollowInput) {
@@ -1010,6 +1023,7 @@ export class CommunityService {
   private toCommentResponse(comment: {
     commentNo: string;
     postNo: string;
+    parentCommentNo?: string | null;
     memberPhone: string | null;
     authorName: string;
     body: string;
@@ -1020,6 +1034,7 @@ export class CommunityService {
     return {
       commentNo: comment.commentNo,
       postNo: comment.postNo,
+      parentCommentNo: comment.parentCommentNo ?? undefined,
       memberPhone: comment.memberPhone ?? undefined,
       authorName: comment.authorName,
       body: comment.body,
@@ -1114,6 +1129,57 @@ export class CommunityService {
     }
 
     return post;
+  }
+
+  private async ensureReplyParent(postNo: string, parentCommentNo: string) {
+    if (!this.isDatabaseConfigured()) {
+      const parent = this.comments.find(
+        (comment) => comment.commentNo === parentCommentNo
+      );
+
+      if (
+        !parent ||
+        parent.postNo !== postNo ||
+        parent.status !== "visible" ||
+        parent.authorDeletedAt ||
+        parent.parentCommentNo
+      ) {
+        throw new NotFoundException("Community parent comment not found");
+      }
+
+      return parent;
+    }
+
+    const parent = await this.prisma.communityComment.findUnique({
+      where: { commentNo: parentCommentNo },
+      select: {
+        postNo: true,
+        status: true,
+        authorDeletedAt: true,
+        parentCommentNo: true
+      }
+    });
+
+    if (
+      !parent ||
+      parent.postNo !== postNo ||
+      parent.status !== "visible" ||
+      parent.authorDeletedAt ||
+      parent.parentCommentNo
+    ) {
+      throw new NotFoundException("Community parent comment not found");
+    }
+
+    return parent;
+  }
+
+  private filterVisibleCommentReplies(comments: CommunityCommentResponse[]) {
+    const visibleCommentNos = new Set(comments.map((comment) => comment.commentNo));
+
+    return comments.filter(
+      (comment) =>
+        !comment.parentCommentNo || visibleCommentNos.has(comment.parentCommentNo)
+    );
   }
 
   private postInclude() {

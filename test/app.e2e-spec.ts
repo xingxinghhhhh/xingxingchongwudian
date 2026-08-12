@@ -5565,6 +5565,123 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("supports one-level community comment replies without leaking withdrawn parents", async () => {
+    const ownerPhone = "13900139911";
+    const replyPhone = "13900139912";
+    const ownerSession = await loginAsMember(ownerPhone, "Reply Thread Owner");
+    const replySession = await loginAsMember(replyPhone, "Reply Thread Member");
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Reply Thread Owner",
+        ownerPhone,
+        name: "Reply Thread Pet",
+        species: "cat",
+        personality: "keeps one-level replies explicit"
+      })
+      .expect(201);
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A post with one-level comment replies."
+      })
+      .expect(201);
+    const otherPostResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A separate post for parent validation."
+      })
+      .expect(201);
+    const parentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "A top-level comment." })
+      .expect(201);
+    const otherPostCommentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${otherPostResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "A comment on another post." })
+      .expect(201);
+
+    const replyResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", replySession)
+      .send({
+        body: "A reply to the top-level comment.",
+        parentCommentNo: parentResponse.body.commentNo
+      })
+      .expect(201);
+    expect(replyResponse.body).toMatchObject({
+      postNo: postResponse.body.postNo,
+      parentCommentNo: parentResponse.body.commentNo
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", replySession)
+      .send({
+        body: "A reply must not create a second level.",
+        parentCommentNo: replyResponse.body.commentNo
+      })
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", replySession)
+      .send({
+        body: "A parent from another post must be rejected.",
+        parentCommentNo: otherPostCommentResponse.body.commentNo
+      })
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              commentNo: replyResponse.body.commentNo,
+              parentCommentNo: parentResponse.body.commentNo
+            }),
+            expect.objectContaining({ commentNo: parentResponse.body.commentNo })
+          ])
+        );
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/comments/${parentResponse.body.commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([]);
+      });
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", replySession)
+      .send({
+        body: "A withdrawn parent cannot receive a new reply.",
+        parentCommentNo: parentResponse.body.commentNo
+      })
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", replySession)
+      .send({ body: "An unparented comment keeps the old contract." })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.parentCommentNo).toBeUndefined();
+      });
+  });
+
   it("lets only the owning member edit a visible community post", async () => {
     const ownerPhone = "13900139801";
     const otherPhone = "13900139802";

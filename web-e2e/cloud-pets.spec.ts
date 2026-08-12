@@ -210,6 +210,74 @@ test("member can withdraw their own community comment from post detail", async (
   await expect(page.getByTestId("community-post-detail-comments-empty")).toBeVisible();
 });
 
+test("member can reply once to a top-level community comment", async ({ page }) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Comment Reply Owner ${runId}`;
+  const phone = `138${runId}`;
+  const petName = `Comment Reply Pet ${runId}`;
+  const postBody = `Comment reply post ${runId}`;
+  const parentBody = `Top-level comment ${runId}`;
+  const replyBody = `One-level reply ${runId}`;
+
+  await page.goto("/cloud-pets");
+  await verifyMemberInCloudPetWorkspace(page, { name: ownerName, phone });
+  await page.getByTestId("cloud-create-pet-name").fill(petName);
+  await page.getByTestId("cloud-create-species").selectOption("cat");
+  await page.getByTestId("cloud-create-personality").fill("One-level reply UI coverage.");
+  await page.getByTestId("cloud-create-submit").click();
+  await expect(page.getByTestId("cloud-community-submit")).toBeEnabled();
+  await page.getByTestId("cloud-community-body").fill(postBody);
+  await page.getByTestId("cloud-community-submit").click();
+
+  const createdPost = page
+    .getByTestId("cloud-community-post")
+    .filter({ hasText: postBody });
+  await expect(createdPost).toBeVisible();
+  await createdPost.getByTestId("cloud-community-open-detail").click();
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+  await page.getByTestId("community-post-detail-comment-body").fill(parentBody);
+  await page.getByTestId("community-post-detail-comment-submit").click();
+
+  const parentComment = page
+    .getByTestId("community-post-detail-comment")
+    .filter({ hasText: parentBody });
+  await expect(parentComment).toBeVisible();
+  const parentCommentNo = await parentComment.getAttribute("data-comment-no");
+  expect(parentCommentNo).toBeTruthy();
+  await parentComment.getByTestId("community-post-detail-comment-reply").click();
+  await expect(page.getByTestId("community-post-detail-reply-context")).toContainText(
+    ownerName
+  );
+
+  await page.getByTestId("community-post-detail-comment-body").fill(replyBody);
+  await page.getByTestId("community-post-detail-comment-submit").click();
+  const replyComment = page
+    .getByTestId("community-post-detail-comment")
+    .filter({ hasText: replyBody });
+  await expect(replyComment).toBeVisible();
+  await expect(replyComment).toHaveAttribute(
+    "data-parent-comment-no",
+    parentCommentNo as string
+  );
+  await expect(replyComment.getByTestId("community-post-detail-comment-reply")).toHaveCount(0);
+  await expect(page.getByTestId("community-post-detail-reply-context")).toHaveCount(0);
+
+  await parentComment.getByTestId("community-post-detail-comment-reply").click();
+  await page.getByTestId("community-post-detail-reply-cancel").click();
+  await expect(page.getByTestId("community-post-detail-reply-context")).toHaveCount(0);
+
+  await page.reload();
+  const persistedReply = page
+    .getByTestId("community-post-detail-comment")
+    .filter({ hasText: replyBody });
+  await expect(persistedReply).toBeVisible();
+  await expect(persistedReply).toHaveAttribute(
+    "data-parent-comment-no",
+    parentCommentNo as string
+  );
+  await expect(persistedReply.getByTestId("community-post-detail-comment-reply")).toHaveCount(0);
+});
+
 test("member can edit their own community post from post detail", async ({
   page
 }) => {

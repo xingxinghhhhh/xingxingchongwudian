@@ -12,6 +12,11 @@ export class CreateCommunityCommentDto {
 
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
+  @IsOptional()
+  parentCommentNo?: string;
+
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
   @IsNotEmpty()
   @MaxLength(280)
   body!: string;

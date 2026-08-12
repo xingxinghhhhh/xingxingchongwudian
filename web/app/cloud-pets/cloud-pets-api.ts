@@ -157,6 +157,7 @@ export interface CreateCommunityPostInput {
 export interface CommunityComment {
   commentNo: string;
   postNo: string;
+  parentCommentNo?: string;
   memberPhone?: string;
   authorName: string;
   body: string;
@@ -423,7 +424,12 @@ export async function listCommunityComments(
 
 export function commentOnCommunityPost(
   postNo: string,
-  input: { memberPhone?: string; authorName?: string; body: string },
+  input: {
+    memberPhone?: string;
+    authorName?: string;
+    body: string;
+    parentCommentNo?: string;
+  },
   sessionToken: string,
   fetcher: Fetcher = fetch
 ) {

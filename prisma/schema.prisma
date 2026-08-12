@@ -313,6 +313,7 @@ model CommunityComment {
   memberPhone String?
   authorName  String
   body        String
+  parentCommentNo String?
   status      CommunityPostStatus @default(visible)
   authorDeletedAt DateTime?
   createdAt   DateTime            @default(now())
@@ -321,6 +322,7 @@ model CommunityComment {
   @@index([postNo])
   @@index([memberPhone])
   @@index([authorDeletedAt])
+  @@index([parentCommentNo])
 }
 
 model CommunityLike {
