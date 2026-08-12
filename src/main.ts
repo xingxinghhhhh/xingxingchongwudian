@@ -19,6 +19,30 @@ import {
   SqliteRuntimeOwnershipError
 } from "./config/sqlite-runtime-ownership";
 
+function installManagedShutdownControl(
+  app: NestExpressApplication
+) {
+  if (
+    process.env.KZT_ENABLE_PROCESS_SHUTDOWN_CONTROL !== "true" ||
+    typeof process.send !== "function"
+  ) {
+    return;
+  }
+
+  process.once("message", async (message) => {
+    if (message !== "kzt:graceful-shutdown") {
+      return;
+    }
+
+    try {
+      await app.close();
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+  });
+}
+
 async function bootstrap() {
   const runtimeOwnership = acquireProductionSqliteRuntimeOwnership({
     production: process.env.NODE_ENV === "production",
@@ -52,6 +76,7 @@ async function bootstrap() {
       })
     );
     app.enableShutdownHooks();
+    installManagedShutdownControl(app);
 
     const port = Number(process.env.PORT ?? 3000);
     await initializeAndListenWithProductionGate(app, {
