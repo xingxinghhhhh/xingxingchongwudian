@@ -4,6 +4,13 @@ export type GrowthTaskCopyInput = {
   description: string;
 };
 
+export const communityReportReasons = [
+  "内容与宠物社区无关",
+  "疑似广告或引流",
+  "不友善或骚扰内容",
+  "需要运营人员复核"
+];
+
 const growthTaskCopy: Record<string, { title: string; description: string }> = {
   "daily-care": { title: "日常照护", description: "完成喂食、梳理或轻互动，为宠物留下每日照护记录。" },
   "feed-care": { title: "喂食记录", description: "记录今天的餐食与食欲，让宠物的日常节奏更鲜活。" },

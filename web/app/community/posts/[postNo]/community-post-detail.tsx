@@ -7,10 +7,12 @@ import type { CommunityComment, CommunityPost } from "../../../cloud-pets/cloud-
 import {
   commentOnCommunityPost,
   likeCommunityPost,
+  reportCommunityPost,
   updateCommunityComment,
   updateCommunityPost,
   withdrawCommunityComment
 } from "../../../cloud-pets/cloud-pets-api";
+import { communityReportReasons } from "../../../cloud-pets/cloud-pet-copy";
 
 const memberSessionKey = "kzt_member_session";
 const memberPhoneKey = "kzt_member_phone";
@@ -34,6 +36,7 @@ export function CommunityPostDetail({
   const [editBody, setEditBody] = useState(initialPost.body);
   const [editingCommentNo, setEditingCommentNo] = useState<string | null>(null);
   const [editCommentBody, setEditCommentBody] = useState("");
+  const [reportReason, setReportReason] = useState(communityReportReasons[0]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +87,40 @@ export function CommunityPostDetail({
         setMemberPhone(null);
       }
       setError(caught instanceof Error ? caught.message : "点赞失败，请稍后重试");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleReport() {
+    if (!memberSession) {
+      setError("请先同步会员后再举报");
+      return;
+    }
+
+    setBusyAction("report");
+    setError(null);
+
+    try {
+      const report = await reportCommunityPost(
+        post.postNo,
+        { reason: reportReason },
+        memberSession
+      );
+      setStatus(
+        report.created
+          ? "举报已进入商家审核队列。"
+          : "举报已更新到商家审核队列。"
+      );
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "Invalid member session") {
+        window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
+        setMemberSession(null);
+        setMemberPhone(null);
+        setCanEdit(false);
+      }
+      setError(caught instanceof Error ? caught.message : "举报失败，请稍后重试");
     } finally {
       setBusyAction(null);
     }
@@ -376,6 +413,28 @@ export function CommunityPostDetail({
           type="button"
         >
           {busyAction === "like" ? "处理中…" : "点赞"}
+        </button>
+        <select
+          className="cloud-report-select"
+          data-testid="community-post-detail-report-reason"
+          disabled={!memberSession || busyAction !== null}
+          onChange={(event) => setReportReason(event.target.value)}
+          value={reportReason}
+        >
+          {communityReportReasons.map((reason) => (
+            <option key={reason} value={reason}>
+              {reason}
+            </option>
+          ))}
+        </select>
+        <button
+          className="cloud-button cloud-button--small cloud-button--ghost"
+          data-testid="community-post-detail-report-submit"
+          disabled={!memberSession || busyAction !== null}
+          onClick={() => void handleReport()}
+          type="button"
+        >
+          {busyAction === "report" ? "处理中…" : "举报"}
         </button>
         <Link
           className="cloud-button cloud-button--small cloud-button--ghost"

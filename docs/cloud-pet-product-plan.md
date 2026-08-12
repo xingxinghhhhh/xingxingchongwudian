@@ -256,3 +256,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Admin 云养宠运营区现在可复制仅包含结构化筛选、排序和 petNo 的安全恢复链接；自由文本搜索生效时复制入口会禁用，不会泄露私有搜索词或后台会话信息。
 - 会员云养宠工作台现在会在真实任务生成 care_daily_diary 后提供“查看今日日记”入口；点击会复用既有日记筛选并定位归档，presence、owner note 和 legacy 日记不会误触发该提示。
 - 社区会员现在可以撤回自己宠物下发布的动态；撤回使用独立 authorDeletedAt 软状态，会员/公开 Feed 隐藏该内容，Admin 列表与既有举报证据保持可追溯。
+- 稳定社区帖子详情页现在复用既有举报原因和 MemberSession 接口，举报结果继续进入 Admin pending_review 队列；重复举报遵守 created=false 语义，举报不会在客户端直接隐藏帖子。

@@ -49,20 +49,13 @@ import {
   resolveCloudPetDiaryDisplay,
   shouldShowTodayCareDiaryCta
 } from "./diary-display";
-import { getGrowthTaskCopy } from "./cloud-pet-copy";
+import { communityReportReasons, getGrowthTaskCopy } from "./cloud-pet-copy";
 import { getProductTitleLabel } from "../shop/shop-copy";
 
 const memberSessionKey = "kzt_member_session";
 const memberNameKey = "kzt_member_name";
 const memberPhoneKey = "kzt_member_phone";
 const activePetKey = "kzt_active_cloud_pet";
-
-const communityReportReasons = [
-  "内容与宠物社区无关",
-  "疑似广告或引流",
-  "不友善或骚扰内容",
-  "需要运营人员复核"
-];
 
 const defaultPet: CreateCloudPetInput = {
   ownerName: "奶盖和年糕家",

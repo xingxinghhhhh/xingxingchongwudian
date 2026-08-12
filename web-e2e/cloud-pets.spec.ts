@@ -238,6 +238,79 @@ test("member can edit their own community post from post detail", async ({
   await expect(page.getByTestId("community-post-detail-edit")).toBeVisible();
 });
 
+test("member can report a community post from stable post detail", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `Detail Report Owner ${runId}`;
+  const phone = `133${runId}`;
+  const petName = `Detail Report Pet ${runId}`;
+  const postBody = `Detail report post ${runId}`;
+
+  await page.goto("/cloud-pets");
+  await verifyMemberInCloudPetWorkspace(page, { name: ownerName, phone });
+  await page.getByTestId("cloud-create-pet-name").fill(petName);
+  await page.getByTestId("cloud-create-species").selectOption("dog");
+  await page.getByTestId("cloud-create-personality").fill("Stable detail report verification.");
+  await page.getByTestId("cloud-create-submit").click();
+  await expect(page.getByTestId("cloud-community-submit")).toBeEnabled();
+  await page.getByTestId("cloud-community-body").fill(postBody);
+  await page.getByTestId("cloud-community-submit").click();
+
+  const createdPost = page
+    .getByTestId("cloud-community-post")
+    .filter({ hasText: postBody });
+  await expect(createdPost).toBeVisible();
+  await createdPost.getByTestId("cloud-community-open-detail").click();
+  await expect(page).toHaveURL(/\/community\/posts\/POST/);
+  const postNo = new URL(page.url()).pathname.split("/").pop() as string;
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(postBody);
+
+  const reportReason = page.getByTestId("community-post-detail-report-reason");
+  await expect(reportReason).toBeEnabled();
+  await reportReason.selectOption({ index: 1 });
+  const selectedReportReason = await reportReason.inputValue();
+  const reportRequestPromise = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      request.url().includes("/api/community/posts/") &&
+      request.url().endsWith("/reports")
+  );
+  await page.getByTestId("community-post-detail-report-submit").click();
+  const reportRequest = await reportRequestPromise;
+  expect(reportRequest.postDataJSON()).toEqual({ reason: selectedReportReason });
+  await expect(page.getByTestId("community-post-detail-status")).toContainText(
+    "举报已进入商家审核队列"
+  );
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(postBody);
+
+  const adminReportsResponse = await request.get(
+    `http://localhost:3000/api/admin/community/reports?status=pending_review&postNo=${encodeURIComponent(postNo)}`,
+    { headers: { "X-Admin-Token": "dev-admin-key" } }
+  );
+  expect(adminReportsResponse.ok()).toBeTruthy();
+  const adminReports = await adminReportsResponse.json();
+  expect(adminReports.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        postNo,
+        reason: selectedReportReason,
+        status: "pending_review"
+      })
+    ])
+  );
+
+  await page.getByTestId("community-post-detail-report-submit").click();
+  await expect(page.getByTestId("community-post-detail-status")).toContainText(
+    "举报已更新到商家审核队列"
+  );
+
+  await page.reload();
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(postBody);
+  await expect(page.getByTestId("community-post-detail-report-submit")).toBeVisible();
+});
+
 test("member can edit their own community comment from post detail", async ({
   page
 }) => {
