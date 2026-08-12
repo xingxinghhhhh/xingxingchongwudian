@@ -28,6 +28,7 @@
     "smoke:sqlite-recovery": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd scripts/sqlite-recovery-smoke.ts",
     "test:ui": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\playwright.cmd test",
     "test:ui:headed": "set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\playwright.cmd test --headed",
+    "verify:cloud-pet-launch": "node scripts/cloud-pet-launch-acceptance.mjs",
     "api:dev:memory": "set NODE_ENV=test&& set KZT_USE_MEMORY_STORE=true&& set DATABASE_URL=&& set PATH=C:\\Program Files\\nodejs;%PATH%&& node_modules\\.bin\\ts-node.cmd src/main.ts"
   },
   "dependencies": {
