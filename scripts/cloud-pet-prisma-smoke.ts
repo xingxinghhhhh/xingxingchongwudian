@@ -11,10 +11,15 @@ import {
   canonicalizeCloudPetPrismaState,
   CloudPetPrismaSmokeState
 } from "./cloud-pet-prisma-smoke.helpers";
+import {
+  CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
+  computeCloudPetSafeConfigSha256
+} from "../src/config/cloud-pet-config-fingerprint";
 
 const rootDirectory = resolve(__dirname, "..");
 const apiEntry = resolve(rootDirectory, "dist/main.js");
 const prismaCli = resolve(rootDirectory, "node_modules/prisma/build/index.js");
+const adminOwnerBootstrapScript = resolve(rootDirectory, "scripts/bootstrap-admin-owner.mjs");
 const schemaPath = resolve(rootDirectory, "prisma/schema.prisma");
 const memberWebhookToken = "cloud-pet-prisma-smoke-webhook-token";
 
@@ -181,7 +186,9 @@ async function waitForReadiness(baseUrl: string, api: ApiProcess) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     if (api.child.exitCode !== null) {
-      throw new Error("Cloud-pet Prisma smoke API exited before readiness");
+      throw new Error(
+        `Cloud-pet Prisma smoke API exited before readiness\n${api.getOutput()}`
+      );
     }
     try {
       const result = await requestJson(baseUrl, "/api/health/ready");
@@ -246,6 +253,7 @@ async function main() {
     DATABASE_URL: database,
     KZT_USE_MEMORY_STORE: "false",
     KZT_PRODUCTION_SMOKE: "true",
+    CLOUD_PET_RELEASE_ID: "cloud-pet-prisma-smoke-release",
     ADMIN_API_KEY: "cloud-pet-prisma-smoke-admin-key-2026",
     ADMIN_OWNER_NAME: "Cloud Pet Smoke Owner",
     ADMIN_OWNER_EMAIL: "cloud-pet-smoke-owner@example.com",
@@ -259,6 +267,7 @@ async function main() {
     OPS_METRICS_TOKEN: "cloud-pet-prisma-ops-metrics-token-with-more-than-32-chars",
     PORT: String(port)
   };
+  env[CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256] = computeCloudPetSafeConfigSha256(env);
   let api: ApiProcess | undefined;
   let prisma: PrismaClient | undefined;
 
@@ -269,6 +278,7 @@ async function main() {
       [prismaCli, "migrate", "deploy", "--schema", schemaPath],
       env
     );
+    await run(process.execPath, [adminOwnerBootstrapScript], env);
 
     api = startApi(env);
     await waitForReadiness(baseUrl, api);

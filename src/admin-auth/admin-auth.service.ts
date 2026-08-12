@@ -82,33 +82,15 @@ export class AdminAuthService implements OnModuleInit {
       return;
     }
 
-    await this.prisma.adminStaffAccount.upsert({
-      where: { staffNo: "STAFF_OWNER" },
-      create: {
-        staffNo: "STAFF_OWNER",
-        name:
-          this.configService.get<string>("ADMIN_OWNER_NAME")?.trim() ||
-          "System Owner",
-        email: this.requiredConfig("ADMIN_OWNER_EMAIL").toLowerCase(),
-        passwordHash: this.hashPassword(
-          this.requiredConfig("ADMIN_OWNER_PASSWORD")
-        ),
-        role: "owner",
-        permissions: OWNER_PERMISSIONS,
-        status: "active"
-      },
-      update: {
-        name:
-          this.configService.get<string>("ADMIN_OWNER_NAME")?.trim() ||
-          "System Owner",
-        email: this.requiredConfig("ADMIN_OWNER_EMAIL").toLowerCase(),
-        passwordHash: this.hashPassword(
-          this.requiredConfig("ADMIN_OWNER_PASSWORD")
-        ),
-        role: "owner",
-        permissions: OWNER_PERMISSIONS
-      }
+    const owner = await this.prisma.adminStaffAccount.findFirst({
+      where: { role: "owner", status: "active" }
     });
+
+    if (!owner) {
+      throw new Error(
+        "No active admin owner exists; run npm run ops:bootstrap:admin-owner before starting production"
+      );
+    }
   }
 
   async login(dto: LoginAdminDto) {
@@ -287,16 +269,6 @@ export class AdminAuthService implements OnModuleInit {
         createdAt: "2026-06-03T00:00:00.000Z"
       }
     ];
-  }
-
-  private requiredConfig(key: string) {
-    const value = this.configService.get<string>(key)?.trim();
-
-    if (!value) {
-      throw new Error(`${key} is required`);
-    }
-
-    return value;
   }
 
   private toStaffProfile(account: AdminStaffAccount): AdminStaff {

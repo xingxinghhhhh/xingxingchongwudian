@@ -13,6 +13,7 @@ const rootDir = resolve(import.meta.dirname, "..");
 const apiEntry = resolve(rootDir, "dist/main.js");
 const nextCli = resolve(rootDir, "node_modules/next/dist/bin/next");
 const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
+const adminOwnerBootstrapScript = resolve(rootDir, "scripts/bootstrap-admin-owner.mjs");
 const schemaPath = resolve(rootDir, "prisma/schema.prisma");
 const webhookToken = "cloud-pet-web-production-smoke-webhook-token";
 const releaseId = "production-smoke-release";
@@ -1218,6 +1219,7 @@ async function main() {
   try {
     await writeFile(databasePath, "", { flag: "wx" });
     await run(process.execPath, [prismaCli, "migrate", "deploy", "--schema", schemaPath], smokeEnv);
+    await run(process.execPath, [adminOwnerBootstrapScript], smokeEnv);
     await run(process.execPath, [nextCli, "build", "web"], smokeEnv);
     api = startProcess(process.execPath, [apiEntry], smokeEnv);
     await waitForApi(apiBaseUrl, api);

@@ -107,6 +107,7 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - Phase 7 deployment health now separates liveness from readiness, reports the actual SQLite provider, and returns 503 when the configured database cannot answer a readiness query.
 - Phase 7 database-first hardening now persists admin growth-task templates and care-score rules, restores them on application startup, and includes a verified production migration command.
 - Phase 7 production startup validation now blocks missing database configuration, memory-store mode, default or weak admin keys, local CORS origins, invalid payment timeouts, and missing production owner credentials.
+- Phase 7 now provides a one-time, non-public Owner Staff bootstrap command for empty production databases; API startup only verifies an active Owner and never overwrites staff credentials from environment variables.
 - Production admin authentication now loads only the configured owner account, disables hard-coded development owner/operator tokens, and removes development credentials from the production login screen.
 - Phase 7 community write protection now rate limits posts, likes, comments, follows, and reports per member session, returns a Chinese 429 response, and preserves independent allowances for members sharing one network.
 - Admin staff session gates now have Playwright coverage for unauthenticated redirect, owner login, sign out, and post-logout protection on cloud-pet admin pages.

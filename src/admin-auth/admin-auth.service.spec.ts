@@ -1,5 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { AdminAuthService } from "./admin-auth.service";
+import { ADMIN_OWNER_PERMISSIONS } from "./admin-owner-bootstrap";
 
 function createStaffService() {
   return {
@@ -14,6 +15,20 @@ function createPersistentPrisma() {
 
   const prisma = {
     adminStaffAccount: {
+      findFirst: jest.fn(async ({ where }: {
+        where: { role?: string; status?: string };
+      }) => {
+        if (!account) {
+          return null;
+        }
+        if (where.role && account.role !== where.role) {
+          return null;
+        }
+        if (where.status && account.status !== where.status) {
+          return null;
+        }
+        return account;
+      }),
       upsert: jest.fn(async ({ create, update }: {
         create: Record<string, unknown>;
         update: Record<string, unknown>;
@@ -99,6 +114,15 @@ function createPersistentPrisma() {
       if (session) {
         sessions.set(token, { ...session, ...data });
       }
+    },
+    seedAccount: (data: Record<string, unknown>) => {
+      account = {
+        id: "staff_owner_id",
+        lastLoginAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data
+      };
     }
   };
 }
@@ -117,6 +141,19 @@ describe("AdminAuthService", () => {
     ADMIN_OWNER_NAME: "Pet Operations Owner",
     ADMIN_SESSION_TTL_HOURS: "12"
   };
+
+  it("fails closed when production has no active owner", async () => {
+    const store = createPersistentPrisma();
+    const service = new AdminAuthService(
+      createStaffService() as never,
+      new ConfigService(productionConfig),
+      store.prisma as never
+    );
+
+    await expect(service.onModuleInit()).rejects.toThrow(
+      "No active admin owner exists"
+    );
+  });
 
   it("logs in a seeded owner account and resolves the memory session", async () => {
     const service = createMemoryService();
@@ -176,6 +213,17 @@ describe("AdminAuthService", () => {
       new ConfigService(productionConfig),
       store.prisma as never
     );
+    store.seedAccount({
+      staffNo: "STAFF_OWNER",
+      name: productionConfig.ADMIN_OWNER_NAME,
+      email: productionConfig.ADMIN_OWNER_EMAIL,
+      passwordHash: (firstService as never as { hashPassword: (password: string) => string }).hashPassword(
+        productionConfig.ADMIN_OWNER_PASSWORD
+      ),
+      role: "owner",
+      permissions: [...ADMIN_OWNER_PERMISSIONS],
+      status: "active"
+    });
     await firstService.onModuleInit();
 
     const login = await firstService.login({
@@ -229,6 +277,17 @@ describe("AdminAuthService", () => {
       new ConfigService(productionConfig),
       store.prisma as never
     );
+    store.seedAccount({
+      staffNo: "STAFF_OWNER",
+      name: productionConfig.ADMIN_OWNER_NAME,
+      email: productionConfig.ADMIN_OWNER_EMAIL,
+      passwordHash: (service as never as { hashPassword: (password: string) => string }).hashPassword(
+        productionConfig.ADMIN_OWNER_PASSWORD
+      ),
+      role: "owner",
+      permissions: [...ADMIN_OWNER_PERMISSIONS],
+      status: "active"
+    });
     await service.onModuleInit();
     const expiredLogin = await service.login({
       email: productionConfig.ADMIN_OWNER_EMAIL,

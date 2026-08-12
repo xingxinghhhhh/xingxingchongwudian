@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
+const adminOwnerBootstrapScript = resolve(rootDir, "scripts/bootstrap-admin-owner.mjs");
 const nextCli = resolve(rootDir, "node_modules/next/dist/bin/next");
 const schemaPath = resolve(rootDir, "prisma/schema.prisma");
 const apiEntry = resolve(rootDir, "dist/main.js");
@@ -964,6 +965,7 @@ async function main() {
       ],
       { env }
     );
+    await run(process.execPath, [adminOwnerBootstrapScript], { env });
 
     api = startApi(env);
     await waitForReadiness(baseUrl, api);
