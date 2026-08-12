@@ -260,3 +260,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - 社区评论现在支持基于 commentNo 的会员举报；举报记录保留父帖 postNo，帖子级举报统计不混入评论举报，Admin 队列可识别评论目标且不会误提供“隐藏帖子”动作。
 - Member cloud-pet profiles now expose per-pet homepageVisitCount from the existing homepage visit source, so the share-homepage reminder remains until a real homepage visit is persisted and then disappears after workspace refresh; no new endpoint or schema was added.
 - Community post details now support one-level comment replies through the existing comment endpoint; parent validation, withdrawn-parent filtering, reply context, cancel behavior, and reload persistence are covered in API and Playwright tests.
+- The public cloud-pet homepage 390x844 visual contract now matches the current Visitor/Owner privacy projection; the mobile baseline was refreshed only after stable repeated diff evidence, and the full single-worker Playwright suite is green.
