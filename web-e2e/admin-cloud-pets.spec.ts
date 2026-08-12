@@ -125,7 +125,7 @@ test("admin report queue filters community reports by status, post, and member",
     .toBeVisible();
 });
 
-test("admin report queue identifies a reported community comment", async ({
+test("owner can hide a reported community comment without hiding its post", async ({
   page,
   request
 }) => {
@@ -193,7 +193,29 @@ test("admin report queue identifies a reported community comment", async ({
   await expect(reportItem).toContainText(postNo);
   await expect(reportItem).toContainText(commentNo);
   await expect(reportItem.getByTestId("admin-community-report-resolve-hide")).toHaveCount(0);
-  await expect(reportItem.getByTestId("admin-community-report-resolve")).toBeVisible();
+  await expect(reportItem.getByTestId("admin-community-report-resolve-hide-comment")).toBeVisible();
+
+  const commentUpdate = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/admin/community/comments/${commentNo}/status`) &&
+      response.request().method() === "PATCH"
+  );
+  const reportUpdate = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/admin/community/reports/${reportNo}/status`) &&
+      response.request().method() === "PATCH"
+  );
+  await reportItem.getByTestId("admin-community-report-resolve-hide-comment").click();
+  expect((await commentUpdate).ok()).toBeTruthy();
+  expect((await reportUpdate).ok()).toBeTruthy();
+  await expect(reportItem.getByTestId("admin-community-report-status")).toContainText("已处理");
+  await expect(reportItem).toContainText("商家后台已处理并隐藏关联评论");
+
+  await page.goto(`/community/posts/${postNo}#comment-${commentNo}`);
+  await expect(page.getByTestId("community-post-detail")).toBeVisible();
+  await expect(page.getByTestId("community-post-detail-comment")).toHaveCount(0);
+  await expect(page.getByTestId("community-post-detail-comments-empty")).toBeVisible();
+  await expect(page.getByTestId("community-post-detail-error")).toHaveCount(0);
 });
 
 test("owner can backfill a selected daily diary gap from the admin page", async ({

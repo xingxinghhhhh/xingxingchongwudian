@@ -934,6 +934,30 @@ export class CommunityService {
     return this.withCommerceBridge(this.toResponse(post));
   }
 
+  async updateCommentStatus(
+    commentNo: string,
+    status: CommunityPostStatus
+  ): Promise<CommunityCommentResponse> {
+    if (!this.isDatabaseConfigured()) {
+      const comment = this.comments.find((item) => item.commentNo === commentNo);
+
+      if (!comment) {
+        throw new NotFoundException("Community comment not found");
+      }
+
+      comment.status = status;
+      this.refreshMemoryPostMetrics(comment.postNo);
+      return comment;
+    }
+
+    const comment = await this.prisma.communityComment.update({
+      where: { commentNo },
+      data: { status }
+    });
+
+    return this.toCommentResponse(comment);
+  }
+
   async getMetrics() {
     const posts = await this.listAdminPosts();
 

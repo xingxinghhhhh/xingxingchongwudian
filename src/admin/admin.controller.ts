@@ -55,6 +55,7 @@ import { CreateShipmentEventDto } from "./dto/create-shipment-event.dto";
 import { CreateShipmentDto } from "./dto/create-shipment.dto";
 import { UpdateCouponStatusDto } from "../marketing/dto/update-coupon-status.dto";
 import { UpdateCommunityPostStatusDto } from "./dto/update-community-post-status.dto";
+import { UpdateCommunityCommentStatusDto } from "./dto/update-community-comment-status.dto";
 import { UpdateCommunityReportStatusDto } from "../community/dto/update-community-report-status.dto";
 import { UpdateOrderStatusDto } from "./dto/update-order-status.dto";
 import { UpdateProductStatusDto } from "./dto/update-product-status.dto";
@@ -909,6 +910,28 @@ export class AdminController {
         });
 
         return post;
+      }
+    );
+  }
+
+  @Patch("community/comments/:commentNo/status")
+  updateCommunityCommentStatus(
+    @Param("commentNo") commentNo: string,
+    @Body() dto: UpdateCommunityCommentStatusDto,
+    @Req() request: AdminRequest
+  ) {
+    const staff = this.requireStaff(request, "community:moderate");
+
+    return this.communityService.updateCommentStatus(commentNo, dto.status).then(
+      async (comment) => {
+        await this.recordOperation(staff, {
+          action: "community.comment_status.update",
+          targetType: "community_comment",
+          targetId: commentNo,
+          summary: `Updated community comment ${commentNo} status to ${dto.status}`
+        });
+
+        return comment;
       }
     );
   }

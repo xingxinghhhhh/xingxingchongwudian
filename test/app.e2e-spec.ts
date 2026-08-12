@@ -6511,6 +6511,110 @@ describe("Pet toy shop API", () => {
       .expect(404);
   });
 
+  it("lets staff hide a reported comment without changing the post or author withdrawal state", async () => {
+    const ownerPhone = "13600136882";
+    const reporterPhone = "13600136883";
+    const ownerSession = await loginAsMember(ownerPhone, "Comment Hide Owner");
+    const reporterSession = await loginAsMember(reporterPhone, "Comment Hide Reporter");
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Comment Hide Owner",
+        ownerPhone,
+        name: "Comment Hide Pet",
+        species: "dog",
+        personality: "Keeps the comment hide contract focused."
+      })
+      .expect(201);
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A visible post with a reportable comment."
+      })
+      .expect(201);
+    const commentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "A comment that staff can hide." })
+      .expect(201);
+    const commentNo = commentResponse.body.commentNo as string;
+    const reportResponse = await request(app.getHttpServer())
+      .post(`/api/community/comments/${commentNo}/reports`)
+      .set("X-Member-Token", reporterSession)
+      .send({ reason: "Hide this reported comment." })
+      .expect(201);
+
+    const adminSession = await loginAsAdmin("owner");
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/comments/${commentNo}/status`)
+      .set("X-Admin-Session", adminSession)
+      .send({ status: "hidden" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          commentNo,
+          status: "hidden"
+        });
+        expect(body.authorDeletedAt).toBeUndefined();
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/comments/${commentNo}/status`)
+      .set("X-Admin-Session", adminSession)
+      .send({ status: "hidden" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          body: "A visible post with a reportable comment.",
+          commentCount: 0
+        });
+      });
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .expect(200)
+      .expect(({ body }) => expect(body).toEqual({ items: [] }));
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/reports/${reportResponse.body.reportNo}/status`)
+      .set("X-Admin-Session", adminSession)
+      .send({ status: "reviewed", note: "商家后台已处理并隐藏关联评论" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          reportNo: reportResponse.body.reportNo,
+          commentNo,
+          status: "reviewed"
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/admin/operation-logs")
+      .set("X-Admin-Session", adminSession)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              action: "community.comment_status.update",
+              targetType: "community_comment",
+              targetId: commentNo,
+              staffName: "Owner Admin",
+              role: "owner"
+            })
+          ])
+        );
+      });
+  });
+
   it("requires member auth for payment intents and keeps payment confirmation idempotent", async () => {
     const orderResponse = await request(app.getHttpServer())
       .post("/api/orders")

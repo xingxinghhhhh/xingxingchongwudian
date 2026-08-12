@@ -68,6 +68,7 @@ import {
   recordShipmentEvent,
   removeAdminCloudPetDiaryNote,
   updateCommunityPostStatus,
+  updateCommunityCommentStatus,
   updateCommunityReportStatus,
   updateCmsBlockStatus,
   updateCouponStatus,
@@ -878,11 +879,12 @@ export function AdminConsole() {
   async function handleReportStatus(
     reportNo: string,
     statusValue: "reviewed" | "dismissed",
-    options: { hidePostNo?: string } = {}
+    options: { hidePostNo?: string; hideCommentNo?: string } = {}
   ) {
     setBusyReportNo(reportNo);
     setError(null);
     let postWasHidden = false;
+    let commentWasHidden = false;
 
     try {
       if (options.hidePostNo) {
@@ -898,11 +900,17 @@ export function AdminConsole() {
           )
         );
       }
+      if (options.hideCommentNo) {
+        await updateCommunityCommentStatus(options.hideCommentNo, token);
+        commentWasHidden = true;
+      }
       await updateCommunityReportStatus(
         reportNo,
         statusValue,
         options.hidePostNo
           ? "商家后台已处理并隐藏关联帖子"
+          : options.hideCommentNo
+            ? "商家后台已处理并隐藏关联评论"
           : statusValue === "reviewed"
             ? "商家后台已处理"
             : "商家后台已驳回",
@@ -912,12 +920,16 @@ export function AdminConsole() {
       setStatus(
         options.hidePostNo
           ? "社区举报已处理，关联帖子已隐藏。"
+          : options.hideCommentNo
+            ? "社区举报已处理，关联评论已隐藏。"
           : "社区举报已更新为" + getStatusLabel(statusValue) + "。"
       );
     } catch (caught) {
       setError(
         postWasHidden
           ? "关联帖子已隐藏，但举报状态更新失败，请重试处理。"
+          : commentWasHidden
+            ? "关联评论已隐藏，但举报状态更新失败，请重试处理。"
           : caught instanceof Error
             ? caught.message
             : "举报状态更新失败"
@@ -3294,6 +3306,21 @@ export function AdminConsole() {
                         type="button"
                       >
                         处理并隐藏帖子
+                      </button>
+                    ) : null}
+                    {report.commentNo ? (
+                      <button
+                        className="admin-button admin-button--small"
+                        data-testid="admin-community-report-resolve-hide-comment"
+                        disabled={busyReportNo === report.reportNo}
+                        onClick={() =>
+                          void handleReportStatus(report.reportNo, "reviewed", {
+                            hideCommentNo: report.commentNo
+                          })
+                        }
+                        type="button"
+                      >
+                        处理并隐藏评论
                       </button>
                     ) : null}
                     <button

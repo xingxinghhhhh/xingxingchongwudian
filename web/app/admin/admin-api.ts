@@ -7,6 +7,7 @@ import type {
 import type {
   CloudPetHomepageArchive,
   CloudPetProfile,
+  CommunityComment,
   CommunityPost,
   CommunityReport
 } from "../cloud-pets/cloud-pets-api";
@@ -1264,6 +1265,26 @@ export function updateCommunityPostStatus(
     `/admin/community/posts/${encodeURIComponent(postNo)}/status`,
     {
       body: JSON.stringify({ status }),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAdminAuthHeader(token)
+      },
+      method: "PATCH"
+    },
+    fetcher
+  );
+}
+
+export function updateCommunityCommentStatus(
+  commentNo: string,
+  token: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityComment>(
+    `/admin/community/comments/${encodeURIComponent(commentNo)}/status`,
+    {
+      body: JSON.stringify({ status: "hidden" }),
       cache: "no-store",
       headers: {
         "Content-Type": "application/json",
