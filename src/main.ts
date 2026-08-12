@@ -14,51 +14,74 @@ import {
   ProductionStartupGateError
 } from "./config/production-startup-gate";
 import { PrismaMigrationCompatibilityService } from "./observability/prisma-migration-compatibility";
+import {
+  acquireProductionSqliteRuntimeOwnership,
+  SqliteRuntimeOwnershipError
+} from "./config/sqlite-runtime-ownership";
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    bodyParser: false
-  });
-
-  configureTrustProxy(app);
-  app.use(
-    helmet({
-      contentSecurityPolicy: false,
-      crossOriginResourcePolicy: { policy: "cross-origin" }
-    })
-  );
-  configureRequestBodyPolicy(app);
-  app.setGlobalPrefix("api");
-  app.enableCors({
-    origin: process.env.WEB_ORIGIN ?? "http://localhost:3001",
-    exposedHeaders: ["X-Request-Id"]
-  });
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true
-    })
-  );
-  app.enableShutdownHooks();
-
-  const port = Number(process.env.PORT ?? 3000);
-  await initializeAndListenWithProductionGate(app, {
+  const runtimeOwnership = acquireProductionSqliteRuntimeOwnership({
     production: process.env.NODE_ENV === "production",
-    port,
-    getConfigBaselineStatus: () =>
-      getCloudPetConfigBaselineStatus(process.env),
-    getReleaseId: () =>
-      app.get(ConfigService).get<string>(CLOUD_PET_RELEASE_ID),
-    getBuildReleaseMarker: () => loadCloudPetReleaseMarker(),
-    getMigrationStatus: () =>
-      app
-        .get(PrismaMigrationCompatibilityService, { strict: false })
-        .getStatus().status
+    databaseUrl: process.env.DATABASE_URL,
+    useMemoryStore: process.env.KZT_USE_MEMORY_STORE
   });
+  runtimeOwnership.installProcessShutdownHooks();
+
+  try {
+    const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+      bodyParser: false
+    });
+
+    configureTrustProxy(app);
+    app.use(
+      helmet({
+        contentSecurityPolicy: false,
+        crossOriginResourcePolicy: { policy: "cross-origin" }
+      })
+    );
+    configureRequestBodyPolicy(app);
+    app.setGlobalPrefix("api");
+    app.enableCors({
+      origin: process.env.WEB_ORIGIN ?? "http://localhost:3001",
+      exposedHeaders: ["X-Request-Id"]
+    });
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true
+      })
+    );
+    app.enableShutdownHooks();
+
+    const port = Number(process.env.PORT ?? 3000);
+    await initializeAndListenWithProductionGate(app, {
+      production: process.env.NODE_ENV === "production",
+      port,
+      getConfigBaselineStatus: () =>
+        getCloudPetConfigBaselineStatus(process.env),
+      getReleaseId: () =>
+        app.get(ConfigService).get<string>(CLOUD_PET_RELEASE_ID),
+      getBuildReleaseMarker: () => loadCloudPetReleaseMarker(),
+      getMigrationStatus: () =>
+        app
+          .get(PrismaMigrationCompatibilityService, { strict: false })
+          .getStatus().status
+    });
+  } catch (error) {
+    runtimeOwnership.release();
+    throw error;
+  }
 }
 
 void bootstrap().catch((error) => {
-  if (error instanceof ProductionStartupGateError) {
+  if (error instanceof SqliteRuntimeOwnershipError) {
+    console.error(
+      JSON.stringify({
+        event: "production_startup_blocked",
+        reasonCode: error.code
+      })
+    );
+  } else if (error instanceof ProductionStartupGateError) {
     console.error(
       JSON.stringify({
         event: "production_startup_blocked",
