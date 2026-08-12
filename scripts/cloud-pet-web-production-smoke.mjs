@@ -371,18 +371,65 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
     const communityPostNo = communityPostElementId.slice("community-post-".length);
     const reportReason = createdCommunityPost.getByTestId("cloud-report-reason");
     await reportReason.selectOption({ index: 1 });
-    const reportRequest = page.waitForRequest(
-      (request) =>
-        request.method() === "POST" &&
-        request.url().endsWith(`/api/community/posts/${communityPostNo}/reports`)
+    const reportResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(
+          `/api/community/posts/${communityPostNo}/reports`
+        )
     );
     await createdCommunityPost.getByTestId("cloud-report-submit").click();
-    await reportRequest;
+    const postReportResult = await reportResponse;
+    assertSmoke(postReportResult.ok(), "Member community post report failed");
+    const postReportBody = await postReportResult.json();
+    const communityReportNo = postReportBody.reportNo;
+    assertSmoke(
+      typeof communityReportNo === "string" && communityReportNo.length > 0,
+      "Member community post report did not expose a stable report identifier"
+    );
     await waitForLocatorText(
       page.getByTestId("cloud-community-report-count"),
       (text) => text === "1",
       "Member community report did not become visible"
     );
+
+    const communityDetailUrl = `${webBaseUrl}/community/posts/${encodeURIComponent(communityPostNo)}`;
+    await page.goto(communityDetailUrl, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("community-post-detail").waitFor({ state: "visible" });
+    const communityCommentBody = `Production comment moderation smoke ${Date.now().toString().slice(-6)}`;
+    await page.getByTestId("community-post-detail-comment-body").fill(communityCommentBody);
+    await page.getByTestId("community-post-detail-comment-submit").click();
+    const createdCommunityComment = page
+      .getByTestId("community-post-detail-comment")
+      .filter({ hasText: communityCommentBody });
+    await createdCommunityComment.waitFor({ state: "visible" });
+    const communityCommentNo = await createdCommunityComment.getAttribute("data-comment-no");
+    assertSmoke(communityCommentNo, "Member community comment did not expose a stable comment identifier");
+    const commentReportResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(
+          `/api/community/comments/${communityCommentNo}/reports`
+        )
+    );
+    await createdCommunityComment
+      .getByTestId("community-post-detail-comment-report-reason")
+      .selectOption({ index: 1 });
+    await createdCommunityComment
+      .getByTestId("community-post-detail-comment-report-submit")
+      .click();
+    const commentReportResult = await commentReportResponse;
+    assertSmoke(commentReportResult.ok(), "Member community comment report failed");
+    const commentReportBody = await commentReportResult.json();
+    const communityCommentReportNo = commentReportBody.reportNo;
+    assertSmoke(
+      typeof communityCommentReportNo === "string" && communityCommentReportNo.length > 0,
+      "Member community comment report did not expose a stable report identifier"
+    );
+    await page.getByTestId("community-post-detail-status").waitFor({ state: "visible" });
+    await page.goto(`${webBaseUrl}/cloud-pets`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("cloud-member-profile").waitFor({ state: "visible" });
+    await page.getByTestId("cloud-daily-panel").waitFor({ state: "visible" });
 
     const anonymousContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
@@ -440,7 +487,6 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
     assertSmoke(await backfillPetCareButton.isEnabled(), "Second pet care task was not actionable before backfill");
 
     let backfillDate = "";
-    let communityReportNo = "";
     const adminContext = await browser.newContext({
       viewport: { width: 1280, height: 900 }
     });
@@ -734,6 +780,69 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
 
       const reportSection = adminPage.locator("#admin-community-reports");
       await reportSection
+        .getByTestId("admin-community-report-filter-comment")
+        .fill(communityCommentNo);
+      const commentReportFilterResponse = adminPage.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname.endsWith("/api/admin/community/reports") &&
+          new URL(response.url()).searchParams.get("commentNo") === communityCommentNo
+      );
+      await reportSection
+        .getByTestId("admin-community-report-filter-form")
+        .locator('button[type="submit"]')
+        .click();
+      assertSmoke((await commentReportFilterResponse).ok(), "Admin comment report filter failed");
+      const commentReportItem = reportSection.locator(
+        `[data-testid="admin-community-report-item"][data-report-no="${communityCommentReportNo}"]`
+      );
+      await commentReportItem.waitFor({ state: "visible" });
+      const commentUpdate = adminPage.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          new URL(response.url()).pathname.endsWith(
+            `/api/admin/community/comments/${communityCommentNo}/status`
+          )
+      );
+      const commentReportUpdate = adminPage.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          new URL(response.url()).pathname.endsWith(
+            `/api/admin/community/reports/${communityCommentReportNo}/status`
+          )
+      );
+      await commentReportItem
+        .getByTestId("admin-community-report-resolve-hide-comment")
+        .click();
+      assertSmoke((await commentUpdate).ok(), "Admin community comment hide failed");
+      assertSmoke((await commentReportUpdate).ok(), "Admin community comment report resolution failed");
+      await commentReportItem
+        .getByTestId("admin-community-report-resolve-hide-comment")
+        .waitFor({ state: "hidden" });
+
+      await page.goto(`${communityDetailUrl}#comment-${encodeURIComponent(communityCommentNo)}`, {
+        waitUntil: "domcontentloaded"
+      });
+      await page.getByTestId("community-post-detail").waitFor({ state: "visible" });
+      await page.getByText(communityBody, { exact: true }).waitFor({ state: "visible" });
+      await waitForLocatorCount(
+        page.getByTestId("community-post-detail-comment"),
+        (count) => count === 0,
+        "Hidden community comment remained visible in the production post detail"
+      );
+      await page.getByTestId("community-post-detail-comments-empty").waitFor({ state: "visible" });
+      assertSmoke(
+        (await page.getByTestId("community-post-detail-error").count()) === 0,
+        "Hidden community comment deep-link rendered a production detail error"
+      );
+
+      await page.goto(`${webBaseUrl}/cloud-pets`, { waitUntil: "domcontentloaded" });
+      await page.getByTestId("cloud-member-profile").waitFor({ state: "visible" });
+      await page.getByTestId("cloud-daily-panel").waitFor({ state: "visible" });
+      await reportSection
+        .getByTestId("admin-community-report-filter-comment")
+        .fill("");
+      await reportSection
         .getByTestId("admin-community-report-filter-post")
         .fill(communityPostNo);
       const reportFilterResponse = adminPage.waitForResponse(
@@ -749,12 +858,9 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
       assertSmoke((await reportFilterResponse).ok(), "Admin community report filter failed");
 
       const reportItem = reportSection.locator(
-        `[data-testid="admin-community-report-item"]`,
-        { hasText: communityPostNo }
+        `[data-testid="admin-community-report-item"][data-report-no="${communityReportNo}"]`
       );
       await reportItem.waitFor({ state: "visible" });
-      communityReportNo = (await reportItem.getAttribute("data-report-no")) ?? "";
-      assertSmoke(communityReportNo, "Admin community report did not expose a stable report identifier");
       const postUpdate = adminPage.waitForResponse(
         (response) =>
           response.request().method() === "PATCH" &&
@@ -796,9 +902,13 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
       await auditSection
         .getByText("community.post_status.update", { exact: true })
         .waitFor({ state: "visible" });
-      await auditSection
-        .getByText("community.report_status.update", { exact: true })
-        .waitFor({ state: "visible" });
+      await waitForLocatorCount(
+        auditSection.locator(
+          `[data-testid="admin-operation-log-item"][data-action="community.report_status.update"]`
+        ),
+        (count) => count >= 2,
+        "Admin operation log did not retain both community report operations"
+      );
       const postAuditItem = auditSection.locator(
         `[data-testid="admin-operation-log-item"][data-action="community.post_status.update"][data-target-id="${communityPostNo}"]`
       );
@@ -931,6 +1041,8 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
       backfillPetScoreBefore,
       backfillPetCompletedCountBefore,
       communityPostNo,
+      communityCommentNo,
+      communityCommentReportNo,
       communityReportNo,
       communityBody,
       auditStaffName: adminCredentials.name
@@ -952,7 +1064,7 @@ async function verifyPrisma(database, member, result) {
     const start = new Date(`${result.backfillDate}T00:00:00.000Z`);
     const end = new Date(`${result.backfillDate}T00:00:00.000Z`);
     end.setUTCDate(end.getUTCDate() + 1);
-    const [session, pet, ownerNoteCount, dailyDiaryCount, backfillPet, backfillDiaryCount, backfillTaskCount, communityPost, communityReport, communityOperationLogs] = await Promise.all([
+    const [session, pet, ownerNoteCount, dailyDiaryCount, backfillPet, backfillDiaryCount, backfillTaskCount, communityPost, communityComment, communityReport, communityCommentReport, communityOperationLogs] = await Promise.all([
       prisma.memberSession.findFirst({ where: { phone: member.phone }, select: { revokedAt: true } }),
       prisma.virtualPet.findUnique({ where: { petNo: result.petNo }, select: { ownerPhone: true } }),
       prisma.virtualPetEvent.count({ where: { pet: { petNo: result.petNo }, type: "owner_note", body: result.ownerNoteBody } }),
@@ -969,11 +1081,32 @@ async function verifyPrisma(database, member, result) {
       }),
       prisma.virtualPetTaskCompletion.count({ where: { pet: { petNo: result.backfillPetNo }, completedDate: result.backfillDate } }),
       prisma.communityPost.findUnique({ where: { postNo: result.communityPostNo }, select: { status: true } }),
+      prisma.communityComment.findUnique({
+        where: { commentNo: result.communityCommentNo },
+        select: { status: true, authorDeletedAt: true, postNo: true }
+      }),
       prisma.communityReport.findUnique({ where: { reportNo: result.communityReportNo }, select: { status: true, resolvedAt: true } }),
+      prisma.communityReport.findUnique({
+        where: { reportNo: result.communityCommentReportNo },
+        select: { status: true, resolvedAt: true, commentNo: true, postNo: true }
+      }),
       prisma.operationLog.findMany({
         where: {
-          action: { in: ["community.post_status.update", "community.report_status.update"] },
-          targetId: { in: [result.communityPostNo, result.communityReportNo] }
+          action: {
+            in: [
+              "community.comment_status.update",
+              "community.post_status.update",
+              "community.report_status.update"
+            ]
+          },
+          targetId: {
+            in: [
+              result.communityPostNo,
+              result.communityCommentNo,
+              result.communityReportNo,
+              result.communityCommentReportNo
+            ]
+          }
         },
         select: { staffNo: true, staffName: true, role: true, action: true, targetType: true, targetId: true }
       })
@@ -985,15 +1118,43 @@ async function verifyPrisma(database, member, result) {
     assertSmoke(backfillPet?.ownerPhone === member.phone, "Prisma final check found an incorrectly owned backfill pet");
     assertSmoke(backfillDiaryCount === 1, "Prisma final check could not find exactly one backfilled diary");
     assertSmoke(backfillTaskCount === 0, "Prisma final check found a task completion created by diary backfill");
+    assertSmoke(
+      communityComment?.status === "hidden" &&
+        communityComment.authorDeletedAt === null &&
+        communityComment.postNo === result.communityPostNo,
+      "Prisma final check found an incorrectly moderated community comment"
+    );
     assertSmoke(communityPost?.status === "hidden", "Prisma final check found the moderated community post still visible");
     assertSmoke(communityReport?.status === "reviewed" && communityReport.resolvedAt, "Prisma final check found the community report unresolved");
+    assertSmoke(
+      communityCommentReport?.status === "reviewed" &&
+        communityCommentReport.resolvedAt &&
+        communityCommentReport.commentNo === result.communityCommentNo &&
+        communityCommentReport.postNo === result.communityPostNo,
+      "Prisma final check found the community comment report unresolved"
+    );
+    const commentOperation = communityOperationLogs.find(
+      (log) =>
+        log.action === "community.comment_status.update" &&
+        log.targetId === result.communityCommentNo
+    );
     const postOperation = communityOperationLogs.find(
       (log) => log.action === "community.post_status.update" && log.targetId === result.communityPostNo
     );
     const reportOperation = communityOperationLogs.find(
       (log) => log.action === "community.report_status.update" && log.targetId === result.communityReportNo
     );
-    for (const [operation, targetType] of [[postOperation, "community_post"], [reportOperation, "community_report"]]) {
+    const commentReportOperation = communityOperationLogs.find(
+      (log) =>
+        log.action === "community.report_status.update" &&
+        log.targetId === result.communityCommentReportNo
+    );
+    for (const [operation, targetType] of [
+      [commentOperation, "community_comment"],
+      [postOperation, "community_post"],
+      [reportOperation, "community_report"],
+      [commentReportOperation, "community_report"]
+    ]) {
       assertSmoke(operation, "Prisma final check could not find a community moderation operation log");
       assertSmoke(operation.staffName === result.auditStaffName, "Prisma final check found an unexpected operation staff");
       assertSmoke(operation.role === "owner" && operation.targetType === targetType, "Prisma final check found incomplete operation staff or target data");
