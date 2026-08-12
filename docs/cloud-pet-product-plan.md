@@ -258,3 +258,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - 社区会员现在可以撤回自己宠物下发布的动态；撤回使用独立 authorDeletedAt 软状态，会员/公开 Feed 隐藏该内容，Admin 列表与既有举报证据保持可追溯。
 - 稳定社区帖子详情页现在复用既有举报原因和 MemberSession 接口，举报结果继续进入 Admin pending_review 队列；重复举报遵守 created=false 语义，举报不会在客户端直接隐藏帖子。
 - 社区评论现在支持基于 commentNo 的会员举报；举报记录保留父帖 postNo，帖子级举报统计不混入评论举报，Admin 队列可识别评论目标且不会误提供“隐藏帖子”动作。
+- Member cloud-pet profiles now expose per-pet homepageVisitCount from the existing homepage visit source, so the share-homepage reminder remains until a real homepage visit is persisted and then disappears after workspace refresh; no new endpoint or schema was added.

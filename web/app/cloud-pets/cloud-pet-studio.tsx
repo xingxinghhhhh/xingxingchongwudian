@@ -2246,7 +2246,12 @@ function getCloudPetWorkspaceReminders(
     });
   }
 
-  if (pet && pet.growth.isCareCompleteToday && todayDiary) {
+  if (
+    pet &&
+    pet.growth.isCareCompleteToday &&
+    todayDiary &&
+    (pet.homepageVisitCount ?? 0) === 0
+  ) {
     reminders.push({
       key: "share-homepage",
       label: "分享主页",

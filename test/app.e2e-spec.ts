@@ -4810,9 +4810,10 @@ describe("Pet toy shop API", () => {
   });
 
   it("records cloud-pet homepage visits back into archive and admin metrics", async () => {
+    const sessionToken = await loginAsMember("13900139993", "Visit Owner");
     const petResponse = await request(app.getHttpServer())
       .post("/api/cloud-pets")
-      .set("X-Member-Token", await loginAsMember("13900139993", "Visit Owner"))
+      .set("X-Member-Token", sessionToken)
       .send({
         ownerName: "Visit Owner",
         ownerPhone: "13900139993",
@@ -4821,6 +4822,37 @@ describe("Pet toy shop API", () => {
         personality: "spots dashboard signals quickly"
       })
       .expect(201);
+
+    const secondPetResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", sessionToken)
+      .send({
+        ownerName: "Visit Owner",
+        ownerPhone: "13900139993",
+        name: "Dashboard Pet Two",
+        species: "dog",
+        personality: "checks per-pet homepage results"
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", sessionToken)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.pets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              homepageVisitCount: 0
+            }),
+            expect.objectContaining({
+              petNo: secondPetResponse.body.petNo,
+              homepageVisitCount: 0
+            })
+          ])
+        );
+      });
 
     await request(app.getHttpServer())
       .post(`/api/cloud-pets/${petResponse.body.petNo}/homepage/visits`)
@@ -4893,6 +4925,25 @@ describe("Pet toy shop API", () => {
         expect(body.engagement).toMatchObject({
           homepageVisitCount: 3
         });
+      });
+
+    await request(app.getHttpServer())
+      .get("/api/members/me")
+      .set("X-Member-Token", sessionToken)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.pets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              petNo: petResponse.body.petNo,
+              homepageVisitCount: 3
+            }),
+            expect.objectContaining({
+              petNo: secondPetResponse.body.petNo,
+              homepageVisitCount: 0
+            })
+          ])
+        );
       });
 
     await request(app.getHttpServer())

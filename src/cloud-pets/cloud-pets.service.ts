@@ -22,6 +22,7 @@ export interface CloudPetProfile {
   petNo: string;
   ownerName: string;
   ownerPhone: string;
+  homepageVisitCount?: number;
   name: string;
   species: "cat" | "dog";
   personality: string;
@@ -45,7 +46,7 @@ export interface CloudPetProfile {
 
 export type CloudPetPublicProfile = Omit<
   CloudPetProfile,
-  "ownerName" | "ownerPhone"
+  "ownerName" | "ownerPhone" | "homepageVisitCount"
 >;
 
 export type CloudPetCareState = "needs_care" | "steady" | "thriving";
@@ -521,7 +522,12 @@ export class CloudPetsService implements OnModuleInit {
 
   async getPublicPet(petNo: string): Promise<CloudPetPublicProfile> {
     const pet = await this.getPet(petNo);
-    const { ownerName: _ownerName, ownerPhone: _ownerPhone, ...publicPet } = pet;
+    const {
+      ownerName: _ownerName,
+      ownerPhone: _ownerPhone,
+      homepageVisitCount: _homepageVisitCount,
+      ...publicPet
+    } = pet;
     const speciesLabel = pet.species === "cat" ? "猫咪" : "狗狗";
 
     return {
@@ -540,7 +546,10 @@ export class CloudPetsService implements OnModuleInit {
       return Array.from(this.pets.values())
         .filter((pet) => pet.ownerPhone === ownerPhone)
         .map((pet) =>
-          this.toProfile(pet, this.getMemoryTaskCompletionsForPet(pet.petNo))
+          ({
+            ...this.toProfile(pet, this.getMemoryTaskCompletionsForPet(pet.petNo)),
+            homepageVisitCount: this.countMemoryHomepageVisits(pet.petNo)
+          })
         );
     }
 
@@ -548,12 +557,16 @@ export class CloudPetsService implements OnModuleInit {
       where: { ownerPhone },
       include: {
         taskCompletions: { orderBy: [{ completedDate: "desc" }, { createdAt: "desc" }] },
-        timeline: { orderBy: { createdAt: "desc" } }
+        timeline: { orderBy: { createdAt: "desc" } },
+        _count: { select: { homepageVisits: true } }
       },
       orderBy: { createdAt: "desc" }
     });
 
-    return pets.map((pet) => this.toProfile(pet, this.toCompletionRecords(pet.taskCompletions)));
+    return pets.map((pet) => ({
+      ...this.toProfile(pet, this.toCompletionRecords(pet.taskCompletions)),
+      homepageVisitCount: pet._count.homepageVisits
+    }));
   }
 
   listGrowthTasks() {

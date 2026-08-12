@@ -95,8 +95,19 @@ test("cloud pet workspace guides a synced member without pets into first pet cre
   await expect(page.getByTestId("pet-public-owner-view")).toBeVisible();
   await expect(page.getByTestId("pet-public-owner-workspace")).toHaveAttribute("href", "/cloud-pets");
   const publicPetUrl = page.url();
+  const homepageVisit = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/cloud-pets/") &&
+      response.url().endsWith("/homepage/visits") &&
+      response.request().method() === "POST"
+  );
+  await page.reload();
+  expect((await homepageVisit).status()).toBe(201);
   await page.getByTestId("pet-public-owner-workspace").click();
   await expect(page).toHaveURL(/\/cloud-pets$/);
+  await page.reload();
+  await expect(page.getByTestId("cloud-member-profile")).toBeVisible();
+  await expect(page.getByTestId("cloud-reminder-action-share-homepage")).toHaveCount(0);
   await page.getByTestId("cloud-member-logout").click();
   await expect(page.getByTestId("cloud-member-profile")).toHaveCount(0);
   await page.goto(publicPetUrl);

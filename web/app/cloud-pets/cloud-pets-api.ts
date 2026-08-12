@@ -73,6 +73,7 @@ export interface CloudPetProfile {
   petNo: string;
   ownerName: string;
   ownerPhone: string;
+  homepageVisitCount?: number;
   name: string;
   species: "cat" | "dog";
   personality: string;
@@ -86,7 +87,7 @@ export interface CloudPetProfile {
 
 export type CloudPetPublicProfile = Omit<
   CloudPetProfile,
-  "ownerName" | "ownerPhone"
+  "ownerName" | "ownerPhone" | "homepageVisitCount"
 >;
 
 export interface CreateCloudPetInput {
