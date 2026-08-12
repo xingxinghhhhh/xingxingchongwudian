@@ -118,9 +118,7 @@ export class CloudPetDeploymentReadinessService {
 
     return {
       adminAuthConfigured:
-        isConfigured(this.configService.get<string>("ADMIN_API_KEY")) &&
-        isConfigured(this.configService.get<string>("ADMIN_OWNER_EMAIL")) &&
-        isConfigured(this.configService.get<string>("ADMIN_OWNER_PASSWORD")),
+        isConfigured(this.configService.get<string>("ADMIN_API_KEY")),
       memberWebhookConfigured:
         memberAuthProvider === "webhook" &&
         isConfigured(this.configService.get<string>("MEMBER_AUTH_CODE_SECRET")) &&

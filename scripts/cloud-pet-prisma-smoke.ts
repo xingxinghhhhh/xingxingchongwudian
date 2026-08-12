@@ -268,6 +268,10 @@ async function main() {
     PORT: String(port)
   };
   env[CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256] = computeCloudPetSafeConfigSha256(env);
+  const runtimeEnv = { ...env };
+  delete runtimeEnv.ADMIN_OWNER_NAME;
+  delete runtimeEnv.ADMIN_OWNER_EMAIL;
+  delete runtimeEnv.ADMIN_OWNER_PASSWORD;
   let api: ApiProcess | undefined;
   let prisma: PrismaClient | undefined;
 
@@ -280,7 +284,7 @@ async function main() {
     );
     await run(process.execPath, [adminOwnerBootstrapScript], env);
 
-    api = startApi(env);
+    api = startApi(runtimeEnv);
     await waitForReadiness(baseUrl, api);
     const sessionToken = await loginMember(baseUrl, webhook, phone);
     const createPet = await requestJson(baseUrl, "/api/cloud-pets", {
@@ -323,7 +327,7 @@ async function main() {
 
     await stopApi(api);
     api = undefined;
-    api = startApi(env);
+    api = startApi(runtimeEnv);
     await waitForReadiness(baseUrl, api);
 
     const restoredMember = await requestJson(baseUrl, "/api/members/me", {

@@ -940,6 +940,10 @@ async function main() {
     [CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256]:
       computeCloudPetSafeConfigSha256(baseEnv)
   };
+  const runtimeEnv = { ...env };
+  delete runtimeEnv.ADMIN_OWNER_NAME;
+  delete runtimeEnv.ADMIN_OWNER_EMAIL;
+  delete runtimeEnv.ADMIN_OWNER_PASSWORD;
   let api;
   let web;
 
@@ -967,13 +971,13 @@ async function main() {
     );
     await run(process.execPath, [adminOwnerBootstrapScript], { env });
 
-    api = startApi(env);
+    api = startApi(runtimeEnv);
     await waitForReadiness(baseUrl, api);
     await verifyApiSecurityHeaders(baseUrl);
     await verifyApiRequestBodyLimit(baseUrl);
-    await verifyOpsMetrics(baseUrl, env);
+    await verifyOpsMetrics(baseUrl, runtimeEnv);
     web = startWeb(
-      { ...env, CLOUD_PET_RELEASE_ID: "web-runtime-must-not-replace-build-id" },
+      { ...runtimeEnv, CLOUD_PET_RELEASE_ID: "web-runtime-must-not-replace-build-id" },
       webPort
     );
     await waitForWeb(webBaseUrl, web);
@@ -987,7 +991,7 @@ async function main() {
     await verifyAdminCloudPetLaunchReadiness(
       baseUrl,
       firstSession,
-      env.OPS_METRICS_TOKEN
+      runtimeEnv.OPS_METRICS_TOKEN
     );
     const firstMemberSession = await loginMember(
       baseUrl,
@@ -999,7 +1003,7 @@ async function main() {
     await updateOperationsConfig(baseUrl, firstSession);
     await stopApi(api);
 
-    api = startApi(env);
+    api = startApi(runtimeEnv);
     await waitForReadiness(baseUrl, api);
     await verifyPersistentSession(baseUrl, firstSession);
     await verifyPersistentMemberSession(

@@ -202,6 +202,15 @@ async function waitForLocatorText(locator, predicate, message) {
   throw new Error(message);
 }
 
+async function waitForLocatorEnabled(locator, message) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await locator.isEnabled()) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error(message);
+}
+
 async function waitForLocatorCount(locator, predicate, message) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -254,7 +263,12 @@ async function runBrowserSmoke(webBaseUrl, apiBaseUrl, webhook, member, adminCre
     await page.getByTestId("cloud-member-request-code").click();
     const code = await waitForVerificationCode(webhook, member.phone);
     await page.getByTestId("cloud-member-code").fill(code);
-    await page.getByTestId("cloud-member-sync").click();
+    const memberSyncButton = page.getByTestId("cloud-member-sync");
+    await waitForLocatorEnabled(
+      memberSyncButton,
+      "Member sync button did not become enabled after the verification challenge was populated"
+    );
+    await memberSyncButton.click();
     await page.getByTestId("cloud-member-profile").waitFor({ state: "visible" });
 
     const petName = `Web Pet ${member.phone.slice(-8)}`;
@@ -1214,17 +1228,21 @@ async function main() {
     ...env,
     [CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256]: computeCloudPetSafeConfigSha256(env)
   };
+  const runtimeEnv = { ...smokeEnv };
+  delete runtimeEnv.ADMIN_OWNER_NAME;
+  delete runtimeEnv.ADMIN_OWNER_EMAIL;
+  delete runtimeEnv.ADMIN_OWNER_PASSWORD;
   let api;
   let web;
   try {
     await writeFile(databasePath, "", { flag: "wx" });
     await run(process.execPath, [prismaCli, "migrate", "deploy", "--schema", schemaPath], smokeEnv);
     await run(process.execPath, [adminOwnerBootstrapScript], smokeEnv);
-    await run(process.execPath, [nextCli, "build", "web"], smokeEnv);
-    api = startProcess(process.execPath, [apiEntry], smokeEnv);
+    await run(process.execPath, [nextCli, "build", "web"], runtimeEnv);
+    api = startProcess(process.execPath, [apiEntry], runtimeEnv);
     await waitForApi(apiBaseUrl, api);
     web = startProcess(process.execPath, [nextCli, "start", "web", "-p", String(webPort), "-H", "127.0.0.1"], {
-      ...smokeEnv,
+      ...runtimeEnv,
       PORT: String(webPort)
     });
     await waitForWeb(webListenBaseUrl, web);

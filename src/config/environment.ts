@@ -15,10 +15,6 @@ function readString(config: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
 export function validateEnvironment(config: Record<string, unknown>) {
   if (readString(config, CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256)) {
     resolveCloudPetExpectedSafeConfigSha256(config);
@@ -49,8 +45,6 @@ export function validateEnvironment(config: Record<string, unknown>) {
   const databaseUrl = readString(config, "DATABASE_URL");
   const adminApiKey = readString(config, "ADMIN_API_KEY");
   const webOrigin = readString(config, "WEB_ORIGIN");
-  const ownerEmail = readString(config, "ADMIN_OWNER_EMAIL");
-  const ownerPassword = readString(config, "ADMIN_OWNER_PASSWORD");
   const paymentTimeout = readString(config, "PAYMENT_TIMEOUT_MINUTES");
   const adminSessionTtl = readString(config, "ADMIN_SESSION_TTL_HOURS");
   const memberSessionTtl = readString(config, "MEMBER_SESSION_TTL_DAYS");
@@ -97,18 +91,6 @@ export function validateEnvironment(config: Record<string, unknown>) {
     }
   } catch {
     errors.push("WEB_ORIGIN must be a valid HTTP(S) origin");
-  }
-
-  if (!isValidEmail(ownerEmail)) {
-    errors.push("ADMIN_OWNER_EMAIL must be a valid email address");
-  }
-
-  if (
-    ownerPassword.length < 12 ||
-    ownerPassword === "owner123456" ||
-    ownerPassword.toLowerCase().includes("password")
-  ) {
-    errors.push("ADMIN_OWNER_PASSWORD must contain at least 12 non-default characters");
   }
 
   if (

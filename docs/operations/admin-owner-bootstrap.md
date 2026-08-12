@@ -4,12 +4,17 @@
 
 ## 操作顺序
 
-1. 准备生产环境变量：`DATABASE_URL`、`ADMIN_OWNER_NAME`、`ADMIN_OWNER_EMAIL`、`ADMIN_OWNER_PASSWORD`。
+1. 准备生产数据库配置 `DATABASE_URL`。一次性 bootstrap 命令额外需要 `ADMIN_OWNER_NAME`、`ADMIN_OWNER_EMAIL`、`ADMIN_OWNER_PASSWORD`；这些凭据只用于初始化阶段。
 2. 在已经完成 `npm run build` 的发布目录执行：
 
 ```bash
 npm run ops:bootstrap:admin-owner
 ```
+
+`ADMIN_OWNER_NAME`, `ADMIN_OWNER_EMAIL`, and `ADMIN_OWNER_PASSWORD` are
+bootstrap-only inputs. They are required for this one-time command, but the
+long-running API does not require the owner email or password after an active
+Owner Staff exists in the database.
 
 3. 使用同一 Owner 邮箱和密码访问 `/admin/login`，通过正常 Admin 登录流程建立 StaffSession。
 4. 之后启动 API。生产启动只校验存在 active Owner，不会再用环境变量覆盖账号资料或密码。

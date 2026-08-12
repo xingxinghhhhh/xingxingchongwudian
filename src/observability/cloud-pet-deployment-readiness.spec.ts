@@ -10,8 +10,6 @@ const productionConfig = {
   DATABASE_URL: "file:./prisma/dev.db",
   KZT_USE_MEMORY_STORE: "false",
   ADMIN_API_KEY: "production-admin-key-with-more-than-24-chars",
-  ADMIN_OWNER_EMAIL: "owner@example.com",
-  ADMIN_OWNER_PASSWORD: "production-owner-password",
   WEB_ORIGIN: "https://pets.example.com",
   MEMBER_AUTH_PROVIDER: "webhook",
   MEMBER_AUTH_CODE_SECRET: "member-auth-code-secret-with-32-characters",
@@ -185,6 +183,7 @@ describe("CloudPetDeploymentReadinessService", () => {
   it("does not expose secrets or internal paths", async () => {
     const result = await createService({
       ...productionConfig,
+      ADMIN_OWNER_PASSWORD: "production-owner-password",
       SQLITE_RECOVERY_STATUS_DIR: "C:\\private\\recovery"
     }).getReadiness();
     const serialized = JSON.stringify(result);

@@ -7,8 +7,6 @@ const validProductionEnvironment = {
   DATABASE_URL: "mysql://shop_user:secret@db.example.com:3306/pet_shop",
   ADMIN_API_KEY: "a-strong-admin-key-with-24-chars",
   WEB_ORIGIN: "https://pets.example.com",
-  ADMIN_OWNER_EMAIL: "owner@pets.example.com",
-  ADMIN_OWNER_PASSWORD: "strong-owner-secret",
   MEMBER_AUTH_PROVIDER: "webhook",
   MEMBER_AUTH_CODE_SECRET: "member-auth-code-secret-with-32-characters",
   MEMBER_AUTH_WEBHOOK_URL: "https://sms.example.com/member-verification",
@@ -42,8 +40,6 @@ describe("validateEnvironment", () => {
         "KZT_USE_MEMORY_STORE cannot be true",
         "ADMIN_API_KEY must contain at least 24 non-default characters",
         "WEB_ORIGIN must be a valid HTTP(S) origin",
-        "ADMIN_OWNER_EMAIL must be a valid email address",
-        "ADMIN_OWNER_PASSWORD must contain at least 12 non-default characters",
         "MEMBER_AUTH_PROVIDER must be webhook",
         "MEMBER_AUTH_CODE_SECRET must contain at least 32 non-default characters",
         "MEMBER_AUTH_WEBHOOK_URL must be a valid URL",
@@ -59,10 +55,15 @@ describe("validateEnvironment", () => {
       validateEnvironment({
         ...validProductionEnvironment,
         ADMIN_API_KEY: "dev-admin-key",
-        ADMIN_OWNER_PASSWORD: "owner123456",
         WEB_ORIGIN: "http://localhost:3001"
       })
     ).toThrow("Invalid production environment");
+  });
+
+  it("accepts a production runtime without bootstrap-only owner secrets", () => {
+    expect(validateEnvironment(validProductionEnvironment)).toBe(
+      validProductionEnvironment
+    );
   });
 
   it("allows a local web origin only for the explicit production smoke", () => {

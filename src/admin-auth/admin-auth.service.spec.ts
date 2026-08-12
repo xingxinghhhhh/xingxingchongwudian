@@ -136,10 +136,12 @@ describe("AdminAuthService", () => {
     );
   const productionConfig = {
     NODE_ENV: "production",
-    ADMIN_OWNER_EMAIL: "secure-owner@pets.example.com",
-    ADMIN_OWNER_PASSWORD: "secure-owner-secret",
-    ADMIN_OWNER_NAME: "Pet Operations Owner",
     ADMIN_SESSION_TTL_HOURS: "12"
+  };
+  const ownerCredentials = {
+    name: "Pet Operations Owner",
+    email: "secure-owner@pets.example.com",
+    password: "secure-owner-secret"
   };
 
   it("fails closed when production has no active owner", async () => {
@@ -215,10 +217,10 @@ describe("AdminAuthService", () => {
     );
     store.seedAccount({
       staffNo: "STAFF_OWNER",
-      name: productionConfig.ADMIN_OWNER_NAME,
-      email: productionConfig.ADMIN_OWNER_EMAIL,
+      name: ownerCredentials.name,
+      email: ownerCredentials.email,
       passwordHash: (firstService as never as { hashPassword: (password: string) => string }).hashPassword(
-        productionConfig.ADMIN_OWNER_PASSWORD
+        ownerCredentials.password
       ),
       role: "owner",
       permissions: [...ADMIN_OWNER_PERMISSIONS],
@@ -227,8 +229,8 @@ describe("AdminAuthService", () => {
     await firstService.onModuleInit();
 
     const login = await firstService.login({
-      email: "secure-owner@pets.example.com",
-      password: "secure-owner-secret"
+      email: ownerCredentials.email,
+      password: ownerCredentials.password
     });
     const persistedAccount = store.getAccount();
 
@@ -279,10 +281,10 @@ describe("AdminAuthService", () => {
     );
     store.seedAccount({
       staffNo: "STAFF_OWNER",
-      name: productionConfig.ADMIN_OWNER_NAME,
-      email: productionConfig.ADMIN_OWNER_EMAIL,
+      name: ownerCredentials.name,
+      email: ownerCredentials.email,
       passwordHash: (service as never as { hashPassword: (password: string) => string }).hashPassword(
-        productionConfig.ADMIN_OWNER_PASSWORD
+        ownerCredentials.password
       ),
       role: "owner",
       permissions: [...ADMIN_OWNER_PERMISSIONS],
@@ -290,8 +292,8 @@ describe("AdminAuthService", () => {
     });
     await service.onModuleInit();
     const expiredLogin = await service.login({
-      email: productionConfig.ADMIN_OWNER_EMAIL,
-      password: productionConfig.ADMIN_OWNER_PASSWORD
+      email: ownerCredentials.email,
+      password: ownerCredentials.password
     });
     store.updateSession(expiredLogin.sessionToken, {
       expiresAt: new Date(Date.now() - 1_000)
@@ -302,8 +304,8 @@ describe("AdminAuthService", () => {
     );
 
     const disabledLogin = await service.login({
-      email: productionConfig.ADMIN_OWNER_EMAIL,
-      password: productionConfig.ADMIN_OWNER_PASSWORD
+      email: ownerCredentials.email,
+      password: ownerCredentials.password
     });
     store.updateAccount({ status: "disabled" });
 
