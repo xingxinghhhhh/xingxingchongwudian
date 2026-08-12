@@ -129,6 +129,7 @@ function getInitialCommunityReportFilters() {
     ? {
         status: "pending_review" as const,
         postNo: searchParams.get("reportPostNo")?.trim() ?? "",
+        commentNo: "",
         memberPhone: ""
       }
     : null;
@@ -254,6 +255,7 @@ export function AdminConsole() {
   const [reportFilters, setReportFilters] = useState({
     status: "",
     postNo: "",
+    commentNo: "",
     memberPhone: ""
   });
   const canManageCustomers =
@@ -862,6 +864,7 @@ export function AdminConsole() {
     return {
       status,
       postNo: reportFilters.postNo,
+      commentNo: reportFilters.commentNo,
       memberPhone: reportFilters.memberPhone
     };
   }
@@ -1059,7 +1062,7 @@ export function AdminConsole() {
       return;
     }
 
-    setReportFilters({ status: "", postNo: "", memberPhone: "" });
+    setReportFilters({ status: "", postNo: "", commentNo: "", memberPhone: "" });
     setError(null);
 
     try {
@@ -3221,6 +3224,17 @@ export function AdminConsole() {
               />
             </label>
             <label>
+              评论编号
+              <input
+                data-testid="admin-community-report-filter-comment"
+                onChange={(event) =>
+                  setReportFilters((current) => ({ ...current, commentNo: event.target.value }))
+                }
+                placeholder="CMT001"
+                value={reportFilters.commentNo}
+              />
+            </label>
+            <label>
               会员手机号
               <input
                 data-testid="admin-community-report-filter-member"
@@ -3254,6 +3268,7 @@ export function AdminConsole() {
                   <strong>{report.reportNo}</strong>
                   <span data-testid="admin-community-report-status">
                     {getStatusLabel(report.status) + " / " + report.postNo}
+                    {report.commentNo ? " / 评论 " + report.commentNo : ""}
                   </span>
                   <span>
                     举报人 {report.reporterName} / {report.memberPhone ?? "未提供手机号"} / {new Date(report.createdAt).toLocaleString()}
@@ -3266,19 +3281,21 @@ export function AdminConsole() {
                 ) : null}
                 {report.status === "pending_review" ? (
                   <div className="admin-inline-actions">
-                    <button
-                      className="admin-button admin-button--small"
-                      data-testid="admin-community-report-resolve-hide"
-                      disabled={busyReportNo === report.reportNo}
-                      onClick={() =>
-                        void handleReportStatus(report.reportNo, "reviewed", {
-                          hidePostNo: report.postNo
-                        })
-                      }
-                      type="button"
-                    >
-                      处理并隐藏帖子
-                    </button>
+                    {!report.commentNo ? (
+                      <button
+                        className="admin-button admin-button--small"
+                        data-testid="admin-community-report-resolve-hide"
+                        disabled={busyReportNo === report.reportNo}
+                        onClick={() =>
+                          void handleReportStatus(report.reportNo, "reviewed", {
+                            hidePostNo: report.postNo
+                          })
+                        }
+                        type="button"
+                      >
+                        处理并隐藏帖子
+                      </button>
+                    ) : null}
                     <button
                       className="admin-button admin-button--small admin-button--ghost"
                       data-testid="admin-community-report-resolve"

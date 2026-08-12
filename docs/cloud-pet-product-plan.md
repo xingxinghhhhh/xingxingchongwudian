@@ -257,3 +257,4 @@ Phases 1 through 6 now have their primary user and operator loops in place. The 
 - 会员云养宠工作台现在会在真实任务生成 care_daily_diary 后提供“查看今日日记”入口；点击会复用既有日记筛选并定位归档，presence、owner note 和 legacy 日记不会误触发该提示。
 - 社区会员现在可以撤回自己宠物下发布的动态；撤回使用独立 authorDeletedAt 软状态，会员/公开 Feed 隐藏该内容，Admin 列表与既有举报证据保持可追溯。
 - 稳定社区帖子详情页现在复用既有举报原因和 MemberSession 接口，举报结果继续进入 Admin pending_review 队列；重复举报遵守 created=false 语义，举报不会在客户端直接隐藏帖子。
+- 社区评论现在支持基于 commentNo 的会员举报；举报记录保留父帖 postNo，帖子级举报统计不混入评论举报，Admin 队列可识别评论目标且不会误提供“隐藏帖子”动作。

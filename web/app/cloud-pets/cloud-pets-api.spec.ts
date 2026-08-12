@@ -13,6 +13,7 @@ import {
   listCommunityComments,
   listCommunityPosts,
   listFollowedCommunityPosts,
+  reportCommunityComment,
   reportCommunityPost,
   updateCommunityComment,
   updateCommunityPost,
@@ -622,6 +623,36 @@ describe("cloud pets api client", () => {
         reportFetcher
       )
     ).resolves.toMatchObject({ status: "pending_review" });
+
+    const commentReportFetcher = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        reportNo: "RPT002",
+        postNo: "POST001",
+        commentNo: "CMT001",
+        status: "pending_review"
+      })
+    });
+    await expect(
+      reportCommunityComment(
+        "CMT001",
+        { reason: "Comment report reason" },
+        "member_community_005",
+        commentReportFetcher
+      )
+    ).resolves.toMatchObject({ commentNo: "CMT001", status: "pending_review" });
+    expect(commentReportFetcher).toHaveBeenCalledWith(
+      "http://localhost:3000/api/community/comments/CMT001/reports",
+      {
+        body: JSON.stringify({ reason: "Comment report reason" }),
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Member-Token": "member_community_005"
+        },
+        method: "POST"
+      }
+    );
 
     const withdrawFetcher = jest.fn().mockResolvedValue({
       ok: true,

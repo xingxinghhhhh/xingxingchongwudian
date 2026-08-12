@@ -6213,6 +6213,136 @@ describe("Pet toy shop API", () => {
       });
   });
 
+  it("supports member reports on visible community comments without changing post reports", async () => {
+    const ownerPhone = "13600136880";
+    const reporterPhone = "13600136881";
+    const ownerSession = await loginAsMember(ownerPhone, "Comment Report Owner");
+    const reporterSession = await loginAsMember(reporterPhone, "Comment Reporter");
+
+    const petResponse = await request(app.getHttpServer())
+      .post("/api/cloud-pets")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        ownerName: "Comment Report Owner",
+        ownerPhone,
+        name: "Comment Report Pet",
+        species: "cat",
+        personality: "Keeps the comment report contract test focused."
+      })
+      .expect(201);
+
+    const postResponse = await request(app.getHttpServer())
+      .post("/api/community/posts")
+      .set("X-Member-Token", ownerSession)
+      .send({
+        petNo: petResponse.body.petNo,
+        body: "A post containing a comment report target."
+      })
+      .expect(201);
+
+    const commentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "A visible comment that can be reported." })
+      .expect(201);
+    const commentNo = commentResponse.body.commentNo as string;
+
+    await request(app.getHttpServer())
+      .post(`/api/community/comments/${commentNo}/reports`)
+      .set("X-Member-Token", reporterSession)
+      .send({
+        memberPhone: "spoofed-phone",
+        reporterName: "Spoofed Reporter",
+        reason: "Comment needs merchant review."
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          commentNo,
+          postNo: postResponse.body.postNo,
+          memberPhone: reporterPhone,
+          reporterName: "Comment Reporter",
+          reason: "Comment needs merchant review.",
+          status: "pending_review",
+          created: true
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/comments/${commentNo}/reports`)
+      .set("X-Member-Token", reporterSession)
+      .send({ reason: "Repeated comment report." })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          commentNo,
+          status: "pending_review",
+          created: false
+        });
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/community/comments/${commentNo}/reports`)
+      .send({ reason: "Anonymous comment report." })
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .get(`/api/community/posts/${postResponse.body.postNo}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          postNo: postResponse.body.postNo,
+          reportCount: 0,
+          commentCount: 1
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(
+        `/api/admin/community/reports?status=pending_review&postNo=${postResponse.body.postNo}&commentNo=${commentNo}`
+      )
+      .set("X-Admin-Token", "dev-admin-key")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.items).toEqual([
+          expect.objectContaining({
+            commentNo,
+            postNo: postResponse.body.postNo,
+            status: "pending_review"
+          })
+        ]);
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/api/community/comments/${commentNo}`)
+      .set("X-Member-Token", ownerSession)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/comments/${commentNo}/reports`)
+      .set("X-Member-Token", reporterSession)
+      .send({ reason: "Withdrawn comment report." })
+      .expect(404);
+
+    const secondCommentResponse = await request(app.getHttpServer())
+      .post(`/api/community/posts/${postResponse.body.postNo}/comments`)
+      .set("X-Member-Token", ownerSession)
+      .send({ body: "A second comment for parent visibility." })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/admin/community/posts/${postResponse.body.postNo}/status`)
+      .set("X-Admin-Token", "dev-admin-key")
+      .send({ status: "hidden" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/community/comments/${secondCommentResponse.body.commentNo}/reports`)
+      .set("X-Member-Token", reporterSession)
+      .send({ reason: "Hidden parent report." })
+      .expect(404);
+  });
+
   it("requires member auth for payment intents and keeps payment confirmation idempotent", async () => {
     const orderResponse = await request(app.getHttpServer())
       .post("/api/orders")

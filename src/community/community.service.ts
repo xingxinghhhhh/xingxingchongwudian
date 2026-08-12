@@ -50,6 +50,7 @@ export interface CommunityCommentResponse {
 export interface CommunityReportResponse {
   reportNo: string;
   postNo: string;
+  commentNo?: string;
   memberPhone?: string;
   reporterName: string;
   reason: string;
@@ -63,6 +64,7 @@ export interface CommunityReportResponse {
 export interface CommunityReportFilters {
   status?: CommunityReportStatus;
   postNo?: string;
+  commentNo?: string;
   memberPhone?: string;
 }
 
@@ -98,6 +100,7 @@ type AuthenticatedCommunityFollowInput = CreateCommunityFollowDto & {
 type AuthenticatedCommunityReportInput = CreateCommunityReportDto & {
   memberPhone: string;
   reporterName: string;
+  commentNo?: string;
 };
 
 @Injectable()
@@ -651,6 +654,7 @@ export class CommunityService {
       const existingReport = this.reports.find(
         (report) =>
           report.postNo === postNo &&
+          !report.commentNo &&
           report.memberPhone === dto.memberPhone &&
           report.status === "pending_review"
       );
@@ -662,6 +666,7 @@ export class CommunityService {
       const report = {
         reportNo: this.createReportNo(),
         postNo,
+        commentNo: undefined,
         memberPhone: dto.memberPhone,
         reporterName: dto.reporterName,
         reason: dto.reason,
@@ -676,6 +681,7 @@ export class CommunityService {
     const existingReport = await this.prisma.communityReport.findFirst({
       where: {
         postNo,
+        commentNo: null,
         memberPhone: dto.memberPhone,
         status: "pending_review"
       },
@@ -703,6 +709,107 @@ export class CommunityService {
 
     return { ...this.toReportResponse(report), created: true };
   }
+
+  async reportComment(
+    commentNo: string,
+    dto: AuthenticatedCommunityReportInput
+  ): Promise<CommunityReportResponse> {
+    if (!this.isDatabaseConfigured()) {
+      const comment = this.comments.find((item) => item.commentNo === commentNo);
+      const post = comment
+        ? this.posts.find((item) => item.postNo === comment.postNo)
+        : undefined;
+
+      if (
+        !comment ||
+        comment.status !== "visible" ||
+        comment.authorDeletedAt ||
+        !post ||
+        post.status !== "visible" ||
+        post.authorDeletedAt
+      ) {
+        throw new NotFoundException("Community comment not found");
+      }
+
+      const existingReport = this.reports.find(
+        (report) =>
+          report.commentNo === commentNo &&
+          report.memberPhone === dto.memberPhone &&
+          report.status === "pending_review"
+      );
+
+      if (existingReport) {
+        return { ...existingReport, created: false };
+      }
+
+      const report = {
+        reportNo: this.createReportNo(),
+        postNo: comment.postNo,
+        commentNo,
+        memberPhone: dto.memberPhone,
+        reporterName: dto.reporterName,
+        reason: dto.reason,
+        status: "pending_review",
+        createdAt: new Date().toISOString()
+      } satisfies CommunityReportResponse;
+      this.reports.unshift(report);
+      return { ...report, created: true };
+    }
+
+    const comment = await this.prisma.communityComment.findUnique({
+      where: { commentNo },
+      select: { postNo: true, status: true, authorDeletedAt: true }
+    });
+
+    if (
+      !comment ||
+      comment.status !== "visible" ||
+      comment.authorDeletedAt
+    ) {
+      throw new NotFoundException("Community comment not found");
+    }
+
+    const post = await this.prisma.communityPost.findFirst({
+      where: {
+        postNo: comment.postNo,
+        status: "visible",
+        authorDeletedAt: null
+      },
+      select: { id: true }
+    });
+
+    if (!post) {
+      throw new NotFoundException("Community comment not found");
+    }
+
+    const existingReport = await this.prisma.communityReport.findFirst({
+      where: {
+        commentNo,
+        memberPhone: dto.memberPhone,
+        status: "pending_review"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    if (existingReport) {
+      return { ...this.toReportResponse(existingReport), created: false };
+    }
+
+    const report = await this.prisma.communityReport.create({
+      data: {
+        reportNo: this.createReportNo(),
+        postId: post.id,
+        postNo: comment.postNo,
+        commentNo,
+        memberPhone: dto.memberPhone,
+        reporterName: dto.reporterName,
+        reason: dto.reason
+      }
+    });
+
+    return { ...this.toReportResponse(report), created: true };
+  }
+
   async listReports(
     filters: CommunityReportFilters = {}
   ): Promise<CommunityReportResponse[]> {
@@ -713,6 +820,7 @@ export class CommunityService {
     const where = {
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.postNo ? { postNo: filters.postNo } : {}),
+      ...(filters.commentNo ? { commentNo: filters.commentNo } : {}),
       ...(filters.memberPhone ? { memberPhone: filters.memberPhone } : {})
     };
 
@@ -941,6 +1049,10 @@ export class CommunityService {
         return false;
       }
 
+      if (filters.commentNo && report.commentNo !== filters.commentNo) {
+        return false;
+      }
+
       if (filters.memberPhone && report.memberPhone !== filters.memberPhone) {
         return false;
       }
@@ -952,6 +1064,7 @@ export class CommunityService {
   private toReportResponse(report: {
     reportNo: string;
     postNo: string;
+    commentNo?: string | null;
     memberPhone: string | null;
     reporterName: string;
     reason: string;
@@ -963,6 +1076,7 @@ export class CommunityService {
     return {
       reportNo: report.reportNo,
       postNo: report.postNo,
+      commentNo: report.commentNo ?? undefined,
       memberPhone: report.memberPhone ?? undefined,
       reporterName: report.reporterName,
       reason: report.reason,
@@ -1008,7 +1122,7 @@ export class CommunityService {
         select: {
           likes: true,
           comments: true,
-          reports: true
+          reports: { where: { commentNo: null } }
         }
       }
     };
@@ -1022,7 +1136,7 @@ export class CommunityService {
           comments: {
             where: { status: "visible" as const, authorDeletedAt: null }
           },
-          reports: true
+          reports: { where: { commentNo: null } }
         }
       }
     };
@@ -1042,8 +1156,9 @@ export class CommunityService {
         comment.status === "visible" &&
         !comment.authorDeletedAt
     ).length;
-    post.reportCount = this.reports.filter((report) => report.postNo === postNo)
-      .length;
+    post.reportCount = this.reports.filter(
+      (report) => report.postNo === postNo && !report.commentNo
+    ).length;
   }
 
   private countMemoryLikes(postNo: string) {

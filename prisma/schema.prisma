@@ -355,6 +355,7 @@ model CommunityReport {
   postId       String
   post         CommunityPost         @relation(fields: [postId], references: [id])
   postNo       String
+  commentNo    String?
   memberPhone  String?
   reporterName String
   reason       String
@@ -365,6 +366,7 @@ model CommunityReport {
   resolvedAt   DateTime?
 
   @@index([postNo])
+  @@index([commentNo])
   @@index([memberPhone])
 }
 

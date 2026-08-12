@@ -167,6 +167,7 @@ export interface CommunityComment {
 export interface CommunityReport {
   reportNo: string;
   postNo: string;
+  commentNo?: string;
   memberPhone?: string;
   reporterName: string;
   reason: string;
@@ -491,6 +492,19 @@ export function reportCommunityPost(
 ) {
   return requestJson<CommunityReport>(
     `/community/posts/${encodeURIComponent(postNo)}/reports`,
+    jsonRequest(input, sessionToken),
+    fetcher
+  );
+}
+
+export function reportCommunityComment(
+  commentNo: string,
+  input: { reason: string },
+  sessionToken: string,
+  fetcher: Fetcher = fetch
+) {
+  return requestJson<CommunityReport>(
+    `/community/comments/${encodeURIComponent(commentNo)}/reports`,
     jsonRequest(input, sessionToken),
     fetcher
   );

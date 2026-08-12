@@ -7,6 +7,7 @@ import type { CommunityComment, CommunityPost } from "../../../cloud-pets/cloud-
 import {
   commentOnCommunityPost,
   likeCommunityPost,
+  reportCommunityComment,
   reportCommunityPost,
   updateCommunityComment,
   updateCommunityPost,
@@ -121,6 +122,40 @@ export function CommunityPostDetail({
         setCanEdit(false);
       }
       setError(caught instanceof Error ? caught.message : "举报失败，请稍后重试");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleReportComment(commentNo: string) {
+    if (!memberSession) {
+      setError("请先同步会员后再举报");
+      return;
+    }
+
+    setBusyAction(`report-comment-${commentNo}`);
+    setError(null);
+
+    try {
+      const report = await reportCommunityComment(
+        commentNo,
+        { reason: reportReason },
+        memberSession
+      );
+      setStatus(
+        report.created
+          ? "评论举报已进入商家审核队列。"
+          : "评论举报已更新到商家审核队列。"
+      );
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "Invalid member session") {
+        window.localStorage.removeItem(memberSessionKey);
+        window.localStorage.removeItem(memberPhoneKey);
+        setMemberSession(null);
+        setMemberPhone(null);
+        setCanEdit(false);
+      }
+      setError(caught instanceof Error ? caught.message : "评论举报失败，请稍后重试");
     } finally {
       setBusyAction(null);
     }
@@ -459,7 +494,11 @@ export function CommunityPostDetail({
         <h2>评论</h2>
         {comments.length > 0 ? (
           comments.map((comment) => (
-            <article data-testid="community-post-detail-comment" key={comment.commentNo}>
+            <article
+              data-comment-no={comment.commentNo}
+              data-testid="community-post-detail-comment"
+              key={comment.commentNo}
+            >
               <strong>{comment.authorName}</strong>
               {editingCommentNo === comment.commentNo ? (
                 <form onSubmit={(event) => void handleEditComment(event, comment)}>
@@ -495,6 +534,32 @@ export function CommunityPostDetail({
               ) : (
                 <span>{comment.body}</span>
               )}
+              <div className="admin-inline-actions">
+                <select
+                  className="cloud-report-select"
+                  data-testid="community-post-detail-comment-report-reason"
+                  disabled={!memberSession || busyAction !== null}
+                  onChange={(event) => setReportReason(event.target.value)}
+                  value={reportReason}
+                >
+                  {communityReportReasons.map((reason) => (
+                    <option key={reason} value={reason}>
+                      {reason}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="cloud-button cloud-button--small cloud-button--ghost"
+                  data-testid="community-post-detail-comment-report-submit"
+                  disabled={!memberSession || busyAction !== null}
+                  onClick={() => void handleReportComment(comment.commentNo)}
+                  type="button"
+                >
+                  {busyAction === `report-comment-${comment.commentNo}`
+                    ? "处理中…"
+                    : "举报评论"}
+                </button>
+              </div>
               {memberSession && memberPhone && comment.memberPhone === memberPhone ? (
                 <div className="admin-inline-actions">
                   {editingCommentNo !== comment.commentNo ? (

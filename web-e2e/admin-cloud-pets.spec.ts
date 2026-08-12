@@ -125,6 +125,77 @@ test("admin report queue filters community reports by status, post, and member",
     .toBeVisible();
 });
 
+test("admin report queue identifies a reported community comment", async ({
+  page,
+  request
+}) => {
+  const runId = Date.now().toString().slice(-8);
+  const ownerName = `CQOwner${runId}`;
+  const ownerPhone = `131${runId}`;
+  const reporterName = `CQReporter${runId}`;
+  const reporterPhone = `130${runId}`;
+  const ownerMember = await loginAsVerifiedMember(request, {
+    name: ownerName,
+    phone: ownerPhone
+  });
+  const reporterMember = await loginAsVerifiedMember(request, {
+    name: reporterName,
+    phone: reporterPhone
+  });
+
+  const petResponse = await request.post(`${API_BASE}/cloud-pets`, {
+    data: {
+      ownerName,
+      ownerPhone,
+      name: `CQPet${runId}`,
+      species: "dog",
+      personality: "Keeps comment moderation targets visible."
+    },
+    headers: { "X-Member-Token": ownerMember.sessionToken }
+  });
+  expect(petResponse.ok()).toBeTruthy();
+  const petNo = ((await petResponse.json()) as { petNo: string }).petNo;
+  const postResponse = await request.post(`${API_BASE}/community/posts`, {
+    data: { petNo, body: `Comment queue post ${runId}` },
+    headers: { "X-Member-Token": ownerMember.sessionToken }
+  });
+  expect(postResponse.ok()).toBeTruthy();
+  const postNo = ((await postResponse.json()) as { postNo: string }).postNo;
+  const commentResponse = await request.post(
+    `${API_BASE}/community/posts/${postNo}/comments`,
+    {
+      data: { body: `Comment queue target ${runId}` },
+      headers: { "X-Member-Token": ownerMember.sessionToken }
+    }
+  );
+  expect(commentResponse.ok()).toBeTruthy();
+  const commentNo = ((await commentResponse.json()) as { commentNo: string }).commentNo;
+  const reportResponse = await request.post(
+    `${API_BASE}/community/comments/${commentNo}/reports`,
+    {
+      data: { reason: `Comment queue report ${runId}` },
+      headers: { "X-Member-Token": reporterMember.sessionToken }
+    }
+  );
+  expect(reportResponse.ok()).toBeTruthy();
+  const reportNo = ((await reportResponse.json()) as { reportNo: string }).reportNo;
+
+  await loginAsAdmin(page, "owner");
+  const reportSection = page.locator("#admin-community-reports");
+  await expect(
+    reportSection.locator(
+      `[data-testid="admin-community-report-item"][data-report-no="${reportNo}"]`
+    )
+  ).toBeVisible();
+  const reportItem = reportSection.locator(
+    `[data-testid="admin-community-report-item"][data-report-no="${reportNo}"]`
+  );
+  await expect(reportItem).toContainText(postNo);
+  await expect(reportItem).toContainText(commentNo);
+  await expect(reportItem.getByTestId("admin-community-report-resolve-hide")).toHaveCount(0);
+  await expect(reportItem.getByTestId("admin-community-report-resolve")).toBeVisible();
+});
+
 test("owner can backfill a selected daily diary gap from the admin page", async ({
   page,
   request

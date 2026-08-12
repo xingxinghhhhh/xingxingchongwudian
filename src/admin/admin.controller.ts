@@ -878,12 +878,14 @@ export class AdminController {
   async listCommunityReports(
     @Query("status") status?: CommunityReportStatus,
     @Query("postNo") postNo?: string,
+    @Query("commentNo") commentNo?: string,
     @Query("memberPhone") memberPhone?: string
   ) {
     return {
       items: await this.communityService.listReports({
         status,
         postNo: postNo?.trim() || undefined,
+        commentNo: commentNo?.trim() || undefined,
         memberPhone: memberPhone?.trim() || undefined
       })
     };

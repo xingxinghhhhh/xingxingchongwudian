@@ -204,6 +204,29 @@ export class CommunityController {
     });
   }
 
+  @Post("comments/:commentNo/reports")
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async reportComment(
+    @Param("commentNo") commentNo: string,
+    @Body() dto: CreateCommunityReportDto,
+    @Headers("x-member-token") sessionToken?: string
+  ) {
+    const session = await this.authService.getSession(sessionToken);
+    const reason = dto.reason.trim();
+
+    if (!reason) {
+      throw new BadRequestException("Community report reason cannot be blank");
+    }
+
+    return this.communityService.reportComment(commentNo, {
+      ...dto,
+      reason,
+      memberPhone: session.phone,
+      reporterName: session.name
+    });
+  }
+
   @Post("pets/:petNo/follows")
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })

@@ -563,6 +563,7 @@ export type AdminCommunityReport = CommunityReport;
 export interface AdminCommunityReportFilters {
   status?: CommunityReportStatus;
   postNo?: string;
+  commentNo?: string;
   memberPhone?: string;
 }
 export type AdminCmsBlock = CmsBlock;
@@ -1233,6 +1234,10 @@ export async function listAdminCommunityReports(
 
   if (filters.postNo?.trim()) {
     params.set("postNo", filters.postNo.trim());
+  }
+
+  if (filters.commentNo?.trim()) {
+    params.set("commentNo", filters.commentNo.trim());
   }
 
   if (filters.memberPhone?.trim()) {
