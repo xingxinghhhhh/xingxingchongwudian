@@ -18,6 +18,10 @@ import { communityReportReasons } from "../../../cloud-pets/cloud-pet-copy";
 const memberSessionKey = "kzt_member_session";
 const memberPhoneKey = "kzt_member_phone";
 
+function getCommentAnchor(commentNo: string) {
+  return `comment-${encodeURIComponent(commentNo)}`;
+}
+
 interface CommunityPostDetailProps {
   post: CommunityPost;
   comments: CommunityComment[];
@@ -42,6 +46,7 @@ export function CommunityPostDetail({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [focusedCommentNo, setFocusedCommentNo] = useState<string | null>(null);
 
   useEffect(() => {
     const session = window.localStorage.getItem(memberSessionKey);
@@ -67,6 +72,43 @@ export function CommunityPostDetail({
         setCanEdit(false);
       });
   }, [initialPost.petNo]);
+
+  useEffect(() => {
+    const focusCommentFromHash = () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#comment-")) {
+        return;
+      }
+
+      let commentNo: string;
+      try {
+        commentNo = decodeURIComponent(hash.slice("#comment-".length));
+      } catch {
+        return;
+      }
+
+      if (!comments.some((comment) => comment.commentNo === commentNo)) {
+        return;
+      }
+
+      const element = document.getElementById(getCommentAnchor(commentNo));
+      if (!element) {
+        return;
+      }
+
+      element.scrollIntoView({ block: "center" });
+      setFocusedCommentNo(commentNo);
+      const timer = window.setTimeout(() => setFocusedCommentNo(null), 2200);
+      return () => window.clearTimeout(timer);
+    };
+
+    const cleanupTimer = focusCommentFromHash();
+    window.addEventListener("hashchange", focusCommentFromHash);
+    return () => {
+      window.removeEventListener("hashchange", focusCommentFromHash);
+      cleanupTimer?.();
+    };
+  }, [comments]);
 
   async function handleLike() {
     if (!memberSession) {
@@ -377,6 +419,18 @@ export function CommunityPostDetail({
     }
   }
 
+  async function handleCopyCommentLink(commentNo: string) {
+    const url = `${window.location.origin}${window.location.pathname}#${getCommentAnchor(commentNo)}`;
+    setError(null);
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus("评论链接已复制");
+    } catch {
+      setStatus(`评论链接：${url}`);
+    }
+  }
+
   const orderedComments = comments
     .filter((comment) => !comment.parentCommentNo)
     .flatMap((comment) => [
@@ -514,13 +568,20 @@ export function CommunityPostDetail({
           orderedComments.map((comment) => (
             <article
               className={
-                comment.parentCommentNo
-                  ? "community-post-detail-comment community-post-detail-comment--reply"
-                  : "community-post-detail-comment"
+                [
+                  "community-post-detail-comment",
+                  comment.parentCommentNo ? "community-post-detail-comment--reply" : "",
+                  focusedCommentNo === comment.commentNo
+                    ? "community-post-detail-comment--focused"
+                    : ""
+                ]
+                  .filter(Boolean)
+                  .join(" ")
               }
               data-comment-no={comment.commentNo}
               data-parent-comment-no={comment.parentCommentNo}
               data-testid="community-post-detail-comment"
+              id={getCommentAnchor(comment.commentNo)}
               key={comment.commentNo}
             >
               <strong>{comment.authorName}</strong>
@@ -559,6 +620,14 @@ export function CommunityPostDetail({
                 <span>{comment.body}</span>
               )}
               <div className="admin-inline-actions">
+                <button
+                  className="cloud-button cloud-button--small cloud-button--ghost"
+                  data-testid="community-post-detail-comment-copy-link"
+                  onClick={() => void handleCopyCommentLink(comment.commentNo)}
+                  type="button"
+                >
+                  复制评论链接
+                </button>
                 {!comment.parentCommentNo ? (
                   <button
                     className="cloud-button cloud-button--small cloud-button--ghost"

@@ -3181,6 +3181,15 @@ h2 {
   margin-left: 1.5rem;
 }
 
+.community-post-detail-comment {
+  scroll-margin-top: 96px;
+}
+
+.community-post-detail-comment--focused {
+  border-color: rgba(234, 88, 12, 0.5);
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.12);
+}
+
 .community-comments p {
   background: #f8fafc;
   border-radius: 8px;

@@ -271,11 +271,30 @@ test("member can reply once to a top-level community comment", async ({ page }) 
     .getByTestId("community-post-detail-comment")
     .filter({ hasText: replyBody });
   await expect(persistedReply).toBeVisible();
+  const replyCommentNo = await persistedReply.getAttribute("data-comment-no");
+  expect(replyCommentNo).toBeTruthy();
+  await expect(parentComment).toHaveAttribute("id", `comment-${parentCommentNo}`);
+  await expect(persistedReply).toHaveAttribute("id", `comment-${replyCommentNo}`);
   await expect(persistedReply).toHaveAttribute(
     "data-parent-comment-no",
     parentCommentNo as string
   );
   await expect(persistedReply.getByTestId("community-post-detail-comment-reply")).toHaveCount(0);
+
+  await persistedReply.getByTestId("community-post-detail-comment-copy-link").click();
+  await expect(page.getByTestId("community-post-detail-status")).toContainText("评论链接");
+
+  const detailUrl = page.url().split("#")[0];
+  await page.goto(`${detailUrl}#comment-${encodeURIComponent(replyCommentNo as string)}`);
+  await expect(
+    page
+      .getByTestId("community-post-detail-comment")
+      .filter({ hasText: replyBody })
+  ).toHaveClass(/community-post-detail-comment--focused/);
+
+  await page.goto(`${detailUrl}#comment-CMT_missing`);
+  await expect(page.getByTestId("community-post-detail-body")).toContainText(postBody);
+  await expect(page.getByTestId("community-post-detail-error")).toHaveCount(0);
 });
 
 test("member can edit their own community post from post detail", async ({
