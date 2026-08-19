@@ -1,11 +1,14 @@
 import { createServer } from "node:net";
 import { readFileSync } from "node:fs";
-import { open, readFile, rm, stat } from "node:fs/promises";
+import { open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { validateEnvironment } from "../src/config/environment";
-import { getCloudPetConfigBaselineStatus } from "../src/config/cloud-pet-config-fingerprint";
+import {
+  computeCloudPetSafeConfigSha256,
+  getCloudPetConfigBaselineStatus
+} from "../src/config/cloud-pet-config-fingerprint";
 import {
   CLOUD_PET_RELEASE_ID,
   resolveCloudPetReleaseId
@@ -207,6 +210,7 @@ async function runPreflight() {
           parentProbe: !failures.some(({ check }) => check === "data_directory_probe")
         }
       : { identity: "unavailable", file: "unavailable", parentProbe: false },
+    databaseIdentity: databasePath ? createSafeDatabaseIdentity(databasePath) : "unavailable",
     ports: ports
       ? {
           api: ports.api,
@@ -214,6 +218,10 @@ async function runPreflight() {
           available: !failures.some(({ check }) => check === "api_port" || check === "web_port")
         }
       : { available: false },
+    portsAvailable: ports
+      ? !failures.some(({ check }) => check === "api_port" || check === "web_port")
+      : false,
+    configFingerprint: getConfigFingerprintForEvidence(env),
     node: {
       version: process.versions.node,
       declaredRequirement: getDeclaredNodeRequirement(packageJson)
@@ -224,12 +232,34 @@ async function runPreflight() {
   };
 
   if (failures.length > 0) {
-    console.error(JSON.stringify({ ok: false, code: preflightFailedCode, evidence }));
+    const output = { ok: false, code: preflightFailedCode, evidence };
+    await writeEvidenceFile(output);
+    console.error(JSON.stringify(output));
     process.exitCode = 1;
     return;
   }
 
-  console.log(JSON.stringify({ ok: true, code: preflightPassedCode, evidence }));
+  const output = { ok: true, code: preflightPassedCode, evidence };
+  await writeEvidenceFile(output);
+  console.log(JSON.stringify(output));
+}
+
+async function writeEvidenceFile(output: { ok: boolean; code: string; evidence: Record<string, unknown> }) {
+  const filePath = process.env.CLOUD_PET_EVIDENCE_FILE;
+  if (!filePath) return;
+  await writeFile(
+    resolve(filePath),
+    `${JSON.stringify({ schemaVersion: 1, kind: "hostPreflight", ...output }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 }
+  );
+}
+
+function getConfigFingerprintForEvidence(env: NodeJS.ProcessEnv) {
+  try {
+    return computeCloudPetSafeConfigSha256(env);
+  } catch {
+    return "unavailable";
+  }
 }
 
 function getBaselineStatusForEvidence(env: NodeJS.ProcessEnv) {
@@ -251,10 +281,11 @@ function getDatabaseFailureReason(error: unknown) {
 }
 
 runPreflight().catch(() => {
-  console.error(JSON.stringify({
+  const output = {
     ok: false,
     code: preflightFailedCode,
     evidence: { failures: [{ check: "preflight", reason: "UNEXPECTED_FAILURE" }] }
-  }));
+  };
+  void writeEvidenceFile(output).finally(() => console.error(JSON.stringify(output)));
   process.exitCode = 1;
 });

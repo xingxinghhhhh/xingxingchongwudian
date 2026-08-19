@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { createCloudPetEvidenceEnvelope, writeCloudPetEvidence } from "./cloud-pet-evidence-writer.mjs";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -55,13 +56,17 @@ function runStage(stage) {
 }
 
 async function main() {
+  const stageResults = [];
   for (const stage of stages) {
     console.log(`[cloud-pet-launch] START ${stage.name}`);
     try {
       const result = await runStage(stage);
       const summary = tail(result.stdout || result.stderr, 320).split("\n").filter(Boolean).at(-1);
+      stageResults.push({ name: stage.name, status: "passed" });
       console.log(`[cloud-pet-launch] PASS ${stage.name}${summary ? `: ${summary}` : ""}`);
     } catch (error) {
+      stageResults.push({ name: stage.name, status: "failed" });
+      await writeLaunchEvidence(false, "CLOUD_PET_LAUNCH_ACCEPTANCE_FAILED", stageResults);
       console.error(`[cloud-pet-launch] FAIL ${stage.name}`);
       console.error(tail(error instanceof Error ? error.message : String(error)));
       process.exitCode = 1;
@@ -69,11 +74,32 @@ async function main() {
     }
   }
 
+  await writeLaunchEvidence(true, "CLOUD_PET_LAUNCH_ACCEPTANCE_PASSED", stageResults);
   console.log("CLOUD_PET_LAUNCH_ACCEPTANCE_PASSED");
 }
 
+async function writeLaunchEvidence(ok, code, stageResults) {
+  await writeCloudPetEvidence(
+    process.env.CLOUD_PET_EVIDENCE_FILE,
+    createCloudPetEvidenceEnvelope({
+      kind: "launchAcceptance",
+      ok,
+      code,
+      releaseId: process.env.CLOUD_PET_RELEASE_ID,
+      configFingerprint: process.env.CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
+      evidence: { stageResults }
+    })
+  );
+}
+
 main().catch((error) => {
+  void writeLaunchEvidence(
+    false,
+    "CLOUD_PET_LAUNCH_ACCEPTANCE_FAILED",
+    []
+  ).finally(() => {
   console.error("[cloud-pet-launch] FAILED before stage execution");
   console.error(tail(error instanceof Error ? error.message : String(error)));
   process.exitCode = 1;
+  });
 });

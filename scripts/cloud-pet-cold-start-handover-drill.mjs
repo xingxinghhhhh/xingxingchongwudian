@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { chromium } from "playwright";
+import { createCloudPetEvidenceEnvelope, writeCloudPetEvidence } from "./cloud-pet-evidence-writer.mjs";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const apiEntry = resolve(rootDir, "dist/main.js");
@@ -16,13 +17,16 @@ const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
 const bootstrapScript = resolve(rootDir, "scripts/bootstrap-admin-owner.mjs");
 const schemaPath = resolve(rootDir, "prisma/schema.prisma");
 const nextEnvPath = resolve(rootDir, "web/next-env.d.ts");
-const releaseId = "cloud-pet-cold-start-drill";
+const releaseId = process.env.CLOUD_PET_RELEASE_ID ?? "cloud-pet-cold-start-drill";
 const webhookToken = "cloud-pet-cold-start-drill-webhook-token";
 const {
   CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
   computeCloudPetSafeConfigSha256
 } = await import(
   pathToFileURL(resolve(rootDir, "dist/config/cloud-pet-config-fingerprint.js")).href
+);
+const { createSafeDatabaseIdentity } = await import(
+  pathToFileURL(resolve(rootDir, "dist/config/production-host-preflight.js")).href
 );
 
 function assertDrill(condition, message) {
@@ -384,20 +388,33 @@ async function main() {
     await waitForWeb(webBaseUrl, web);
     const browserEvidence = await runBrowserHandover(webBaseUrl, apiBaseUrl, webhook, owner, member);
     const databaseEvidence = await verifyDatabase(database, owner.email, member.phone);
-    console.log(JSON.stringify({
+    const checks = {
+      emptyDatabaseMigrated: true,
+      bootstrapCreatedOneOwner: true,
+      duplicateBootstrapRejected: true,
+      runtimeOwnerSecretsPresent: false,
+      liveness: true,
+      readiness: true,
+      ...browserEvidence,
+      ...databaseEvidence
+    };
+    const output = {
       ok: true,
       code: "CLOUD_PET_COLD_START_HANDOVER_DRILL_PASSED",
-      checks: {
-        emptyDatabaseMigrated: true,
-        bootstrapCreatedOneOwner: true,
-        duplicateBootstrapRejected: true,
-        runtimeOwnerSecretsPresent: false,
-        liveness: true,
-        readiness: true,
-        ...browserEvidence,
-        ...databaseEvidence
-      }
-    }));
+      checks
+    };
+    await writeCloudPetEvidence(
+      process.env.CLOUD_PET_EVIDENCE_FILE,
+      createCloudPetEvidenceEnvelope({
+        kind: "coldStart",
+        ok: true,
+        code: output.code,
+        releaseId,
+        configFingerprint: expectedConfig,
+        evidence: { checks, databaseIdentity: createSafeDatabaseIdentity(databasePath) }
+      })
+    );
+    console.log(JSON.stringify(output));
   } finally {
     await stopProcess(web);
     await stopProcess(api);
@@ -409,11 +426,23 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({
+main().catch(async (error) => {
+  const output = {
     ok: false,
     code: "CLOUD_PET_COLD_START_HANDOVER_DRILL_FAILED",
     message: error instanceof Error ? error.message : "Unexpected cold-start drill failure"
-  }));
+  };
+  await writeCloudPetEvidence(
+    process.env.CLOUD_PET_EVIDENCE_FILE,
+    createCloudPetEvidenceEnvelope({
+      kind: "coldStart",
+      ok: false,
+      code: output.code,
+      releaseId,
+      configFingerprint: process.env.CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
+      evidence: { checks: {} }
+    })
+  );
+  console.error(JSON.stringify({ ok: output.ok, code: output.code }));
   process.exitCode = 1;
 });

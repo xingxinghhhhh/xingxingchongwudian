@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { chromium } from "playwright";
+import { createCloudPetEvidenceEnvelope, writeCloudPetEvidence } from "./cloud-pet-evidence-writer.mjs";
 
 const rootDir = resolve(import.meta.dirname, "..");
 const apiEntry = resolve(rootDir, "dist/main.js");
@@ -22,13 +23,16 @@ const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
 const bootstrapScript = resolve(rootDir, "scripts/bootstrap-admin-owner.mjs");
 const schemaPath = resolve(rootDir, "prisma/schema.prisma");
 const nextEnvPath = resolve(rootDir, "web/next-env.d.ts");
-const releaseId = "cloud-pet-warm-restart-drill";
+const releaseId = process.env.CLOUD_PET_RELEASE_ID ?? "cloud-pet-warm-restart-drill";
 const webhookToken = "cloud-pet-warm-restart-drill-webhook-token";
 const {
   CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
   computeCloudPetSafeConfigSha256
 } = await import(
   pathToFileURL(resolve(rootDir, "dist/config/cloud-pet-config-fingerprint.js")).href
+);
+const { createSafeDatabaseIdentity } = await import(
+  pathToFileURL(resolve(rootDir, "dist/config/production-host-preflight.js")).href
 );
 
 function assertDrill(condition, message) {
@@ -441,24 +445,37 @@ async function main() {
       await browserAfterRestart.close();
     }
 
-    const evidence = await verifyDatabase(database, owner.email, member.phone, petNo, diaryCountBeforeRestart);
-    console.log(JSON.stringify({
+    const databaseEvidence = await verifyDatabase(database, owner.email, member.phone, petNo, diaryCountBeforeRestart);
+    const checks = {
+      migratedFreshDatabase: true,
+      bootstrapCreatedOneOwner: true,
+      duplicateBootstrapRejected: true,
+      runtimeOwnerSecretsPresent: false,
+      runtimeAReady: true,
+      runtimeAGracefullyStopped: true,
+      ownershipReleasedBeforeRuntimeB: true,
+      runtimeBReadyOnSameDatabase: true,
+      ownerLoginBeforeAndAfterRestart: true,
+      memberPetAndDiaryPersisted: true,
+      ...databaseEvidence
+    };
+    const output = {
       ok: true,
       code: "CLOUD_PET_WARM_RESTART_HANDOVER_DRILL_PASSED",
-      checks: {
-        migratedFreshDatabase: true,
-        bootstrapCreatedOneOwner: true,
-        duplicateBootstrapRejected: true,
-        runtimeOwnerSecretsPresent: false,
-        runtimeAReady: true,
-        runtimeAGracefullyStopped: true,
-        ownershipReleasedBeforeRuntimeB: true,
-        runtimeBReadyOnSameDatabase: true,
-        ownerLoginBeforeAndAfterRestart: true,
-        memberPetAndDiaryPersisted: true,
-        ...evidence
-      }
-    }));
+      checks
+    };
+    await writeCloudPetEvidence(
+      process.env.CLOUD_PET_EVIDENCE_FILE,
+      createCloudPetEvidenceEnvelope({
+        kind: "warmRestart",
+        ok: true,
+        code: output.code,
+        releaseId,
+        configFingerprint: expectedConfig,
+        evidence: { checks, databaseIdentity: createSafeDatabaseIdentity(databasePath) }
+      })
+    );
+    console.log(JSON.stringify(output));
   } finally {
     await stopProcess(api);
     await stopProcess(web);
@@ -473,6 +490,17 @@ async function main() {
 try {
   await main();
 } catch {
+  await writeCloudPetEvidence(
+    process.env.CLOUD_PET_EVIDENCE_FILE,
+    createCloudPetEvidenceEnvelope({
+      kind: "warmRestart",
+      ok: false,
+      code: "CLOUD_PET_WARM_RESTART_HANDOVER_DRILL_FAILED",
+      releaseId,
+      configFingerprint: process.env.CLOUD_PET_EXPECTED_SAFE_CONFIG_SHA256,
+      evidence: { checks: {} }
+    })
+  );
   console.error(JSON.stringify({
     ok: false,
     code: "CLOUD_PET_WARM_RESTART_HANDOVER_DRILL_FAILED"

@@ -9,6 +9,9 @@ coverage/
 web/.next/
 web/out/
 
+# Local cloud-pet release evidence (脱敏运行证据，不入库)
+.cloud-pet-evidence/
+
 # Local SQLite recovery artifacts
 .backups/
 *.manifest.json.tmp
