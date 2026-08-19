@@ -54,6 +54,39 @@ export async function resolvePrismaMigrationCompatibility(
   }
 }
 
+export function runPrismaMigrationDiff(
+  databaseUrl: string,
+  rootDir = resolve(__dirname, "..", "..")
+): Promise<number> {
+  const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
+  const schemaPath = resolve(rootDir, "prisma/schema.prisma");
+
+  return new Promise((resolveExitCode, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        prismaCli,
+        "migrate",
+        "diff",
+        "--from-url",
+        databaseUrl,
+        "--to-schema-datamodel",
+        schemaPath,
+        "--exit-code"
+      ],
+      {
+        cwd: rootDir,
+        env: process.env,
+        windowsHide: true,
+        stdio: "ignore"
+      }
+    );
+
+    child.once("error", reject);
+    child.once("exit", (code) => resolveExitCode(code ?? 1));
+  });
+}
+
 @Injectable()
 export class PrismaMigrationCompatibilityService implements OnModuleInit {
   private status: PrismaMigrationCompatibility = { status: "unavailable" };
@@ -84,38 +117,11 @@ export class PrismaMigrationCompatibilityService implements OnModuleInit {
   }
 
   private runMigrationDiff(): Promise<number> {
-    const rootDir = resolve(__dirname, "..", "..");
-    const prismaCli = resolve(rootDir, "node_modules/prisma/build/index.js");
-    const schemaPath = resolve(rootDir, "prisma/schema.prisma");
     const databaseUrl = this.configService.get<string>("DATABASE_URL");
 
     if (!databaseUrl) {
       return Promise.resolve(1);
     }
-
-    return new Promise((resolveExitCode, reject) => {
-      const child = spawn(
-        process.execPath,
-        [
-          prismaCli,
-          "migrate",
-          "diff",
-          "--from-url",
-          databaseUrl,
-          "--to-schema-datamodel",
-          schemaPath,
-          "--exit-code"
-        ],
-        {
-          cwd: rootDir,
-          env: process.env,
-          windowsHide: true,
-          stdio: "ignore"
-        }
-      );
-
-      child.once("error", reject);
-      child.once("exit", (code) => resolveExitCode(code ?? 1));
-    });
+    return runPrismaMigrationDiff(databaseUrl);
   }
 }
